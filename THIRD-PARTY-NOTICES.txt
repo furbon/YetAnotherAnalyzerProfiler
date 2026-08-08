@@ -1,7 +1,43 @@
 ﻿YAAP THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
 Do Not Translate or Localize
 
-This distribution incorporates WPF UI 4.3.0 and components included by WPF UI.
+This distribution incorporates the following direct and transitive components.
+Versions are synchronized with the repository lock files. All packages in this
+inventory declare the MIT license. The applicable MIT license text is reproduced
+in this notice.
+
+Self-contained release artifacts additionally include the license and complete
+third-party notices from their resolved Microsoft.NETCore.App runtime pack. The
+Windows GUI artifact also includes the resolved Microsoft.WindowsDesktop.App
+runtime license. Those runtime-specific files are shipped beside the executable.
+
+Microsoft / .NET Foundation components
+
+- Microsoft.Build 17.11.48 / 18.8.2 (https://github.com/dotnet/msbuild)
+- Microsoft.Build.Framework 17.11.48 / 18.8.2 (https://github.com/dotnet/msbuild)
+- Microsoft.NET.StringTools 17.11.48 / 18.8.2 (https://github.com/dotnet/msbuild)
+- Microsoft.NET.ILLink.Tasks 8.0.29 / 10.0.10 (https://github.com/dotnet/dotnet)
+- NETStandard.Library 2.0.3 (https://github.com/dotnet/standard)
+- Microsoft.NETCore.Platforms 1.1.0 (https://github.com/dotnet/corefx)
+- Microsoft.Win32.Registry 5.0.0 (https://github.com/dotnet/runtime)
+- System.Buffers 4.5.1 (https://github.com/dotnet/runtime)
+- System.Configuration.ConfigurationManager 8.0.0 / 10.0.4 (https://github.com/dotnet/dotnet)
+- System.Diagnostics.EventLog 8.0.0 / 10.0.4 (https://github.com/dotnet/dotnet)
+- System.Memory 4.5.5 (https://github.com/dotnet/runtime)
+- System.Numerics.Vectors 4.4.0 (https://github.com/dotnet/runtime)
+- System.Reflection.MetadataLoadContext 8.0.0 / 10.0.4 (https://github.com/dotnet/dotnet)
+- System.Runtime.CompilerServices.Unsafe 6.0.0 (https://github.com/dotnet/runtime)
+- System.Security.AccessControl 5.0.0 (https://github.com/dotnet/runtime)
+- System.Security.Cryptography.ProtectedData 8.0.0 / 10.0.4 (https://github.com/dotnet/dotnet)
+- System.Security.Principal.Windows 5.0.0 (https://github.com/dotnet/runtime)
+
+Copyright (c) .NET Foundation and Contributors. All rights reserved.
+
+WPF UI components
+
+- WPF-UI 4.3.0 (https://github.com/lepoco/wpfui)
+- WPF-UI.Abstractions 4.3.0 (https://github.com/lepoco/wpfui)
+
 The original copyright notices and licenses follow.
 
 %% WPF UI LICENSE BEGIN HERE

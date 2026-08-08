@@ -24,10 +24,14 @@ GUI は `net8.0-windows;net10.0-windows` を対象にします。バージョン
 
 `verify` はリポジトリガード、locked restore、format、警告をエラーにした build、Core／CLI／
 GUIテスト、実 Analyzer／Generator 統合テスト、ローカルNuGet feed／lock file試験を実行します。
-GUIテストは Windows だけで実行されます。
+GUIテストは Windows だけでDebug、両対象フレームワークに対して実行され、STA起動スモークを含みます。
+`publish` はRID専用の一時lock fileで復元した後にlocked publishを行い、成果物の許可リスト、同梱する
+ライセンス／通知、CLIの起動を検証します。Windows向けGUIは実際にウィンドウを開いて終了まで確認します。
 
 新しい NuGet パッケージは中央管理し、提供元、保守状況、利用実績、ライセンス、脆弱性、
 推移依存、対象フレームワーク、代替案を作業計画に記録してください。製品依存は最小限にします。
+production lock fileに現れる全パッケージと版は `THIRD-PARTY-NOTICES.txt` に記載し、共通ガードで
+同期を検証します。
 
 ## ファイルと品質
 

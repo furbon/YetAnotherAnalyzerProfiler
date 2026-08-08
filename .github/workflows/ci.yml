@@ -10,44 +10,59 @@ permissions:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - sdk: "8.0"
+          - sdk: "8.0.423"
+            image: mcr.microsoft.com/dotnet/sdk:8.0.423@sha256:e2f26f26169fd10d6f1b426e01c97397717b32e9d5ab4ee4a7d5497ed9403007
             framework: net8.0
-          - sdk: "10.0"
+          - sdk: "10.0.302"
+            image: mcr.microsoft.com/dotnet/sdk:10.0.302@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0
             framework: net10.0
-    container: mcr.microsoft.com/dotnet/sdk:${{ matrix.sdk }}
+    container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable repository guards
+        shell: sh
+        run: git config --local core.hooksPath .githooks
       - name: Verify
         shell: sh
         run: sh ./eng/build.sh verify --framework "${{ matrix.framework }}"
 
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2025
     strategy:
       fail-fast: false
       matrix:
-        framework: [net8.0, net10.0]
+        include:
+          - sdk: "8.0.423"
+            framework: net8.0
+          - sdk: "10.0.302"
+            framework: net10.0
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: ${{ matrix.sdk }}
       - name: Verify including WPF
         shell: pwsh
         run: ./eng/build.ps1 verify --framework "${{ matrix.framework }}"
 
   macos:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable repository guards
+        shell: sh
+        run: git config --local core.hooksPath .githooks
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.302
       - name: Verify CLI
         shell: sh
         run: sh ./eng/build.sh verify --framework net10.0
@@ -58,24 +73,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             runtime: linux-x64
-          - os: windows-latest
+          - os: windows-2025
             runtime: win-x64
-          - os: macos-latest
+          - os: macos-15
             runtime: osx-x64
-          - os: macos-latest
+          - os: macos-15
             runtime: osx-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.302
       - name: Publish self-contained single files
         shell: pwsh
         run: ./eng/build.ps1 publish --framework net10.0 --runtime "${{ matrix.runtime }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: yaap-${{ matrix.runtime }}
           path: artifacts/publish/${{ matrix.runtime }}/net10.0

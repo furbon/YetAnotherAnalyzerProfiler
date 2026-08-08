@@ -37,6 +37,10 @@ public sealed class ProfileRunner
             TargetName = Path.GetFileName(target.FullPath),
             Configuration = options.Configuration,
             Mode = options.Mode,
+            WarmupCount = options.WarmupCount,
+            IterationCount = options.IterationCount,
+            CleanBeforeEach = options.CleanBeforeEach,
+            Restore = options.Restore,
             StartedAt = DateTimeOffset.UtcNow,
             Environment = environment,
             TargetFrameworks = target.TargetFrameworks,
@@ -45,6 +49,7 @@ public sealed class ProfileRunner
         };
 
         string runDirectory = history.GetRunDirectory(run.Id);
+        using IDisposable runLease = history.AcquireRunLease(run.Id, cancellationToken);
         string workDirectory = Path.Combine(runDirectory, "work");
         string buildLoggerPath = string.Empty;
         string artifactsPath = ResolveArtifactsPath(options, targetDirectory, workDirectory);
@@ -57,6 +62,8 @@ public sealed class ProfileRunner
         string effectiveTarget = target.FullPath;
         List<MeasurementResult> measurements = new();
         List<RunDiagnostic> runDiagnostics = new();
+        IReadOnlyList<GeneratorOutputSnapshot> latestOutputSnapshots =
+            Array.Empty<GeneratorOutputSnapshot>();
         await history.SaveAsync(run, cancellationToken).ConfigureAwait(false);
 
         try
@@ -274,8 +281,9 @@ public sealed class ProfileRunner
                     }
                 }
 
-                IReadOnlyList<GeneratedOutput> outputs = await GeneratedOutputInventory.InspectAsync(
-                    generatedPath,
+                latestOutputSnapshots = await history.ReplaceGeneratedOutputsAsync(
+                    run.Id,
+                    GeneratedOutputInventory.InspectAsync(generatedPath, cancellationToken),
                     cancellationToken).ConfigureAwait(false);
                 bool succeeded = build.ExitCode == 0 && profilingSucceeded;
                 if (build.ExitCode != 0)
@@ -294,11 +302,11 @@ public sealed class ProfileRunner
                     binlogPath,
                     analyzers,
                     generators,
-                    outputs,
+                    Array.Empty<GeneratedOutput>(),
                     measurementDiagnostics));
-                run.Measurements = measurements.ToArray();
                 run.Analyzers = Statistics.AggregateAnalyzers(measurements);
-                run.Generators = Statistics.AggregateGenerators(measurements);
+                run.Generators = Statistics.AggregateGenerators(measurements, latestOutputSnapshots);
+                run.Measurements = measurements.ToArray();
                 run.Diagnostics = runDiagnostics.Concat(measurementDiagnostics).ToArray();
                 run.Status = succeeded ? RunStatus.Running : RunStatus.Partial;
                 progress?.Report(new ProfileProgress(ProfileStage.Saving, "部分結果を保存しています。", index, options.IterationCount));
@@ -336,12 +344,16 @@ public sealed class ProfileRunner
 
         run.Measurements = measurements.ToArray();
         run.Analyzers = Statistics.AggregateAnalyzers(measurements);
-        run.Generators = Statistics.AggregateGenerators(measurements);
+        run.Generators = Statistics.AggregateGenerators(measurements, latestOutputSnapshots);
         run.Diagnostics = run.Diagnostics.Concat(runDiagnostics).Distinct().ToArray();
         run.FinishedAt = DateTimeOffset.UtcNow;
         CleanupTransientCompilerFiles(workDirectory);
         await history.SaveAsync(run, CancellationToken.None).ConfigureAwait(false);
-        await history.ApplyRetentionAsync(options.RetentionCount, CancellationToken.None).ConfigureAwait(false);
+        runLease.Dispose();
+        if (run.Status != RunStatus.Canceled)
+        {
+            await history.ApplyRetentionAsync(options.RetentionCount, CancellationToken.None).ConfigureAwait(false);
+        }
         if (options.Isolated && string.IsNullOrWhiteSpace(options.ArtifactsPath))
         {
             TryDeleteDirectory(artifactsPath);
@@ -464,7 +476,7 @@ public sealed class ProfileRunner
         await writer.WriteLineAsync("# Visual Studio Version 17").ConfigureAwait(false);
         const string projectType = "{FAE04EC0-301F-11D3-BF4-00C04F79EFBC}";
         List<string> projectGuids = new();
-        foreach (string project in projects.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string project in projects.Distinct(FileSystemPath.Comparer))
         {
             cancellationToken.ThrowIfCancellationRequested();
             byte[] hash = System.Security.Cryptography.SHA256.HashData(

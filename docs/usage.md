@@ -1,5 +1,11 @@
 ﻿# 利用ガイド
 
+> [!WARNING]
+> YAAP はサンドボックスではありません。対象のMSBuild task、Analyzer、Source Generatorを実行し、
+> 測定レポート取得のためコンパイラー呼び出しも再実行します。信頼できない対象を測定しないでください。
+> `--isolated` は標準出力場所を分けますが、任意の書込みや通信を防止しません。詳しくは
+> [セキュリティ方針](../SECURITY.md#測定対象との信頼境界)を参照してください。
+
 ## 対応環境
 
 CLI は Windows、macOS、Linux の .NET 8／10 で動作します。GUI は Windows の WPF
@@ -14,7 +20,7 @@ CLI は Windows、macOS、Linux の .NET 8／10 で動作します。GUI は Win
 ```text
 yaap profile <target> [--configuration Release] [--mode warm|cold|custom]
     [--warmups N] [--iterations N] [--clean true|false]
-    [--restore true|false] [--isolated] [--artifacts-path PATH]
+    [--restore true|false] [--isolated|--no-isolated] [--artifacts-path PATH]
     [--history PATH] [--retention N]
 yaap configurations <target>
 yaap history list|show|delete [options]
@@ -26,10 +32,11 @@ yaap version
 
 `warm` はウォームアップ1回、測定3回、各測定前の clean が既定です。`cold` は
 ウォームアップなし、測定3回、各測定前の clean です。`custom` では回数を指定します。
-restore は最初に一度だけ実行され、対象の `NuGet.Config` 階層、認証プロバイダー、
+restore が有効な場合は最初に一度だけ実行され、対象の `NuGet.Config` 階層、認証プロバイダー、
 private feed、lock file を通常の `dotnet restore` と同じ方法で利用します。
 
-`--isolated` は restore、clean、build のすべてに .NET の `--artifacts-path` を渡します。
+分離出力は既定で有効です。`--isolated` は明示的に有効化し、`--no-isolated` は無効化します。
+有効な場合は restore、clean、build のすべてに .NET の `--artifacts-path` を渡します。
 出力先は対象ディレクトリ外でなければなりません。カスタム target が従来の `bin`／`obj`
 を固定参照する場合はエラーになり、通常出力へ暗黙に切り替わることはありません。
 
@@ -43,6 +50,10 @@ private feed、lock file を通常の `dotnet restore` と同じ方法で利用�
 
 比較では Analyzer／Generator の増減、追加・削除、生成ファイル数・バイト数の差を表示し、
 SDK、OS、CPU、構成、対象フレームワークが異なる場合は比較可能性の警告を出します。
+
+保存済み履歴のCSV／JSON／Markdown exportは、ディスク上の生成出力manifestを逐次読み、生成ファイルを
+全件出力します。メモリ上のrunデータに含まれる生成ファイル一覧は各Generatorの決定的な先頭100件に
+制限されますが、ファイル数、バイト数、行数の集計値は常に全件を表します。
 
 ## GUI
 
@@ -61,8 +72,16 @@ GUI では対象選択、構成の自動検出、測定モード、isolated 出�
 
 外観はWPF UIのFluentテーマを使用し、起動時とWindows側の変更時にシステムテーマへ自動追従します。
 上部のテーマ選択で「自動」、「ライト」、「ダーク」をいつでも切り替えられ、ウィンドウ全体と
-ポップアップを含むコントロールへ一貫して反映されます。履歴場所、保持件数、clean、分離出力、
+ポップアップを含むコントロールへ一貫して反映されます。履歴場所、保持件数、restore、clean、分離出力、
 分離出力先は「詳細設定」を展開した場合だけ表示します。
 
 Source Generator の表示時間は Generator アセンブリ／型全体の値です。生成ファイルには
 件数、サイズ、行数、相対パスだけを表示し、Roslyn が提供しないファイル単位時間は表示しません。
+各Generatorの生成ファイル一覧は先頭100件のプレビューです。全件がある場合はその旨を行詳細に表示し、
+全件はCSV／JSON／Markdown exportで確認できます。
+
+GUIの履歴タブでは開始日時、終了日時をISO-8601で指定し、表示件数を1～10000件に制限できます。
+表示上限の既定は500件で、空欄も500件として扱います。
+「出力・トラブルシュート」タブでは既存binlogを解析し、通常の結果表、比較、exportへ渡せます。
+GUIのキャンセルボタンは、測定、履歴I/O、binlog解析、比較、exportのうち実行中の処理を停止できます。
+CLIとGUIの表示媒体に応じた操作差は [機能対応表](index.md#cliとguiの機能対応表)を参照してください。

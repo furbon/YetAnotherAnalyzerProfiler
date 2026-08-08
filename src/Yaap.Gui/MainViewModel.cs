@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using System.Windows.Input;
 using Yaap.Core;
 
@@ -11,13 +12,19 @@ namespace Yaap.Gui;
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     private const int MaxRecentTargets = 10;
+    private const int ConfigurationHistoryLimit = 1000;
+    private const int DefaultHistoryLimit = 500;
 
     private readonly ProfileRunner _profileRunner;
     private readonly Func<string, CancellationToken, Task<TargetInfo>> _targetDiscoverer;
+    private readonly Func<string, CancellationToken, Task<BinlogAnalysis>> _binlogAnalyzer;
+    private readonly Func<RunSummary, bool> _confirmDelete;
     private readonly TimeSpan _targetDiscoveryDelay;
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
     private IReadOnlyDictionary<string, string> _latestConfigurationByTarget =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _profileCancellation;
+    private CancellationTokenSource? _operationCancellation;
     private CancellationTokenSource? _targetDiscoveryCancellation;
     private Task _targetDiscoveryTask = Task.CompletedTask;
     private long _targetDiscoveryGeneration;
@@ -27,15 +34,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _artifactsPath = string.Empty;
     private string _searchText = string.Empty;
     private string _historyStatus = "すべて";
+    private string _historyFrom = string.Empty;
+    private string _historyTo = string.Empty;
+    private string _historyLimit = DefaultHistoryLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
     private string _resultFilter = string.Empty;
     private string _statusText = "準備完了";
     private string _baselineId = string.Empty;
     private string _candidateId = string.Empty;
     private string _exportPath = string.Empty;
     private string _exportFormat = "json";
+    private string _binlogPath = string.Empty;
     private bool _isolated = true;
+    private bool _restore = true;
     private bool _cleanBeforeEach = true;
     private bool _isRunning;
+    private bool _isOperationRunning;
     private bool _isDiscoveringTarget;
     private bool _hasValidTarget;
     private bool _historyInitialized;
@@ -53,20 +66,39 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public MainViewModel(
         ProfileRunner? profileRunner = null,
         Func<string, CancellationToken, Task<TargetInfo>>? targetDiscoverer = null,
-        TimeSpan? targetDiscoveryDelay = null)
+        TimeSpan? targetDiscoveryDelay = null,
+        Func<RunSummary, bool>? confirmDelete = null,
+        Func<string, CancellationToken, Task<BinlogAnalysis>>? binlogAnalyzer = null)
     {
         _profileRunner = profileRunner ?? new ProfileRunner();
         _targetDiscoverer = targetDiscoverer ?? TargetDiscovery.DiscoverAsync;
+        _binlogAnalyzer = binlogAnalyzer ?? ((path, cancellationToken) =>
+            new BinlogAnalyzer().AnalyzeAsync(path, cancellationToken));
+        _confirmDelete = confirmDelete ?? ConfirmDelete;
         _targetDiscoveryDelay = targetDiscoveryDelay ?? TimeSpan.FromMilliseconds(350);
         _selectedTheme = ThemeOptions[0];
-        BrowseCommand = new RelayCommand(Browse, () => !IsRunning);
+        BrowseCommand = new RelayCommand(Browse, () => !IsBusy);
+        BrowseBinlogCommand = new RelayCommand(BrowseBinlog, () => !IsBusy);
         StartCommand = new AsyncRelayCommand(StartAsync, CanStart, SetError);
-        RefreshHistoryCommand = new AsyncRelayCommand(RefreshHistoryAsync, () => !IsRunning, SetError);
-        LoadSelectedCommand = new AsyncRelayCommand(LoadSelectedAsync, () => SelectedHistory is not null, SetError);
-        DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync, () => SelectedHistory is not null && !IsRunning, SetError);
-        CompareCommand = new AsyncRelayCommand(CompareAsync, () => !IsRunning, SetError);
-        ExportCommand = new AsyncRelayCommand(ExportAsync, () => SelectedRun is not null && !IsRunning, SetError);
-        CancelCommand = new RelayCommand(() => _profileCancellation?.Cancel(), () => IsRunning);
+        RefreshHistoryCommand = CreateOperationCommand("履歴を更新しています。", RefreshHistoryAsync);
+        LoadSelectedCommand = CreateOperationCommand(
+            "履歴の詳細を読み込んでいます。",
+            LoadSelectedAsync,
+            () => SelectedHistory is not null);
+        DeleteSelectedCommand = CreateOperationCommand(
+            "履歴を削除しています。",
+            DeleteSelectedAsync,
+            () => SelectedHistory is not null);
+        CompareCommand = CreateOperationCommand("測定結果を比較しています。", CompareAsync);
+        ExportCommand = CreateOperationCommand(
+            "測定結果を出力しています。",
+            ExportAsync,
+            () => SelectedRun is not null);
+        AnalyzeBinlogCommand = CreateOperationCommand(
+            "binlogを解析しています。",
+            AnalyzeBinlogAsync,
+            () => !string.IsNullOrWhiteSpace(BinlogPath));
+        CancelCommand = new RelayCommand(CancelActiveOperation, () => IsBusy);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -137,7 +169,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 _latestConfigurationByTarget =
                     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 OnPropertyChanged(nameof(AdvancedSettingsSummary));
-                if (_hasValidTarget && !IsRunning)
+                if (_hasValidTarget && !IsBusy)
                 {
                     QueueTargetDiscovery();
                 }
@@ -167,6 +199,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _historyStatus;
         set => Set(ref _historyStatus, value);
+    }
+
+    public string HistoryFrom
+    {
+        get => _historyFrom;
+        set => Set(ref _historyFrom, value);
+    }
+
+    public string HistoryTo
+    {
+        get => _historyTo;
+        set => Set(ref _historyTo, value);
+    }
+
+    public string HistoryLimit
+    {
+        get => _historyLimit;
+        set => Set(ref _historyLimit, value);
     }
 
     public string ResultFilter
@@ -214,12 +264,36 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set => Set(ref _exportFormat, value);
     }
 
+    public string BinlogPath
+    {
+        get => _binlogPath;
+        set
+        {
+            if (Set(ref _binlogPath, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
+
     public bool Isolated
     {
         get => _isolated;
         set
         {
             if (Set(ref _isolated, value))
+            {
+                OnPropertyChanged(nameof(AdvancedSettingsSummary));
+            }
+        }
+    }
+
+    public bool Restore
+    {
+        get => _restore;
+        set
+        {
+            if (Set(ref _restore, value))
             {
                 OnPropertyChanged(nameof(AdvancedSettingsSummary));
             }
@@ -297,10 +371,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (Set(ref _isRunning, value))
             {
+                OnPropertyChanged(nameof(IsBusy));
+                OnPropertyChanged(nameof(BusyTitleText));
                 RaiseCommandStates();
             }
         }
     }
+
+    public bool IsOperationRunning
+    {
+        get => _isOperationRunning;
+        private set
+        {
+            if (Set(ref _isOperationRunning, value))
+            {
+                OnPropertyChanged(nameof(IsBusy));
+                OnPropertyChanged(nameof(BusyTitleText));
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public bool IsBusy => IsRunning || IsOperationRunning;
 
     public bool IsDiscoveringTarget
     {
@@ -361,9 +453,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public string MeasurementStateText => CurrentMeasurementState.Text;
 
-    public string AdvancedSettingsSummary => Isolated
-        ? "詳細設定（分離出力: 有効）"
-        : "詳細設定（分離出力: 無効）";
+    public string BusyTitleText => IsRunning ? MeasurementStateText : "処理中";
+
+    public string AdvancedSettingsSummary =>
+        $"詳細設定（restore: {(Restore ? "有効" : "無効")}、分離出力: {(Isolated ? "有効" : "無効")}）";
 
     public string HistoryCountText => $"履歴 {History.Count} 件";
 
@@ -394,6 +487,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ICommand BrowseCommand { get; }
 
+    public ICommand BrowseBinlogCommand { get; }
+
     public ICommand CancelCommand { get; }
 
     public ICommand RefreshHistoryCommand { get; }
@@ -406,11 +501,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ICommand ExportCommand { get; }
 
+    public ICommand AnalyzeBinlogCommand { get; }
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetimeCancellation.Token);
         try
         {
-            await RefreshHistoryAsync(cancellationToken);
+            await RefreshHistoryAsync(linked.Token);
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested)
+        {
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -422,14 +525,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public bool CanAcceptDroppedTarget(IReadOnlyList<string> paths)
     {
-        return !IsRunning && paths.Count == 1 && TargetDiscovery.IsSupportedPath(paths[0]);
+        return !IsBusy && paths.Count == 1 && TargetDiscovery.IsSupportedPath(paths[0]);
     }
 
     public bool TrySetDroppedTarget(IReadOnlyList<string> paths)
     {
-        if (IsRunning)
+        if (IsBusy)
         {
-            StatusText = "測定中は対象を変更できません。";
+            StatusText = "処理中は対象を変更できません。";
             return false;
         }
 
@@ -457,9 +560,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         _disposed = true;
+        _lifetimeCancellation.Cancel();
         CancellationTokenSource? discovery = Interlocked.Exchange(ref _targetDiscoveryCancellation, null);
         discovery?.Cancel();
         _profileCancellation?.Cancel();
+        _operationCancellation?.Cancel();
+        _lifetimeCancellation.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -468,7 +574,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         long generation = Interlocked.Increment(ref _targetDiscoveryGeneration);
         CancellationTokenSource? previous = Interlocked.Exchange(ref _targetDiscoveryCancellation, null);
         previous?.Cancel();
-        if (_disposed || IsRunning)
+        if (_disposed || IsBusy)
         {
             return;
         }
@@ -575,7 +681,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private bool CanStart()
     {
-        return CurrentMeasurementState.CanStart;
+        return !IsOperationRunning && CurrentMeasurementState.CanStart;
     }
 
     private MeasurementStatePresentation CurrentMeasurementState =>
@@ -602,6 +708,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private void BrowseBinlog()
+    {
+        Microsoft.Win32.OpenFileDialog dialog = new()
+        {
+            CheckFileExists = true,
+            Filter = "MSBuildバイナリログ (*.binlog)|*.binlog|すべてのファイル (*.*)|*.*",
+            Multiselect = false,
+            Title = "解析するbinlogを選択",
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            BinlogPath = dialog.FileName;
+        }
+    }
+
     private async Task StartAsync(CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(TargetPath))
@@ -610,7 +731,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         IsRunning = true;
-        _profileCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _profileCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetimeCancellation.Token);
         try
         {
             Progress<ProfileProgress> progress = new(item => StatusText = item.Message);
@@ -623,6 +746,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                     WarmupCount = WarmupCount,
                     IterationCount = IterationCount,
                     CleanBeforeEach = CleanBeforeEach,
+                    Restore = Restore,
                     Isolated = Isolated,
                     ArtifactsPath = Isolated ? EmptyToNull(ArtifactsPath) : null,
                     HistoryPath = EmptyToNull(HistoryPath),
@@ -631,7 +755,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 progress,
                 _profileCancellation.Token);
             StatusText = $"{SelectedRun.Status}: {SelectedRun.Id:D}";
-            await RefreshHistoryAsync(CancellationToken.None);
+            if (!_disposed)
+            {
+                await RefreshHistoryAsync(_lifetimeCancellation.Token);
+            }
         }
         finally
         {
@@ -643,10 +770,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task RefreshHistoryAsync(CancellationToken cancellationToken)
     {
-        IReadOnlyList<RunSummary> allSummaries = await Store().ListAsync(
-            cancellationToken: cancellationToken);
-        SetConfigurationHistory(allSummaries);
-
         RunStatus? status = HistoryStatus switch
         {
             "実行中" => RunStatus.Running,
@@ -656,16 +779,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             "キャンセル" => RunStatus.Canceled,
             _ => null,
         };
-        IEnumerable<RunSummary> summaries = allSummaries.Where(summary =>
-            (status is null || summary.Status == status) &&
-            (string.IsNullOrWhiteSpace(SearchText) ||
-             summary.TargetName.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
-             summary.TargetPath.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
-             summary.Id.ToString("D").Contains(SearchText, StringComparison.OrdinalIgnoreCase)));
+        DateTimeOffset? from = ParseOptionalDateTime(HistoryFrom, "開始日時");
+        DateTimeOffset? to = ParseOptionalDateTime(HistoryTo, "終了日時");
+        int? limit = ParseOptionalLimit(HistoryLimit);
+        if (from > to)
+        {
+            throw new YaapException(YaapErrors.InvalidInput("History start must not be after history end."));
+        }
+
+        await EnsureConfigurationHistoryAsync(cancellationToken);
+        IReadOnlyList<RunSummary> summaries = await ListHistoryAsync(
+            new HistoryQuery(
+                EmptyToNull(SearchText),
+                status,
+                from,
+                to,
+                limit),
+            cancellationToken);
         History.Clear();
+        int added = 0;
         foreach (RunSummary summary in summaries)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             History.Add(summary);
+            if (++added % 100 == 0)
+            {
+                await Task.Yield();
+            }
         }
 
         OnPropertyChanged(nameof(HistoryCountText));
@@ -685,12 +825,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task DeleteSelectedAsync(CancellationToken cancellationToken)
     {
-        if (SelectedHistory is null)
+        RunSummary? selected = SelectedHistory;
+        if (selected is null)
         {
             return;
         }
 
-        await Store().DeleteAsync(SelectedHistory.Id, cancellationToken);
+        if (!_confirmDelete(selected))
+        {
+            StatusText = "履歴の削除を取り消しました。";
+            return;
+        }
+
+        await Store().DeleteAsync(selected.Id, cancellationToken);
         SelectedRun = null;
         SelectedHistory = null;
         await RefreshHistoryAsync(cancellationToken);
@@ -707,7 +854,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         HistoryStore history = Store();
         ProfileRun baseline = await history.LoadAsync(baselineId, cancellationToken);
         ProfileRun candidate = await history.LoadAsync(candidateId, cancellationToken);
-        Comparison = RunComparison.Compare(baseline, candidate);
+        Comparison = await Task.Run(
+            () => RunComparison.Compare(baseline, candidate, cancellationToken),
+            cancellationToken);
         StatusText = $"比較しました: {Comparison.Metrics.Count} 項目";
     }
 
@@ -724,16 +873,150 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             "md" or "markdown" => Yaap.Core.ExportFormat.Markdown,
             _ => Yaap.Core.ExportFormat.Json,
         };
-        await RunExporter.ExportAsync(SelectedRun, format, ExportPath, cancellationToken);
+        HistoryStore history = Store();
+        if (Directory.Exists(history.GetRunDirectory(SelectedRun.Id)))
+        {
+            await RunExporter.ExportAsync(
+                SelectedRun,
+                format,
+                ExportPath,
+                history.StreamGeneratedOutputsAsync(SelectedRun.Id, cancellationToken),
+                cancellationToken);
+        }
+        else
+        {
+            await RunExporter.ExportAsync(
+                SelectedRun,
+                format,
+                ExportPath,
+                cancellationToken);
+        }
         StatusText = $"出力しました: {Path.GetFullPath(ExportPath)}";
+    }
+
+    private async Task AnalyzeBinlogAsync(CancellationToken cancellationToken)
+    {
+        string path = Path.GetFullPath(BinlogPath);
+        BinlogAnalysis analysis = await _binlogAnalyzer(path, cancellationToken);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        MeasurementResult measurement = new(
+            1,
+            now,
+            0,
+            true,
+            path,
+            analysis.Analyzers,
+            analysis.Generators,
+            Array.Empty<GeneratedOutput>(),
+            analysis.Diagnostics);
+        ProfileRun run = new()
+        {
+            TargetPath = path,
+            TargetName = Path.GetFileName(path),
+            Configuration = "binlog",
+            Mode = ProfileMode.Custom,
+            WarmupCount = 0,
+            IterationCount = 1,
+            CleanBeforeEach = false,
+            Restore = false,
+            StartedAt = now,
+            FinishedAt = now,
+            Status = analysis.Diagnostics.Count == 0 ? RunStatus.Succeeded : RunStatus.Partial,
+            Environment = new EnvironmentSnapshot(
+                Environment.OSVersion.VersionString,
+                System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
+                Environment.ProcessorCount,
+                "binlog",
+                Environment.Version.ToString(),
+                null,
+                null,
+                false),
+            Measurements = new[] { measurement },
+            Analyzers = Statistics.AggregateAnalyzers(new[] { measurement }),
+            Generators = Statistics.AggregateGenerators(new[] { measurement }),
+            Diagnostics = analysis.Diagnostics,
+        };
+        SelectedRun = run;
+        StatusText = $"binlogを解析しました: {analysis.EventCount:N0} イベント";
     }
 
     private HistoryStore Store() => new(EmptyToNull(HistoryPath));
 
+    private AsyncRelayCommand CreateOperationCommand(
+        string status,
+        Func<CancellationToken, Task> operation,
+        Func<bool>? canExecute = null)
+    {
+        return new AsyncRelayCommand(
+            cancellationToken => RunOperationAsync(status, operation, cancellationToken),
+            () => !IsBusy && (canExecute?.Invoke() ?? true),
+            SetError);
+    }
+
+    private async Task RunOperationAsync(
+        string status,
+        Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetimeCancellation.Token);
+        if (Interlocked.CompareExchange(ref _operationCancellation, linked, null) is not null)
+        {
+            linked.Dispose();
+            throw new InvalidOperationException("Another GUI operation is already running.");
+        }
+
+        IsOperationRunning = true;
+        StatusText = status;
+        try
+        {
+            await operation(linked.Token);
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested)
+        {
+            if (!_disposed)
+            {
+                StatusText = "処理をキャンセルしました。";
+            }
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _operationCancellation, null, linked);
+            linked.Dispose();
+            if (!_disposed)
+            {
+                IsOperationRunning = false;
+            }
+        }
+    }
+
+    private void CancelActiveOperation()
+    {
+        try
+        {
+            _profileCancellation?.Cancel();
+            _operationCancellation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     private void SetError(Exception exception)
     {
+        if (_disposed || exception is OperationCanceledException)
+        {
+            return;
+        }
+
         StatusText = exception is YaapException yaap
-            ? $"{yaap.Diagnostic.Code}: {yaap.Diagnostic.Message} {yaap.Diagnostic.SuggestedAction}"
+            ? $"{yaap.Diagnostic.Code}: {yaap.Diagnostic.Message} {yaap.Diagnostic.Detail} {yaap.Diagnostic.SuggestedAction}"
             : exception.Message;
     }
 
@@ -748,6 +1031,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                      DeleteSelectedCommand,
                      CompareCommand,
                      ExportCommand,
+                     AnalyzeBinlogCommand,
                  })
         {
             ((AsyncRelayCommand)command).RaiseCanExecuteChanged();
@@ -755,6 +1039,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         ((RelayCommand)CancelCommand).RaiseCanExecuteChanged();
         ((RelayCommand)BrowseCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)BrowseBinlogCommand).RaiseCanExecuteChanged();
     }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -775,6 +1060,49 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static DateTimeOffset? ParseOptionalDateTime(string value, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return DateTimeOffset.TryParse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeLocal,
+            out DateTimeOffset result)
+            ? result
+            : throw new YaapException(YaapErrors.InvalidInput($"{label} must be an ISO-8601 date/time."));
+    }
+
+    private static int? ParseOptionalLimit(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DefaultHistoryLimit;
+        }
+
+        return int.TryParse(
+            value,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out int result) && result is >= 1 and <= 10000
+            ? result
+            : throw new YaapException(YaapErrors.InvalidInput("History limit must be between 1 and 10000."));
+    }
+
+    private static bool ConfirmDelete(RunSummary summary)
+    {
+        MessageBoxResult result = MessageBox.Show(
+            $"履歴 {summary.Id:D}（{summary.TargetName}）を削除します。元に戻せません。",
+            "履歴の削除確認",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        return result == MessageBoxResult.Yes;
+    }
 
     private string SelectPreferredConfiguration(
         string targetPath,
@@ -816,18 +1144,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        IReadOnlyList<RunSummary> summaries = await Task.Run(
-            () => Store().ListAsync(cancellationToken: cancellationToken),
+        IReadOnlyList<RunSummary> summaries = await ListHistoryAsync(
+            new HistoryQuery(Limit: ConfigurationHistoryLimit),
             cancellationToken);
-        SetConfigurationHistory(summaries);
+        ConfigurationHistory configurationHistory = await Task.Run(
+            () => BuildConfigurationHistory(summaries, cancellationToken),
+            cancellationToken);
+        ApplyConfigurationHistory(configurationHistory);
     }
 
-    private void SetConfigurationHistory(IEnumerable<RunSummary> summaries)
+    private Task<IReadOnlyList<RunSummary>> ListHistoryAsync(
+        HistoryQuery query,
+        CancellationToken cancellationToken)
+    {
+        return Task.Run(
+            () => Store().ListAsync(query, cancellationToken),
+            cancellationToken);
+    }
+
+    private static ConfigurationHistory BuildConfigurationHistory(
+        IEnumerable<RunSummary> summaries,
+        CancellationToken cancellationToken)
     {
         Dictionary<string, string> latest = new(StringComparer.OrdinalIgnoreCase);
         List<RecentTarget> recentTargets = new();
         foreach (RunSummary summary in summaries.OrderByDescending(summary => summary.StartedAt))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string? normalizedPath = TryNormalizePath(summary.TargetPath);
             if (normalizedPath is not null)
             {
@@ -841,8 +1184,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
         }
 
-        _latestConfigurationByTarget = latest;
-        MergeRecentTargets(recentTargets);
+        return new ConfigurationHistory(latest, recentTargets);
+    }
+
+    private void ApplyConfigurationHistory(ConfigurationHistory configurationHistory)
+    {
+        _latestConfigurationByTarget = configurationHistory.Latest;
+        MergeRecentTargets(configurationHistory.RecentTargets);
         _historyInitialized = true;
     }
 
@@ -970,6 +1318,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    private sealed record ConfigurationHistory(
+        IReadOnlyDictionary<string, string> Latest,
+        IReadOnlyList<RecentTarget> RecentTargets);
 }
 
 public sealed record RecentTarget(string Name, string Path, DateTimeOffset LastUsed);
@@ -1018,7 +1370,9 @@ public static class ResultTreeBuilder
                 group.OrderBy(item => item.Identity, StringComparer.OrdinalIgnoreCase)
                     .Select(item => new ResultTreeNode(
                         item.Identity,
-                        $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル",
+                        item.OutputsTruncated
+                            ? $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル（先頭100件を表示、全件はexport）"
+                            : $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル",
                         FilterOutputs(item, filter)
                             .OrderBy(output => output.RelativePath, StringComparer.OrdinalIgnoreCase)
                             .Select(output => new ResultTreeNode(

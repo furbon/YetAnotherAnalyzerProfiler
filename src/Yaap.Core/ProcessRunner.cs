@@ -30,6 +30,7 @@ public interface IProcessRunner
 public sealed class ProcessRunner : IProcessRunner
 {
     private const int TailCapacity = 200;
+    private static readonly TimeSpan CancellationExitTimeout = TimeSpan.FromSeconds(5);
 
     public async Task<ProcessResult> RunAsync(
         ProcessInvocation invocation,
@@ -70,20 +71,7 @@ public sealed class ProcessRunner : IProcessRunner
         Task stdoutTask = DrainAsync(process.StandardOutput, stdout, false, onLine);
         Task stderrTask = DrainAsync(process.StandardError, stderr, true, onLine);
         using CancellationTokenRegistration registration = cancellationToken.Register(
-            static state =>
-            {
-                Process child = (Process)state!;
-                try
-                {
-                    if (!child.HasExited)
-                    {
-                        child.Kill(entireProcessTree: true);
-                    }
-                }
-                catch (InvalidOperationException)
-                {
-                }
-            },
+            static state => QueueKill((Process)state!),
             process);
 
         try
@@ -93,14 +81,7 @@ public sealed class ProcessRunner : IProcessRunner
         }
         catch (OperationCanceledException)
         {
-            try
-            {
-                await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
-            }
-            catch (InvalidOperationException)
-            {
-            }
+            await WaitForCancellationExitAsync(process, stdoutTask, stderrTask).ConfigureAwait(false);
 
             throw;
         }
@@ -114,6 +95,84 @@ public sealed class ProcessRunner : IProcessRunner
             stopwatch.Elapsed,
             stdout.Snapshot(),
             stderr.Snapshot());
+    }
+
+    private static async Task WaitForCancellationExitAsync(
+        Process process,
+        Task stdoutTask,
+        Task stderrTask)
+    {
+        Task completion;
+        try
+        {
+            completion = Task.WhenAll(
+                process.WaitForExitAsync(CancellationToken.None),
+                stdoutTask,
+                stderrTask);
+        }
+        catch (InvalidOperationException)
+        {
+            ObserveFault(stdoutTask);
+            ObserveFault(stderrTask);
+            return;
+        }
+
+        if (await Task.WhenAny(
+                completion,
+                Task.Delay(CancellationExitTimeout)).ConfigureAwait(false) == completion)
+        {
+            try
+            {
+                await completion.ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+
+            return;
+        }
+
+        QueueKill(process);
+        ObserveFault(completion);
+    }
+
+    private static void QueueKill(Process process)
+    {
+        try
+        {
+            ThreadPool.QueueUserWorkItem(
+                static state => TryKill((Process)state!),
+                process,
+                preferLocal: false);
+        }
+        catch
+        {
+            // A cancellation callback must never throw, including while the process is racing to exit.
+        }
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // The caller is already canceling; a failed best-effort retry must not mask it.
+        }
+    }
+
+    private static void ObserveFault(Task task)
+    {
+        _ = task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
     }
 
     private static async Task DrainAsync(

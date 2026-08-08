@@ -4,8 +4,13 @@
 保持、削除、比較、出力、入力検出、isolated 出力、失敗、部分結果、キャンセル、CLI、10万件集計を
 検証します。`tests/Yaap.Gui.Tests` は WPF 初期化、D&D、自動構成検出の競合とキャンセル、構成の
 履歴／Release／Debug／アルファベット順選択、空欄・未知構成の開始拒否、実行中を含む状態説明、
-WPF UIテーマ辞書とFluentWindowの統合、詳細設定、非同期コマンド、仮想化、表示上の
-Source Generator 制約を検証します。
+WPF UIテーマ辞書とFluentWindowの統合、restoreを含む詳細設定、履歴日時／件数フィルター、既存binlog
+解析、非同期コマンド、仮想化、表示上のSource Generator制約、生成出力プレビューを切り詰めた場合の
+全件export案内を検証します。
+
+生成出力manifestの回帰試験では、各Generatorの決定的な先頭100件、全件の集計値、
+`OutputsTruncated`、NDJSONの全件ストリーム、読込みキャンセル、CSV／JSON／Markdownへの全件exportを
+検証します。
 
 `tests/assets` の Analyzer／Source Generator fixture を実際に restore／build し、binlog 解析、
 コンパイラレポート、生成ファイルを通した統合回帰を実行します。`tests/local-feed` はパッケージを
@@ -18,3 +23,7 @@ SDK側Loggerを使った測定が完了することを回帰検証します。
 
 GitHub Actions と GitLab CI は .NET 8／10、Windows、Linux、macOSを対象に同じ `eng` ハーネスを
 呼び出します。WPFはWindowsだけで、CLIの self-contained single-file 配布は対象OSで検証します。
+WindowsではGUIテストをDebugで両TFMに対して実行し、STAで `MainWindow` を生成、表示、レイアウト、
+終了します。GUIを変更した場合は `YAAP_GUI_CAPTURE_DIR` に出力したライト／ダーク両テーマの全タブと
+影響状態を目視確認します。publish検証は成果物の厳密な許可リスト、同梱文書、CLIのversion／help、
+Windows GUIの起動と終了まで確認します。

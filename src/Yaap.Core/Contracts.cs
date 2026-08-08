@@ -130,6 +130,7 @@ public sealed record GeneratorSample(
 
 public sealed record GeneratedOutput(
     string GeneratorIdentity,
+    string GeneratorAssembly,
     string RelativePath,
     long ByteCount,
     long LineCount);
@@ -156,7 +157,10 @@ public sealed record GeneratorMetric(
     int GeneratedFileCount,
     long GeneratedByteCount,
     long GeneratedLineCount,
-    IReadOnlyList<GeneratedOutput> Outputs);
+    IReadOnlyList<GeneratedOutput> Outputs)
+{
+    public bool OutputsTruncated { get; init; }
+}
 
 public sealed record MeasurementResult(
     int Index,
@@ -184,6 +188,14 @@ public sealed record ProfileRun
     public required string Configuration { get; init; }
 
     public required ProfileMode Mode { get; init; }
+
+    public int WarmupCount { get; init; }
+
+    public int IterationCount { get; init; }
+
+    public bool CleanBeforeEach { get; init; }
+
+    public bool Restore { get; init; }
 
     public required DateTimeOffset StartedAt { get; init; }
 
@@ -304,6 +316,12 @@ public static class YaapErrors
         "処理をキャンセルしました。",
         detail,
         "部分結果は履歴で確認できます。必要なら条件を変更して再実行してください。");
+
+    public static RunDiagnostic ExportFailed(string detail) => new(
+        "YAAP6001",
+        "測定結果の出力に失敗しました。",
+        detail,
+        "出力先のパス、アクセス権、空き容量を確認してください。");
 
     public static RunDiagnostic UnrecognizedReport(string detail) => new(
         "YAAP3002",
