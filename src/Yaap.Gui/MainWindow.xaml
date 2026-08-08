@@ -254,12 +254,14 @@
                           ItemsSource="{Binding Configurations}"
                           SelectedItem="{Binding Configuration, Mode=TwoWay}"
                           ToolTip="対象から検出したビルド構成" />
-                <ui:Button Grid.Row="0"
+                <ui:Button x:Name="StartButton"
+                           Grid.Row="0"
                            Grid.Column="4"
                            Margin="0"
                            Appearance="Primary"
                            Command="{Binding StartCommand}"
                            Content="測定開始"
+                           FontWeight="SemiBold"
                            ToolTip="{Binding MeasurementStateText}"
                            ToolTipService.ShowOnDisabled="True" />
 
@@ -292,10 +294,12 @@
                                  Margin="0,0,10,0"
                                  IsIndeterminate="True" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock FontWeight="SemiBold"
+                    <TextBlock x:Name="BusyTitle"
+                               FontWeight="SemiBold"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                               Text="測定を実行しています" />
-                    <TextBlock FontSize="12"
+                               Text="{Binding MeasurementStateText}" />
+                    <TextBlock x:Name="BusyMessage"
+                               FontSize="12"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                Text="{Binding StatusText}" />
                 </StackPanel>
@@ -307,12 +311,24 @@
             </Grid>
         </ui:Card>
 
-        <ui:InfoBar DockPanel.Dock="Bottom"
+        <ui:InfoBar x:Name="StatusBar"
+                    DockPanel.Dock="Bottom"
                     Margin="0,12,0,0"
                     IsClosable="False"
                     IsOpen="True"
                     Message="{Binding StatusText}"
-                    Title="{Binding MeasurementStateText}" />
+                    Title="{Binding MeasurementStateText}">
+            <ui:InfoBar.Style>
+                <Style BasedOn="{StaticResource {x:Type ui:InfoBar}}" TargetType="{x:Type ui:InfoBar}">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ui:InfoBar.Style>
+        </ui:InfoBar>
 
         <TabControl x:Name="MainTabs"
                     Margin="0,12,0,0"
@@ -385,7 +401,8 @@
                                 PlaceholderText="Analyzer、診断ID、アセンブリを検索"
                                 Text="{Binding ResultFilter, UpdateSourceTrigger=PropertyChanged}"
                                 ToolTip="Analyzer、診断ID、アセンブリを絞り込み" />
-                    <TabControl Grid.Row="1"
+                    <TabControl x:Name="AnalyzerViewTabs"
+                                Grid.Row="1"
                                 Margin="8,0,8,8"
                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}">
                         <TabItem Header="表形式">
@@ -404,12 +421,12 @@
                                     <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="平均 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                                     <DataGridTextColumn Width="100" Binding="{Binding MinimumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最小 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                                     <DataGridTextColumn Width="100" Binding="{Binding MaximumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最大 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                                    <DataGridTextColumn Width="80" Binding="{Binding SampleCount}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="標本" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                                 </DataGrid.Columns>
                             </ui:DataGrid>
                         </TabItem>
                         <TabItem Header="ツリー形式">
-                            <TreeView ItemsSource="{Binding AnalyzerTree}"
+                            <TreeView x:Name="AnalyzerTreeView"
+                                      ItemsSource="{Binding AnalyzerTree}"
                                       VirtualizingPanel.IsVirtualizing="True"
                                       VirtualizingPanel.VirtualizationMode="Recycling">
                                 <TreeView.ItemTemplate>
