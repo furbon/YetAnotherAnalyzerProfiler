@@ -128,8 +128,37 @@ static async Task EnsurePackageLockRestoreDeterminismAsync(
         "--force-evaluate",
         "-p:RestoreLockedMode=false",
     });
+    EnsureCliRestoreGraphIdentity(root);
     NormalizePackageLockFiles(root);
     EnsurePackageLockHashes(root, expectedHashes, "Forced solution restore");
+}
+
+static void EnsureCliRestoreGraphIdentity(string root)
+{
+    string graphPath = Path.Combine(
+        root,
+        "tests",
+        "Yaap.Tests",
+        "obj",
+        "Yaap.Tests.csproj.nuget.dgspec.json");
+    using JsonDocument graph = JsonDocument.Parse(File.ReadAllText(graphPath));
+    string cliPath = Path.GetFullPath(Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"));
+    JsonElement cliProject = graph.RootElement
+        .GetProperty("projects")
+        .EnumerateObject()
+        .Single(project => Path.GetFullPath(project.Name).Equals(
+            cliPath,
+            StringComparison.OrdinalIgnoreCase))
+        .Value;
+    string? projectName = cliProject
+        .GetProperty("restore")
+        .GetProperty("projectName")
+        .GetString();
+    if (!"yaap".Equals(projectName, StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            $"CLI restore graph identity must be yaap, actual: {projectName ?? "<null>"}");
+    }
 }
 
 static async Task EnsurePackageLockDebugRebuildDeterminismAsync(
@@ -400,14 +429,14 @@ static async Task PackAsync(string root)
                      "README.md",
                      "THIRD-PARTY-NOTICES.txt",
                      "tools/net8.0/any/DotnetToolSettings.xml",
-                     "tools/net8.0/any/YetAnotherAnalyzerProfiler.Tool.deps.json",
-                     "tools/net8.0/any/YetAnotherAnalyzerProfiler.Tool.dll",
-                     "tools/net8.0/any/YetAnotherAnalyzerProfiler.Tool.runtimeconfig.json",
+                     "tools/net8.0/any/yaap.deps.json",
+                     "tools/net8.0/any/yaap.dll",
+                     "tools/net8.0/any/yaap.runtimeconfig.json",
                      "tools/net8.0/any/Yaap.BuildLogger.dll",
                      "tools/net10.0/any/DotnetToolSettings.xml",
-                     "tools/net10.0/any/YetAnotherAnalyzerProfiler.Tool.deps.json",
-                     "tools/net10.0/any/YetAnotherAnalyzerProfiler.Tool.dll",
-                     "tools/net10.0/any/YetAnotherAnalyzerProfiler.Tool.runtimeconfig.json",
+                     "tools/net10.0/any/yaap.deps.json",
+                     "tools/net10.0/any/yaap.dll",
+                     "tools/net10.0/any/yaap.runtimeconfig.json",
                      "tools/net10.0/any/Yaap.BuildLogger.dll",
                  })
         {
@@ -424,6 +453,13 @@ static async Task PackAsync(string root)
                 "NuGet tool package must not leak build logger assemblies as project content.");
         }
 
+        if (entries.Any(entry =>
+                entry.EndsWith("/YetAnotherAnalyzerProfiler.Tool.deps.json", StringComparison.OrdinalIgnoreCase) ||
+                entry.EndsWith("/YetAnotherAnalyzerProfiler.Tool.runtimeconfig.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "NuGet tool runtime metadata must use the yaap command name.");
+        }
     }
 
     string smokeRoot = Path.Combine(
@@ -1121,27 +1157,19 @@ static void EnsureCliRestoreIdentity(string root)
              {
                  "<AssemblyName>YetAnotherAnalyzerProfiler.Tool</AssemblyName>",
                  "<PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>",
+                 "<TargetName>yaap</TargetName>",
+                 "<ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>",
+                 "<ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>",
                  "<ToolCommandName>yaap</ToolCommandName>",
+                 "<Target Name=\"AlignRestoreProjectIdentity\"",
+                 "BeforeTargets=\"_GenerateRestoreProjectSpec\"",
+                 "<PackageId>yaap</PackageId>",
              })
     {
         if (!project.Contains(contract, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 $"CLI restore/package/output identities must remain deterministic: {contract}");
-        }
-    }
-
-    foreach (string forbiddenOverride in new[]
-             {
-                 "<TargetName>",
-                 "<ProjectDepsFileName>",
-                 "<ProjectRuntimeConfigFileName>",
-             })
-    {
-        if (project.Contains(forbiddenOverride, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                $"CLI output identity must derive from AssemblyName: {forbiddenOverride}");
         }
     }
 }

@@ -3,6 +3,9 @@
     <OutputType>Exe</OutputType>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <AssemblyName>YetAnotherAnalyzerProfiler.Tool</AssemblyName>
+    <TargetName>yaap</TargetName>
+    <ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>
+    <ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>
     <RootNamespace>Yaap.Cli</RootNamespace>
     <Description>Cross-platform non-interactive CLI for YAAP.</Description>
     <PackAsTool>true</PackAsTool>
@@ -25,4 +28,10 @@
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="/" />
   </ItemGroup>
+  <Target Name="AlignRestoreProjectIdentity"
+          BeforeTargets="_GenerateRestoreProjectSpec">
+    <PropertyGroup>
+      <PackageId>yaap</PackageId>
+    </PropertyGroup>
+  </Target>
 </Project>
