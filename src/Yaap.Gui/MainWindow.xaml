@@ -68,54 +68,65 @@
                             Padding="12,4"
                             Command="{Binding BrowseCommand}"
                             Content="参照" />
-                    <ui:DropDownButton x:Name="RecentTargetsButton"
-                                       Padding="10,4"
-                                       Content="最近使用"
-                                       ToolTip="履歴にある測定対象を選択">
-                        <ui:DropDownButton.Flyout>
-                            <ui:Flyout Placement="Bottom">
-                                <ui:Card Width="440" Padding="8">
-                                    <Grid>
-                                        <TextBlock HorizontalAlignment="Center"
-                                                   Margin="12"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                                   Text="最近使った対象はありません">
-                                            <TextBlock.Style>
-                                                <Style TargetType="{x:Type TextBlock}">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding RecentTargets.Count}" Value="0">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                        <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
-                                            <ItemsControl ItemsSource="{Binding RecentTargets}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Button Margin="0,0,0,4"
-                                                                Padding="10,6"
-                                                                HorizontalContentAlignment="Stretch"
-                                                                Click="OnRecentTargetClick">
-                                                            <StackPanel>
-                                                                <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                                                                <TextBlock FontSize="11"
-                                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                                                           Text="{Binding Path}"
-                                                                           TextTrimming="CharacterEllipsis" />
-                                                            </StackPanel>
-                                                        </Button>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </ScrollViewer>
-                                    </Grid>
-                                </ui:Card>
-                            </ui:Flyout>
-                        </ui:DropDownButton.Flyout>
-                    </ui:DropDownButton>
+                    <ToggleButton x:Name="RecentTargetsButton"
+                                  Padding="10,4"
+                                  Content="最近使用 ▼"
+                                  ToolTip="最近選択した測定対象を選択" />
+                    <Popup x:Name="RecentTargetsPopup"
+                           AllowsTransparency="True"
+                           IsOpen="{Binding IsChecked, ElementName=RecentTargetsButton, Mode=TwoWay}"
+                           Placement="Bottom"
+                           PlacementTarget="{Binding ElementName=RecentTargetsButton}"
+                           PopupAnimation="Fade"
+                           StaysOpen="False">
+                        <ui:Card Width="440"
+                                 Margin="0,4,0,0"
+                                 Padding="8"
+                                 Background="{DynamicResource ApplicationBackgroundBrush}"
+                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                            <Grid>
+                                <TextBlock x:Name="RecentTargetsEmptyMessage"
+                                           HorizontalAlignment="Center"
+                                           Margin="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Text="最近使った対象はありません">
+                                    <TextBlock.Style>
+                                        <Style TargetType="{x:Type TextBlock}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RecentTargets.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl x:Name="RecentTargetsItems"
+                                                  ItemsSource="{Binding RecentTargets}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Margin="0,0,0,4"
+                                                        Padding="10,6"
+                                                        Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        Click="OnRecentTargetClick">
+                                                    <StackPanel>
+                                                        <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                                        <TextBlock FontSize="11"
+                                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                                   Text="{Binding Path}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Grid>
+                        </ui:Card>
+                    </Popup>
                 </StackPanel>
                 <ComboBox x:Name="ConfigurationSelector"
                           Grid.Row="0"

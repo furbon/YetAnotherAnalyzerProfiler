@@ -10,6 +10,8 @@ namespace Yaap.Gui;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
+    private const int MaxRecentTargets = 10;
+
     private readonly ProfileRunner _profileRunner;
     private readonly Func<string, CancellationToken, Task<TargetInfo>> _targetDiscoverer;
     private readonly TimeSpan _targetDiscoveryDelay;
@@ -95,6 +97,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (Set(ref _targetPath, value))
             {
+                if (TargetDiscovery.IsSupportedPath(value))
+                {
+                    AddOrPromoteRecentTarget(value, DateTimeOffset.UtcNow);
+                }
+
                 RecentTarget? matchingRecentTarget = RecentTargets.FirstOrDefault(item =>
                     PathsEqual(item.Path, value));
                 Set(ref _selectedRecentTarget, matchingRecentTarget, nameof(SelectedRecentTarget));
@@ -129,8 +136,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 _historyInitialized = false;
                 _latestConfigurationByTarget =
                     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                RecentTargets.Clear();
-                Set(ref _selectedRecentTarget, null, nameof(SelectedRecentTarget));
                 OnPropertyChanged(nameof(AdvancedSettingsSummary));
                 if (_hasValidTarget && !IsRunning)
                 {
@@ -837,17 +842,75 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         _latestConfigurationByTarget = latest;
-        RecentTargets.Clear();
-        foreach (RecentTarget recentTarget in recentTargets)
+        MergeRecentTargets(recentTargets);
+        _historyInitialized = true;
+    }
+
+    private void AddOrPromoteRecentTarget(string path, DateTimeOffset lastUsed)
+    {
+        string? normalizedPath = TryNormalizePath(path);
+        if (normalizedPath is null || !TargetDiscovery.IsSupportedPath(normalizedPath))
         {
-            RecentTargets.Add(recentTarget);
+            return;
+        }
+
+        RecentTarget? existing = RecentTargets.FirstOrDefault(item =>
+            PathsEqual(item.Path, normalizedPath));
+        if (existing is not null)
+        {
+            RecentTargets.Remove(existing);
+        }
+
+        RecentTargets.Insert(0, new RecentTarget(
+            Path.GetFileName(normalizedPath),
+            normalizedPath,
+            lastUsed));
+        while (RecentTargets.Count > MaxRecentTargets)
+        {
+            RecentTargets.RemoveAt(RecentTargets.Count - 1);
+        }
+
+        Set(
+            ref _selectedRecentTarget,
+            RecentTargets[0],
+            nameof(SelectedRecentTarget));
+    }
+
+    private void MergeRecentTargets(IEnumerable<RecentTarget> targets)
+    {
+        Dictionary<string, RecentTarget> merged = new(StringComparer.OrdinalIgnoreCase);
+        foreach (RecentTarget target in RecentTargets.Concat(targets))
+        {
+            string? normalizedPath = TryNormalizePath(target.Path);
+            if (normalizedPath is null)
+            {
+                continue;
+            }
+
+            RecentTarget normalized = target with
+            {
+                Name = Path.GetFileName(normalizedPath),
+                Path = normalizedPath,
+            };
+            if (!merged.TryGetValue(normalizedPath, out RecentTarget? existing) ||
+                normalized.LastUsed > existing.LastUsed)
+            {
+                merged[normalizedPath] = normalized;
+            }
+        }
+
+        RecentTargets.Clear();
+        foreach (RecentTarget target in merged.Values
+                     .OrderByDescending(item => item.LastUsed)
+                     .Take(MaxRecentTargets))
+        {
+            RecentTargets.Add(target);
         }
 
         Set(
             ref _selectedRecentTarget,
             RecentTargets.FirstOrDefault(item => PathsEqual(item.Path, TargetPath)),
             nameof(SelectedRecentTarget));
-        _historyInitialized = true;
     }
 
     private static string? TryNormalizePath(string? path)

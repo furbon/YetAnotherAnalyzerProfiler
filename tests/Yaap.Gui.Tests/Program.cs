@@ -1,6 +1,7 @@
 ﻿using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -14,6 +15,7 @@ List<(string Name, Func<Task> Body)> tests = new()
     ("gui.viewmodel-initialization", ViewModelInitializationAsync),
     ("gui.window-startup-smoke", WindowStartupSmokeAsync),
     ("gui.drop-and-auto-discovery", DropAndAutoDiscoveryAsync),
+    ("gui.recent-target-ordering", RecentTargetOrderingAsync),
     ("gui.configuration-priority", ConfigurationPriorityAsync),
     ("gui.configuration-history", ConfigurationHistoryAsync),
     ("gui.result-tree-filtering", ResultTreeFilteringAsync),
@@ -48,6 +50,10 @@ static async Task WindowStartupSmokeAsync()
         "yaap-gui-tests",
         Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(historyPath);
+    string recentTargetPath = System.IO.Path.Combine(historyPath, "RecentTarget.csproj");
+    await File.WriteAllTextAsync(
+        recentTargetPath,
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
     TaskCompletionSource<Exception?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     Thread thread = new(() =>
     {
@@ -70,15 +76,38 @@ static async Task WindowStartupSmokeAsync()
             FrameworkElement targetCard = (FrameworkElement)window.FindName("TargetCard");
             FrameworkElement busyCard = (FrameworkElement)window.FindName("BusyCard");
             Button cancelButton = (Button)window.FindName("BusyCancelButton");
+            ToggleButton recentTargetsButton =
+                (ToggleButton)window.FindName("RecentTargetsButton");
+            Popup recentTargetsPopup = (Popup)window.FindName("RecentTargetsPopup");
+            FrameworkElement recentTargetsPopupContent = recentTargetsPopup.Child as FrameworkElement ??
+                throw new InvalidOperationException("The recent-target popup content was not created.");
+            ItemsControl recentTargetsItems = (ItemsControl)window.FindName("RecentTargetsItems");
+            TextBlock recentTargetsEmptyMessage =
+                (TextBlock)window.FindName("RecentTargetsEmptyMessage");
             TextBlock compareBaselineLabel = (TextBlock)window.FindName("CompareBaselineLabel");
             TextBlock exportFormatLabel = (TextBlock)window.FindName("ExportFormatLabel");
             TextBlock settingsTitle = (TextBlock)window.FindName("SettingsTitle");
+            Ensure(
+                ReferenceEquals(recentTargetsPopup.DataContext, viewModel),
+                "The recent-target popup must bind to the window view model.");
+            recentTargetsButton.IsChecked = true;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            Ensure(recentTargetsPopup.IsOpen, "The empty recent-target popup should still open.");
+            Ensure(
+                recentTargetsEmptyMessage.Visibility == Visibility.Visible,
+                "The empty recent-target popup should explain that there are no items.");
+            recentTargetsButton.IsChecked = false;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), true);
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(!targetCard.IsEnabled, "The target controls must be disabled while measuring.");
             Ensure(!mainTabs.IsEnabled, "Result and history tabs must be disabled while measuring.");
             Ensure(busyCard.Visibility == Visibility.Visible, "The measurement progress surface must be visible.");
             Ensure(cancelButton.IsEnabled, "Cancel must remain enabled while measuring.");
+            viewModel.RecentTargets.Add(new RecentTarget(
+                System.IO.Path.GetFileName(recentTargetPath),
+                recentTargetPath,
+                DateTimeOffset.UtcNow));
 
             string? captureDirectory = Environment.GetEnvironmentVariable("YAAP_GUI_CAPTURE_DIR");
             foreach (AppThemeMode mode in new[] { AppThemeMode.Light, AppThemeMode.Dark })
@@ -120,10 +149,43 @@ static async Task WindowStartupSmokeAsync()
                         $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
                 }
 
+                recentTargetsButton.IsChecked = true;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Ensure(recentTargetsPopup.IsOpen, "The recent-target popup should open in each theme.");
+                recentTargetsItems.UpdateLayout();
+                ContentPresenter themedRecentTargetPresenter =
+                    (ContentPresenter)recentTargetsItems.ItemContainerGenerator.ContainerFromIndex(0);
+                Button themedRecentTargetItem = FindVisualDescendant<Button>(themedRecentTargetPresenter) ??
+                    throw new InvalidOperationException("The themed recent-target item was not rendered.");
+                EnsureReadableForeground(
+                    themedRecentTargetItem.Foreground,
+                    mode,
+                    $"{mode} recent-target item");
+                CaptureElement(
+                    recentTargetsPopupContent,
+                    captureDirectory,
+                    $"{mode.ToString().ToLowerInvariant()}-recent-targets");
+                recentTargetsButton.IsChecked = false;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+
                 SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), true);
             }
 
             SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), false);
+            recentTargetsButton.IsChecked = true;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            Ensure(recentTargetsButton.IsChecked == true, "The recent-target button should stay toggled while open.");
+            Ensure(recentTargetsPopup.IsOpen, "The recent-target popup should be visible.");
+            Ensure(recentTargetsItems.Items.Count == 1, "The recent-target popup should render its item.");
+            recentTargetsItems.UpdateLayout();
+            ContentPresenter recentTargetPresenter =
+                (ContentPresenter)recentTargetsItems.ItemContainerGenerator.ContainerFromIndex(0);
+            Button recentTargetItem = FindVisualDescendant<Button>(recentTargetPresenter) ??
+                throw new InvalidOperationException("The recent-target item button was not rendered.");
+            recentTargetItem.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Ensure(viewModel.TargetPath == recentTargetPath, "Clicking a recent target should select it.");
+            Ensure(recentTargetsButton.IsChecked == false, "Selecting a recent target should reset the toggle button.");
+            Ensure(!recentTargetsPopup.IsOpen, "Selecting a recent target should close the popup.");
             window.Close();
             completion.TrySetResult(null);
         }
@@ -160,10 +222,16 @@ static async Task WindowStartupSmokeAsync()
 
 static void CaptureWindow(Window window, string? captureDirectory, string name)
 {
-    int width = Math.Max(1, (int)Math.Ceiling(window.ActualWidth));
-    int height = Math.Max(1, (int)Math.Ceiling(window.ActualHeight));
+    CaptureElement(window, captureDirectory, name);
+}
+
+static void CaptureElement(FrameworkElement element, string? captureDirectory, string name)
+{
+    element.UpdateLayout();
+    int width = Math.Max(1, (int)Math.Ceiling(element.ActualWidth));
+    int height = Math.Max(1, (int)Math.Ceiling(element.ActualHeight));
     RenderTargetBitmap bitmap = new(width, height, 96, 96, PixelFormats.Pbgra32);
-    bitmap.Render(window);
+    bitmap.Render(element);
     Ensure(bitmap.PixelWidth == width && bitmap.PixelHeight == height, "The GUI render bitmap is invalid.");
     if (string.IsNullOrWhiteSpace(captureDirectory))
     {
@@ -214,6 +282,27 @@ static double RelativeLuminance(Color color)
     return (0.2126 * Linearize(color.R)) +
         (0.7152 * Linearize(color.G)) +
         (0.0722 * Linearize(color.B));
+}
+
+static T? FindVisualDescendant<T>(DependencyObject root)
+    where T : DependencyObject
+{
+    for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+    {
+        DependencyObject child = VisualTreeHelper.GetChild(root, index);
+        if (child is T match)
+        {
+            return match;
+        }
+
+        T? descendant = FindVisualDescendant<T>(child);
+        if (descendant is not null)
+        {
+            return descendant;
+        }
+    }
+
+    return null;
 }
 
 static void SetPrivateProperty<T>(object target, string propertyName, T value)
@@ -320,14 +409,21 @@ static async Task DropAndAutoDiscoveryAsync()
         await File.WriteAllTextAsync(
             project,
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><Configurations>Debug;Profile;Release</Configurations><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
-        using MainViewModel viewModel = new(targetDiscoveryDelay: TimeSpan.Zero);
+        using MainViewModel viewModel = new(targetDiscoveryDelay: TimeSpan.Zero)
+        {
+            HistoryPath = System.IO.Path.Combine(path, "history"),
+        };
         Ensure(!viewModel.TrySetDroppedTarget(Array.Empty<string>()), "An empty drop should be rejected.");
         Ensure(!viewModel.TrySetDroppedTarget(new[] { project, project }), "A multi-file drop should be rejected.");
         Ensure(!viewModel.TrySetDroppedTarget(new[] { System.IO.Path.Combine(path, "Sample.txt") }), "An unsupported extension should be rejected.");
         Ensure(!viewModel.TrySetDroppedTarget(new[] { System.IO.Path.Combine(path, "Missing.csproj") }), "A missing project drop should be rejected.");
         Ensure(viewModel.TrySetDroppedTarget(new[] { project }), "A supported project drop should be accepted.");
-        await viewModel.WaitForTargetDiscoveryAsync();
         Ensure(viewModel.TargetPath == System.IO.Path.GetFullPath(project), "The dropped target was not selected.");
+        Ensure(
+            viewModel.RecentTargets.Count == 1,
+            $"A selected valid target should be added to recent targets immediately. Status: {viewModel.StatusText}");
+        Ensure(viewModel.RecentTargets[0].Path == System.IO.Path.GetFullPath(project), "The selected target should be the newest recent item.");
+        await viewModel.WaitForTargetDiscoveryAsync();
         Ensure(viewModel.Configurations.SequenceEqual(new[] { "Debug", "Profile", "Release" }), "Configurations were not discovered.");
         Ensure(viewModel.Configuration == "Release", "Release should be preferred when the previous configuration is invalid.");
         Ensure(viewModel.StartCommand.CanExecute(null), "Start should be enabled after discovery.");
@@ -339,6 +435,72 @@ static async Task DropAndAutoDiscoveryAsync()
         Ensure(!viewModel.StartCommand.CanExecute(null), "A configuration absent from discovery must disable Start.");
         viewModel.Configuration = "Release";
         Ensure(viewModel.StartCommand.CanExecute(null), "A discovered configuration should re-enable Start.");
+    }
+    finally
+    {
+        Directory.Delete(path, recursive: true);
+    }
+}
+
+static async Task RecentTargetOrderingAsync()
+{
+    string path = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(),
+        "yaap-gui-tests",
+        Guid.NewGuid().ToString("N"));
+    string historyPath = System.IO.Path.Combine(path, "history");
+    Directory.CreateDirectory(path);
+    try
+    {
+        string historicalProject = System.IO.Path.Combine(path, "Historical.csproj");
+        await File.WriteAllTextAsync(historicalProject, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        HistoryStore store = new(historyPath);
+        await store.SaveAsync(CreateHistoricalRun(
+            historicalProject,
+            "Release",
+            DateTimeOffset.UtcNow.AddDays(-1)));
+
+        using MainViewModel viewModel = new(
+            targetDiscoverer: (target, _) => Task.FromResult(new TargetInfo(
+                System.IO.Path.GetFullPath(target),
+                System.IO.Path.GetExtension(target),
+                new[] { "Release" },
+                new[] { "net8.0" })),
+            targetDiscoveryDelay: TimeSpan.Zero)
+        {
+            HistoryPath = historyPath,
+        };
+        await viewModel.InitializeAsync();
+        Ensure(viewModel.RecentTargets.Count == 1, "Persisted history should seed recent targets.");
+
+        List<string> projects = new();
+        for (int index = 0; index < 12; index++)
+        {
+            string project = System.IO.Path.Combine(path, $"Project{index:D2}.csproj");
+            await File.WriteAllTextAsync(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+            projects.Add(project);
+            viewModel.TargetPath = project;
+            await viewModel.WaitForTargetDiscoveryAsync();
+        }
+
+        Ensure(viewModel.RecentTargets.Count == 10, "Recent targets should remain bounded to ten items.");
+        Ensure(viewModel.RecentTargets[0].Path == projects[^1], "The newest selected target should be first.");
+        Ensure(!viewModel.RecentTargets.Any(item => item.Path == projects[0]), "The oldest target should be evicted.");
+
+        viewModel.TargetPath = projects[5];
+        await viewModel.WaitForTargetDiscoveryAsync();
+        Ensure(viewModel.RecentTargets.Count == 10, "Re-selecting a target must not duplicate it.");
+        Ensure(viewModel.RecentTargets[0].Path == projects[5], "Re-selecting a target should promote it to first.");
+
+        await viewModel.InitializeAsync();
+        Ensure(
+            viewModel.RecentTargets.Any(item => item.Path == projects[5]),
+            "Refreshing persisted history must not discard current-session targets.");
+        Ensure(viewModel.RecentTargets[0].Path == projects[5], "History refresh should preserve session recency.");
+
+        viewModel.TargetPath = System.IO.Path.Combine(path, "Unsupported.txt");
+        await viewModel.WaitForTargetDiscoveryAsync();
+        Ensure(viewModel.RecentTargets.Count == 10, "Invalid targets must not be added to recent targets.");
     }
     finally
     {
@@ -644,7 +806,8 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("Header=\"設定\"", StringComparison.Ordinal), "The settings tab is required.");
     Ensure(xaml.Contains("AccentFillColorDefaultBrush", StringComparison.Ordinal), "Selected main tabs should have a visible accent.");
     Ensure(xaml.Contains("TextOnAccentFillColorPrimaryBrush", StringComparison.Ordinal), "Selected tab text must contrast with the accent.");
-    Ensure(xaml.Contains("ui:DropDownButton", StringComparison.Ordinal), "Recent targets must use a compact drop-down.");
+    Ensure(xaml.Contains("x:Name=\"RecentTargetsButton\"", StringComparison.Ordinal), "Recent targets must use a compact button.");
+    Ensure(xaml.Contains("x:Name=\"RecentTargetsPopup\"", StringComparison.Ordinal), "Recent targets must use a reliable popup.");
     Ensure(xaml.Contains("ui:ProgressRing", StringComparison.Ordinal), "Measurement progress must be visually prominent.");
     Ensure(xaml.Contains("x:Name=\"BusyCancelButton\"", StringComparison.Ordinal), "Cancel must remain available on the busy surface.");
     Ensure(xaml.Contains("AllowDrop=\"True\"", StringComparison.Ordinal), "File drop must be enabled.");
