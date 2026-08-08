@@ -33,11 +33,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private CancellationTokenSource? _historyRefreshCancellation;
     private CancellationTokenSource? _resultFilterCancellation;
     private CancellationTokenSource? _labelSaveCancellation;
+    private Guid? _labelSaveId;
     private Task _targetDiscoveryTask = Task.CompletedTask;
     private Task _historyRefreshTask = Task.CompletedTask;
     private Task _resultFilterTask = Task.CompletedTask;
     private Task _labelSaveTask = Task.CompletedTask;
+    private Task _shutdownTask = Task.CompletedTask;
     private long _targetDiscoveryGeneration;
+    private Guid? _loadingHistoryId;
     private string _targetPath = string.Empty;
     private string _configuration = string.Empty;
     private string _historyPath = string.Empty;
@@ -62,7 +65,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _isDiscoveringTarget;
     private bool _hasValidTarget;
     private bool _historyInitialized;
+    private bool _historyRefreshPending;
     private bool _disposed;
+    private ProcessDidNotTerminateException? _shutdownBlocker;
     private int _warmupCount = 1;
     private int _iterationCount = 3;
     private int _retentionCount = 50;
@@ -82,6 +87,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly Stack<LabelEdit> _labelUndo = new();
     private readonly Stack<LabelEdit> _labelRedo = new();
     private bool _isApplyingLabelHistory;
+    private string? _statusTitleOverride;
+    private Wpf.Ui.Controls.InfoBarSeverity? _statusSeverityOverride;
 
     public MainViewModel(
         IProfileRunner? profileRunner = null,
@@ -204,6 +211,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (Set(ref _configuration, value ?? string.Empty))
             {
+                if (!IsDiscoveringTarget && _hasValidTarget)
+                {
+                    SetStatusOverride(
+                        CurrentMeasurementState.Text,
+                        Wpf.Ui.Controls.InfoBarSeverity.Informational);
+                    StatusText = string.IsNullOrWhiteSpace(Configuration)
+                        ? "ビルド構成を入力または選択してください。"
+                        : Configurations.Any(configuration => configuration.Equals(
+                            Configuration,
+                            StringComparison.OrdinalIgnoreCase))
+                            ? $"{Configuration} 構成で測定できます。"
+                            : "対象からは検出されていません。入力した構成名を dotnet build に渡します。";
+                }
+                else
+                {
+                    ClearStatusOverride();
+                }
+
                 RaiseCommandStates();
             }
         }
@@ -352,7 +377,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 : value[..HistoryStore.MaximumLabelLength];
             if (Set(ref _selectedHistoryLabel, limited))
             {
-                QueueLabelSave();
+                QueueLabelSave(TimeSpan.FromMilliseconds(400));
             }
         }
     }
@@ -522,6 +547,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool IsBusySurfaceVisible => IsRunning ||
         (IsOperationRunning && _showOperationBusySurface);
 
+    public bool IsInlineOperationVisible => IsOperationRunning && !_showOperationBusySurface;
+
     public bool IsDiscoveringTarget
     {
         get => _isDiscoveringTarget;
@@ -539,9 +566,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _selectedHistory;
         set
         {
+            if (!_isApplyingLabelHistory && _selectedHistory?.Id != value?.Id)
+            {
+                FlushPendingLabelSave();
+            }
+
             if (Set(ref _selectedHistory, value))
             {
-                CancelLabelSave();
+                if (_loadingHistoryId is Guid loadingId && value?.Id != loadingId)
+                {
+                    _operationCancellation?.Cancel();
+                }
+
                 _selectedHistoryLabel = value?.Label ?? string.Empty;
                 _committedHistoryLabel = _selectedHistoryLabel;
                 OnPropertyChanged(nameof(SelectedHistoryLabel));
@@ -580,22 +616,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public string MeasurementStateText => CurrentMeasurementState.Text;
 
-    public string StatusTitleText => SelectedRun?.Status switch
+    public string StatusTitleText => _statusTitleOverride ?? (SelectedRun?.Status switch
     {
         RunStatus.Failed => "測定失敗",
         RunStatus.Partial => "部分結果",
         RunStatus.Canceled => "測定キャンセル",
         RunStatus.Succeeded => "測定完了",
         _ => MeasurementStateText,
-    };
+    });
 
-    public Wpf.Ui.Controls.InfoBarSeverity StatusSeverity => SelectedRun?.Status switch
+    public Wpf.Ui.Controls.InfoBarSeverity StatusSeverity => _statusSeverityOverride ?? (SelectedRun?.Status switch
     {
         RunStatus.Succeeded => Wpf.Ui.Controls.InfoBarSeverity.Success,
         RunStatus.Partial or RunStatus.Canceled => Wpf.Ui.Controls.InfoBarSeverity.Warning,
         RunStatus.Failed => Wpf.Ui.Controls.InfoBarSeverity.Error,
         _ => Wpf.Ui.Controls.InfoBarSeverity.Informational,
-    };
+    });
 
     public string BusyTitleText => IsRunning ? MeasurementStateText : "処理中";
 
@@ -683,6 +719,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public Task WaitForTargetDiscoveryAsync() => _targetDiscoveryTask;
 
+    public Task ShutdownAsync()
+    {
+        if (_disposed)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (!_shutdownTask.IsCompleted)
+        {
+            return _shutdownTask;
+        }
+
+        _shutdownTask = ShutdownCoreAsync();
+        return _shutdownTask;
+    }
+
     public bool CanAcceptDroppedTarget(IReadOnlyList<string> paths)
     {
         return !IsBusy && paths.Count == 1 && TargetDiscovery.IsSupportedPath(paths[0]);
@@ -730,6 +782,65 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _operationCancellation?.Cancel();
         _lifetimeCancellation.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private async Task ShutdownCoreAsync()
+    {
+        CancelActiveOperation();
+        CancellationTokenSource? discovery = Interlocked.Exchange(ref _targetDiscoveryCancellation, null);
+        discovery?.Cancel();
+        CancelAndDispose(ref _historyRefreshCancellation);
+        CancelAndDispose(ref _resultFilterCancellation);
+
+        Task[] activeCommands = AsyncCommands()
+            .Select(command => command.Completion)
+            .ToArray();
+        await Task.WhenAll(activeCommands);
+        await _labelSaveTask;
+        if (_shutdownBlocker is { } blocker && IsProcessRunning(blocker.ProcessId))
+        {
+            throw blocker;
+        }
+
+        _shutdownBlocker = null;
+
+        Dispose();
+    }
+
+    private static bool IsProcessRunning(int processId)
+    {
+        try
+        {
+            using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private IEnumerable<AsyncRelayCommand> AsyncCommands()
+    {
+        foreach (ICommand command in new[]
+                 {
+                     StartCommand,
+                     RefreshHistoryCommand,
+                     LoadSelectedCommand,
+                     DeleteSelectedCommand,
+                     DeleteAllHistoryCommand,
+                     UndoLabelCommand,
+                     RedoLabelCommand,
+                     CompareCommand,
+                     ExportCommand,
+                     AnalyzeBinlogCommand,
+                 })
+        {
+            if (command is AsyncRelayCommand asyncCommand)
+            {
+                yield return asyncCommand;
+            }
+        }
     }
 
     private void QueueTargetDiscovery()
@@ -1020,10 +1131,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void QueueHistoryRefresh()
     {
-        if (_disposed || !_historyInitialized || IsBusy)
+        if (_disposed || !_historyInitialized)
         {
             return;
         }
+
+        if (IsBusy)
+        {
+            _historyRefreshPending = true;
+            return;
+        }
+
+        _historyRefreshPending = false;
 
         CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _lifetimeCancellation.Token);
@@ -1091,7 +1210,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         int? limit = ParseOptionalLimit(HistoryLimit);
         if (from > to)
         {
-            throw new YaapException(YaapErrors.InvalidInput("History start must not be after history end."));
+            throw new YaapException(YaapErrors.InvalidOption("履歴の開始日は終了日以前にしてください。"));
         }
 
         await EnsureConfigurationHistoryAsync(cancellationToken);
@@ -1125,19 +1244,38 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task LoadSelectedAsync(CancellationToken cancellationToken)
     {
-        if (SelectedHistory is null)
+        Guid? requestedId = SelectedHistory?.Id;
+        if (requestedId is null)
         {
             return;
         }
 
-        ProfileRun run = await _historyLoader(SelectedHistory.Id, cancellationToken);
-        string filter = ResultFilter;
-        ResultProjection projection = await Task.Run(
-            () => BuildResultProjection(run, filter, cancellationToken),
-            cancellationToken);
-        SetSelectedRun(run, projection, filter);
-        SelectedBaseline = ComparisonChoices.FirstOrDefault(item => item.Id == run.Id);
-        StatusText = $"測定結果を読み込みました: {run.TargetName}";
+        _loadingHistoryId = requestedId;
+        try
+        {
+            ProfileRun run = await _historyLoader(requestedId.Value, cancellationToken);
+            string filter = ResultFilter;
+            ResultProjection projection = await Task.Run(
+                () => BuildResultProjection(run, filter, cancellationToken),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (SelectedHistory?.Id != requestedId)
+            {
+                return;
+            }
+
+            SetSelectedRun(run, projection, filter);
+            SelectedBaseline = ComparisonChoices.FirstOrDefault(item => item.Id == run.Id);
+            ClearStatusOverride();
+            StatusText = $"測定結果を読み込みました: {run.TargetName}";
+        }
+        finally
+        {
+            if (_loadingHistoryId == requestedId)
+            {
+                _loadingHistoryId = null;
+            }
+        }
     }
 
     private async Task DeleteSelectedAsync(CancellationToken cancellationToken)
@@ -1150,7 +1288,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (!_confirmDelete(selected))
         {
-            StatusText = "履歴の削除を取り消しました。";
+            StatusText = "履歴を削除しませんでした。";
             return;
         }
 
@@ -1164,7 +1302,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (!_confirmDeleteAll())
         {
-            StatusText = "すべての履歴の削除を取り消しました。";
+            StatusText = "履歴を削除しませんでした。";
             return;
         }
 
@@ -1180,12 +1318,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (SelectedBaseline is null || SelectedCandidate is null)
         {
-            throw new YaapException(YaapErrors.InvalidInput("比較する2つの測定結果を選択してください。"));
+            throw new YaapException(YaapErrors.InvalidOption("比較する2つの測定結果を選択してください。"));
         }
 
         if (SelectedBaseline.Id == SelectedCandidate.Id)
         {
-            throw new YaapException(YaapErrors.InvalidInput("異なる2つの測定結果を選択してください。"));
+            throw new YaapException(YaapErrors.InvalidOption("異なる2つの測定結果を選択してください。"));
         }
 
         HistoryStore history = Store();
@@ -1201,7 +1339,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (SelectedRun is null || string.IsNullOrWhiteSpace(ExportPath))
         {
-            throw new YaapException(YaapErrors.InvalidInput("保存ファイルを選択してください。"));
+            throw new YaapException(YaapErrors.InvalidOption("保存ファイルを選択してください。"));
         }
 
         Yaap.Core.ExportFormat format = GetExportFormat(ExportPath);
@@ -1272,7 +1410,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         StatusText = $"binlogを解析しました: {analysis.EventCount:N0} イベント";
     }
 
-    private void QueueLabelSave()
+    private void QueueLabelSave(TimeSpan delay)
     {
         if (_disposed || _isApplyingLabelHistory || SelectedHistory is null)
         {
@@ -1284,29 +1422,41 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         CancellationTokenSource? previous = Interlocked.Exchange(
             ref _labelSaveCancellation,
             cancellation);
-        previous?.Cancel();
         Guid id = SelectedHistory.Id;
+        if (_labelSaveId == id)
+        {
+            previous?.Cancel();
+        }
+
+        _labelSaveId = id;
         string value = SelectedHistoryLabel;
         string before = _committedHistoryLabel;
-        _labelSaveTask = SaveLabelAfterDelayAsync(id, value, before, cancellation);
+        Task save = SaveLabelAfterDelayAsync(id, value, before, delay, cancellation);
+        _labelSaveTask = Task.WhenAll(_labelSaveTask, save);
     }
 
     private async Task SaveLabelAfterDelayAsync(
         Guid id,
         string value,
         string before,
+        TimeSpan delay,
         CancellationTokenSource cancellation)
     {
         try
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(400), cancellation.Token);
+            await Task.Delay(delay, cancellation.Token);
             string normalized = value.Trim();
             if (normalized.Equals(before, StringComparison.Ordinal))
             {
                 return;
             }
 
-            await Store().UpdateLabelAsync(id, normalized, cancellation.Token);
+            bool updated = await Store().UpdateLabelIfCurrentAsync(id, before, normalized, cancellation.Token);
+            if (!updated)
+            {
+                throw new YaapException(YaapErrors.HistoryFailed(
+                    "履歴ラベルが別のYAAPで更新されました。一覧を更新してから編集してください。"));
+            }
             ApplyPersistedLabel(id, normalized);
             _labelUndo.Push(new LabelEdit(id, before, normalized));
             _labelRedo.Clear();
@@ -1322,21 +1472,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         finally
         {
-            Interlocked.CompareExchange(ref _labelSaveCancellation, null, cancellation);
+            if (ReferenceEquals(
+                    Interlocked.CompareExchange(ref _labelSaveCancellation, null, cancellation),
+                    cancellation))
+            {
+                _labelSaveId = null;
+            }
             cancellation.Dispose();
         }
     }
 
     private async Task UndoLabelAsync(CancellationToken cancellationToken)
     {
-        CancelLabelSave();
+        FlushPendingLabelSave();
+        await _labelSaveTask;
         if (_labelUndo.Count == 0)
         {
             return;
         }
 
         LabelEdit edit = _labelUndo.Peek();
-        await Store().UpdateLabelAsync(edit.Id, edit.Before, cancellationToken);
+        bool updated = await Store().UpdateLabelIfCurrentAsync(edit.Id, edit.After, edit.Before, cancellationToken);
+        if (!updated)
+        {
+            throw new YaapException(YaapErrors.HistoryFailed(
+                "履歴ラベルが別のYAAPで更新されたため、元に戻せません。一覧を更新してください。"));
+        }
         _labelUndo.Pop();
         ApplyPersistedLabel(edit.Id, edit.Before);
         _labelRedo.Push(edit);
@@ -1345,14 +1506,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task RedoLabelAsync(CancellationToken cancellationToken)
     {
-        CancelLabelSave();
+        FlushPendingLabelSave();
+        await _labelSaveTask;
         if (_labelRedo.Count == 0)
         {
             return;
         }
 
         LabelEdit edit = _labelRedo.Peek();
-        await Store().UpdateLabelAsync(edit.Id, edit.After, cancellationToken);
+        bool updated = await Store().UpdateLabelIfCurrentAsync(edit.Id, edit.Before, edit.After, cancellationToken);
+        if (!updated)
+        {
+            throw new YaapException(YaapErrors.HistoryFailed(
+                "履歴ラベルが別のYAAPで更新されたため、やり直せません。一覧を更新してください。"));
+        }
         _labelRedo.Pop();
         ApplyPersistedLabel(edit.Id, edit.After);
         _labelUndo.Push(edit);
@@ -1391,12 +1558,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private void CancelLabelSave()
+    private void FlushPendingLabelSave()
     {
-        CancellationTokenSource? cancellation = Interlocked.Exchange(
-            ref _labelSaveCancellation,
-            null);
-        cancellation?.Cancel();
+        if (_labelSaveCancellation is null || SelectedHistory is null)
+        {
+            return;
+        }
+
+        _labelSaveCancellation.Cancel();
+        QueueLabelSave(TimeSpan.Zero);
     }
 
     private void UpdateComparisonChoices(IEnumerable<RunSummary> summaries)
@@ -1468,19 +1638,37 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         IReadOnlyList<StatisticalMetric> analyzers = run?.Analyzers
+            .Select(item => CheckResultFilterCancellation(item, cancellationToken))
             .Where(item => MatchesFilter(filter, item.Identity, item.Assembly, item.DiagnosticId))
             .ToArray() ?? Array.Empty<StatisticalMetric>();
         cancellationToken.ThrowIfCancellationRequested();
         IReadOnlyList<GeneratorMetric> generators = run?.Generators
+            .Select(item => CheckResultFilterCancellation(item, cancellationToken))
             .Where(item => MatchesFilter(filter, item.Identity, item.Assembly) ||
-                item.Outputs.Any(output => MatchesFilter(filter, output.RelativePath)))
+                item.Outputs
+                    .Select(output => CheckResultFilterCancellation(output, cancellationToken))
+                    .Any(output => MatchesFilter(filter, output.RelativePath)))
             .ToArray() ?? Array.Empty<GeneratorMetric>();
         cancellationToken.ThrowIfCancellationRequested();
         return new ResultProjection(
             analyzers,
             generators,
-            ResultTreeBuilder.BuildAnalyzers(run?.Analyzers ?? Array.Empty<StatisticalMetric>(), filter),
-            ResultTreeBuilder.BuildGenerators(run?.Generators ?? Array.Empty<GeneratorMetric>(), filter));
+            ResultTreeBuilder.BuildAnalyzers(
+                run?.Analyzers ?? Array.Empty<StatisticalMetric>(),
+                filter,
+                cancellationToken),
+            ResultTreeBuilder.BuildGenerators(
+                run?.Generators ?? Array.Empty<GeneratorMetric>(),
+                filter,
+                cancellationToken));
+    }
+
+    private static T CheckResultFilterCancellation<T>(
+        T value,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return value;
     }
 
     private void ApplyResultProjection(ResultProjection projection)
@@ -1500,6 +1688,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ResultProjection? preparedProjection = null,
         string? preparedFilter = null)
     {
+        ClearStatusOverride();
         if (!Set(ref _selectedRun, value))
         {
             return;
@@ -1534,7 +1723,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ".json" => Yaap.Core.ExportFormat.Json,
             ".csv" => Yaap.Core.ExportFormat.Csv,
             ".md" or ".markdown" => Yaap.Core.ExportFormat.Markdown,
-            _ => throw new YaapException(YaapErrors.InvalidInput(
+            _ => throw new YaapException(YaapErrors.InvalidOption(
                 "保存ファイルの拡張子は .json、.csv、.md、.markdown のいずれかを指定してください。")),
         };
 
@@ -1593,6 +1782,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         _showOperationBusySurface = showBusySurface;
         IsOperationRunning = true;
+        OnPropertyChanged(nameof(IsInlineOperationVisible));
+        SetStatusOverride("処理中", Wpf.Ui.Controls.InfoBarSeverity.Informational);
         StatusText = status;
         try
         {
@@ -1603,6 +1794,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!_disposed)
             {
                 StatusText = "処理をキャンセルしました。";
+                SetStatusOverride(
+                    "処理キャンセル",
+                    Wpf.Ui.Controls.InfoBarSeverity.Warning);
             }
         }
         finally
@@ -1613,6 +1807,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 IsOperationRunning = false;
                 _showOperationBusySurface = false;
+                OnPropertyChanged(nameof(IsInlineOperationVisible));
+                if (_statusTitleOverride == "処理中")
+                {
+                    ClearStatusOverride();
+                }
+
+                if (_historyRefreshPending)
+                {
+                    QueueHistoryRefresh();
+                }
             }
         }
     }
@@ -1656,9 +1860,38 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        SetStatusOverride("処理失敗", Wpf.Ui.Controls.InfoBarSeverity.Error);
+        if (exception is ProcessDidNotTerminateException blocker)
+        {
+            _shutdownBlocker = blocker;
+        }
+
         StatusText = exception is YaapException yaap
             ? $"{yaap.Diagnostic.Code}: {yaap.Diagnostic.Message} {yaap.Diagnostic.Detail} {yaap.Diagnostic.SuggestedAction}"
             : exception.Message;
+    }
+
+    private void SetStatusOverride(
+        string title,
+        Wpf.Ui.Controls.InfoBarSeverity severity)
+    {
+        _statusTitleOverride = title;
+        _statusSeverityOverride = severity;
+        OnPropertyChanged(nameof(StatusTitleText));
+        OnPropertyChanged(nameof(StatusSeverity));
+    }
+
+    private void ClearStatusOverride()
+    {
+        if (_statusTitleOverride is null && _statusSeverityOverride is null)
+        {
+            return;
+        }
+
+        _statusTitleOverride = null;
+        _statusSeverityOverride = null;
+        OnPropertyChanged(nameof(StatusTitleText));
+        OnPropertyChanged(nameof(StatusSeverity));
     }
 
     private void RaiseCommandStates()
@@ -1727,7 +1960,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (!TryParseHistoryDateText(value, out DateTime result))
         {
-            throw new YaapException(YaapErrors.InvalidInput(
+            throw new YaapException(YaapErrors.InvalidOption(
                 $"{label}を日付として解釈できません。例: 2026/01/31、2026-01-31、31/Jan/2026"));
         }
 
@@ -1760,7 +1993,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             System.Globalization.CultureInfo.InvariantCulture,
             out int result) && result is >= 1 and <= 10000
             ? result
-            : throw new YaapException(YaapErrors.InvalidInput("History limit must be between 1 and 10000."));
+            : throw new YaapException(YaapErrors.InvalidOption("履歴の表示件数は 1～10000 を指定してください。"));
     }
 
     private static bool ConfirmDelete(RunSummary summary)
@@ -2049,53 +2282,113 @@ public static class ResultTreeBuilder
 {
     public static IReadOnlyList<ResultTreeNode> BuildAnalyzers(
         IEnumerable<StatisticalMetric> metrics,
-        string? filter)
+        string? filter,
+        CancellationToken cancellationToken = default)
     {
-        return metrics
-            .Where(item => Matches(filter, item.Identity, item.Assembly, item.DiagnosticId))
-            .GroupBy(item => item.Assembly, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new ResultTreeNode(
-                group.Key,
-                $"{group.Count()} 項目",
-                group.OrderBy(item => item.Identity, StringComparer.OrdinalIgnoreCase)
-                    .Select(item => new ResultTreeNode(
-                        item.DiagnosticId is null
-                            ? item.Identity
-                            : $"{item.DiagnosticId}: {item.Identity}",
-                        $"{item.Kind}、平均 {item.MeanMilliseconds:N3} ms",
-                        Array.Empty<ResultTreeNode>()))
-                    .ToArray()))
-            .ToArray();
+        try
+        {
+            return metrics
+                .Select(item => CheckCancellation(item, cancellationToken))
+                .Where(item => Matches(filter, item.Identity, item.Assembly, item.DiagnosticId))
+                .GroupBy(item => item.Assembly, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(
+                    group => group.Key,
+                    CreateCancellationAwareComparer<string>(static value => value, cancellationToken))
+                .Select(group => CheckCancellation(new ResultTreeNode(
+                    group.Key,
+                    $"{group.Count()} 項目",
+                    group.OrderBy(
+                            item => item,
+                            CreateCancellationAwareComparer<StatisticalMetric>(
+                                static item => item.Identity,
+                                cancellationToken))
+                        .Select(item => CheckCancellation(new ResultTreeNode(
+                            item.DiagnosticId is null
+                                ? item.Identity
+                                : $"{item.DiagnosticId}: {item.Identity}",
+                            $"{item.Kind}、平均 {item.MeanMilliseconds:N3} ms",
+                            Array.Empty<ResultTreeNode>()), cancellationToken))
+                        .ToArray()), cancellationToken))
+                .ToArray();
+        }
+        catch (InvalidOperationException exception) when (
+            cancellationToken.IsCancellationRequested &&
+            exception.InnerException is OperationCanceledException)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
     }
 
     public static IReadOnlyList<ResultTreeNode> BuildGenerators(
         IEnumerable<GeneratorMetric> metrics,
-        string? filter)
+        string? filter,
+        CancellationToken cancellationToken = default)
     {
-        return metrics
-            .Where(item => Matches(filter, item.Identity, item.Assembly) ||
-                item.Outputs.Any(output => Matches(filter, output.RelativePath)))
-            .GroupBy(item => item.Assembly, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new ResultTreeNode(
-                group.Key,
-                $"{group.Count()} Generator",
-                group.OrderBy(item => item.Identity, StringComparer.OrdinalIgnoreCase)
-                    .Select(item => new ResultTreeNode(
-                        item.Identity,
-                        item.OutputsTruncated
-                            ? $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル（先頭100件を表示、全件はexport）"
-                            : $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル",
-                        FilterOutputs(item, filter)
-                            .OrderBy(output => output.RelativePath, StringComparer.OrdinalIgnoreCase)
-                            .Select(output => new ResultTreeNode(
-                                output.RelativePath,
-                                $"{output.ByteCount:N0} バイト、{output.LineCount:N0} 行",
-                                Array.Empty<ResultTreeNode>()))
-                            .ToArray()))
-                    .ToArray()))
-            .ToArray();
+        try
+        {
+            return metrics
+                .Select(item => CheckCancellation(item, cancellationToken))
+                .Where(item => Matches(filter, item.Identity, item.Assembly) ||
+                    item.Outputs
+                        .Select(output => CheckCancellation(output, cancellationToken))
+                        .Any(output => Matches(filter, output.RelativePath)))
+                .GroupBy(item => item.Assembly, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(
+                    group => group.Key,
+                    CreateCancellationAwareComparer<string>(static value => value, cancellationToken))
+                .Select(group => CheckCancellation(new ResultTreeNode(
+                    group.Key,
+                    $"{group.Count()} Generator",
+                    group.OrderBy(
+                            item => item,
+                            CreateCancellationAwareComparer<GeneratorMetric>(
+                                static item => item.Identity,
+                                cancellationToken))
+                        .Select(item => CheckCancellation(new ResultTreeNode(
+                            item.Identity,
+                            item.OutputsTruncated
+                                ? $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル（先頭100件を表示、全件はexport）"
+                                : $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル",
+                            FilterOutputs(item, filter)
+                                .Select(output => CheckCancellation(output, cancellationToken))
+                                .OrderBy(
+                                    output => output,
+                                    CreateCancellationAwareComparer<GeneratedOutput>(
+                                        static output => output.RelativePath,
+                                        cancellationToken))
+                                .Select(output => CheckCancellation(new ResultTreeNode(
+                                    output.RelativePath,
+                                    $"{output.ByteCount:N0} バイト、{output.LineCount:N0} 行",
+                                    Array.Empty<ResultTreeNode>()), cancellationToken))
+                                .ToArray()), cancellationToken))
+                        .ToArray()), cancellationToken))
+                .ToArray();
+        }
+        catch (InvalidOperationException exception) when (
+            cancellationToken.IsCancellationRequested &&
+            exception.InnerException is OperationCanceledException)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+    }
+
+    private static T CheckCancellation<T>(T value, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return value;
+    }
+
+    private static IComparer<T> CreateCancellationAwareComparer<T>(
+        Func<T, string> keySelector,
+        CancellationToken cancellationToken)
+    {
+        return Comparer<T>.Create((left, right) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return StringComparer.OrdinalIgnoreCase.Compare(
+                keySelector(left),
+                keySelector(right));
+        });
     }
 
     private static IEnumerable<GeneratedOutput> FilterOutputs(GeneratorMetric generator, string? filter)
@@ -2105,9 +2398,22 @@ public static class ResultTreeBuilder
             : generator.Outputs.Where(output => Matches(filter, output.RelativePath));
     }
 
-    private static bool Matches(string? filter, params string?[] values)
+    private static bool Matches(string? filter, string? first, string? second = null)
     {
         return string.IsNullOrWhiteSpace(filter) ||
-            values.Any(value => value?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
+            first?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true ||
+            second?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool Matches(
+        string? filter,
+        string? first,
+        string? second,
+        string? third)
+    {
+        return string.IsNullOrWhiteSpace(filter) ||
+            first?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true ||
+            second?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true ||
+            third?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true;
     }
 }

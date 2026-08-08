@@ -21,7 +21,8 @@ YAAP は、C# ビルドに含まれる Roslyn Analyzer と Source Generator の�
 
 ## クイックスタート
 
-NuGetで公開されたCLIは、.NETグローバルツールとしてインストールできます。
+このソースツリーの `0.1.0` はまだ公開されていません。公開後は、NuGet のパッケージページと
+由来証明付きリリースに記載された版を確認してから、.NETグローバルツールとしてインストールできます。
 
 ```powershell
 dotnet tool install --global YetAnotherAnalyzerProfiler.Tool
@@ -75,17 +76,17 @@ CLIのNuGetパッケージをローカルで作成・インストール検証す
 次のように起動します。
 
 ```powershell
-.\yaap.exe version
-.\yaap.exe profile C:\path\to\App.slnx
-.\yaap-gui.exe
+.\cli\yaap.exe version
+.\cli\yaap.exe profile C:\path\to\App.slnx
+.\gui\yaap-gui.exe
 ```
 
 Linux／macOSのCLIは、展開先で実行権限を確認して起動します。
 
 ```sh
-chmod +x ./yaap
-./yaap version
-./yaap profile /path/to/App.slnx
+chmod +x ./cli/yaap
+./cli/yaap version
+./cli/yaap profile /path/to/App.slnx
 ```
 
 ソースは .NET 8／10 を対象にします。公開する自己完結型バイナリのOS、CPUアーキテクチャ、TFMは
@@ -113,6 +114,7 @@ binlogが含まれ得ます。binlogやrestore／clean／build出力には、対
 - [トラブルシュート](docs/troubleshooting.md) — エラーコードと対処
 - [設計](docs/architecture.md) — コンポーネントとデータフロー
 - [開発ガイド](docs/development.md)／[テスト方針](docs/testing.md)
+- [公開チェックリスト](docs/release-checklist.md) — 公開前ゲート、由来証明、失敗時の復旧
 - [DeepReviewガイド](docs/deep-review.md) — 明示起動専用の最高水準リポジトリ総合レビュー
 - [変更履歴](CHANGELOG.md)、[貢献ガイド](CONTRIBUTING.md)、
   [セキュリティ方針](SECURITY.md)、[サポート方針](SUPPORT.md)

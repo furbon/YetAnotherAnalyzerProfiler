@@ -9,6 +9,7 @@ public sealed class AsyncRelayCommand : ICommand
     private readonly Action<Exception>? _onError;
     private CancellationTokenSource? _cancellation;
     private bool _executing;
+    private Task _completion = Task.CompletedTask;
 
     public AsyncRelayCommand(
         Func<CancellationToken, Task> execute,
@@ -24,6 +25,8 @@ public sealed class AsyncRelayCommand : ICommand
 
     public bool IsExecuting => _executing;
 
+    public Task Completion => _completion;
+
     public bool CanExecute(object? parameter) => !_executing && (_canExecute?.Invoke() ?? true);
 
     public async void Execute(object? parameter)
@@ -33,6 +36,12 @@ public sealed class AsyncRelayCommand : ICommand
             return;
         }
 
+        _completion = ExecuteAsync();
+        await _completion;
+    }
+
+    private async Task ExecuteAsync()
+    {
         _executing = true;
         CancellationTokenSource cancellation = new();
         _cancellation = cancellation;

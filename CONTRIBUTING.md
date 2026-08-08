@@ -15,7 +15,7 @@
 
 ## 開発環境
 
-- .NET 8 SDKまたは.NET 10 SDK
+- .NET SDK 8.0.423 と 10.0.302（`global.json` とCIで固定）
 - Git
 - GUIのビルド、テスト、目視確認にはWindows
 
@@ -32,7 +32,7 @@ sh ./eng/build.sh verify
 
 ## ブランチと変更範囲
 
-- エージェントによる変更は、利用者が準備した最新の `develop/v...` から `agent/<変更名>` を作成します。
+- すべての変更は、管理者が準備した最新の `develop/v...` から `agent/<変更名>` を作成します。`agent` は自動化専用という意味ではなく、pre-commit guard が許可する作業ブランチ接頭辞です。
 - `main`、`master`、`develop/*` へ直接コミットしません。
 - 関係のない整形、生成物、ローカルパス、binlog、履歴、秘密情報を変更へ含めません。
 - コミットメッセージはConventional Commitsを使用します。

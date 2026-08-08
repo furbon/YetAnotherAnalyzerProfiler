@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
+using Yaap.Core;
 
 namespace Yaap.Gui;
 
@@ -16,6 +17,8 @@ public partial class MainWindow : FluentWindow
 {
     private readonly ConditionalWeakTable<System.Windows.Controls.Button, object> _configuredCalendarButtons = new();
     private bool _scrollBarRefreshPending;
+    private bool _shutdownInProgress;
+    private bool _shutdownCompleted;
 
     public MainWindow()
         : this(new MainViewModel())
@@ -36,12 +39,58 @@ public partial class MainWindow : FluentWindow
             ApplySelectedTheme();
             await viewModel.InitializeAsync();
         };
-        Closing += (_, _) => SystemThemeWatcher.UnWatch(this);
+        Closing += OnClosingAsync;
         Closed += (_, _) =>
         {
+            SystemThemeWatcher.UnWatch(this);
             viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             viewModel.Dispose();
         };
+    }
+
+    private async void OnClosingAsync(object? sender, CancelEventArgs eventArgs)
+    {
+        if (_shutdownCompleted)
+        {
+            return;
+        }
+
+        eventArgs.Cancel = true;
+        if (_shutdownInProgress || DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        _shutdownInProgress = true;
+        IsEnabled = false;
+        try
+        {
+            await viewModel.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(20));
+            _shutdownCompleted = true;
+            Close();
+        }
+        catch (TimeoutException exception)
+        {
+            IsEnabled = true;
+            _shutdownInProgress = false;
+            System.Windows.MessageBox.Show(
+                this,
+                $"実行中の処理を安全に終了できませんでした。処理の完了後にもう一度閉じてください。\n\n{exception.Message}",
+                "終了待機",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+        }
+        catch (YaapException exception)
+        {
+            IsEnabled = true;
+            _shutdownInProgress = false;
+            System.Windows.MessageBox.Show(
+                this,
+                $"実行中の子プロセスが終了していないため、YAAPを閉じません。\n\n{exception.Diagnostic.Detail}\n{exception.Diagnostic.SuggestedAction}",
+                "終了できません",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)

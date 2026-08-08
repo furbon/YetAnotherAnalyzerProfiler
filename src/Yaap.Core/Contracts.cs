@@ -181,7 +181,12 @@ public sealed record MeasurementResult(
     IReadOnlyList<AnalyzerSample> Analyzers,
     IReadOnlyList<GeneratorSample> Generators,
     IReadOnlyList<GeneratedOutput> GeneratedOutputs,
-    IReadOnlyList<RunDiagnostic> Diagnostics);
+    IReadOnlyList<RunDiagnostic> Diagnostics)
+{
+    public double? CompilerReportedAnalyzerTotalMilliseconds { get; init; }
+
+    public double? CompilerReportedGeneratorTotalMilliseconds { get; init; }
+}
 
 public sealed record ProfileRun
 {
@@ -223,6 +228,10 @@ public sealed record ProfileRun
 
     public IReadOnlyList<GeneratorMetric> Generators { get; set; } = Array.Empty<GeneratorMetric>();
 
+    public double? CompilerReportedAnalyzerMeanMilliseconds { get; set; }
+
+    public double? CompilerReportedGeneratorMeanMilliseconds { get; set; }
+
     public IReadOnlyList<RunDiagnostic> Diagnostics { get; set; } = Array.Empty<RunDiagnostic>();
 
     public string? Label { get; set; }
@@ -243,9 +252,120 @@ public sealed record ProfileRun
             FinishedAt,
             Analyzers.Count,
             Generators.Count,
-            Analyzers.Sum(item => item.MeanMilliseconds),
-            Generators.Sum(item => item.MeanMilliseconds),
+            CompilerReportedAnalyzerSummary(),
+            CompilerReportedGeneratorSummary(),
             Label);
+    }
+
+    private double CompilerReportedAnalyzerSummary()
+    {
+        if (CompilerReportedAnalyzerMeanMilliseconds is { } total)
+        {
+            return total;
+        }
+
+        double sum = 0;
+        int count = 0;
+        foreach (MeasurementResult measurement in Measurements)
+        {
+            if (!measurement.BuildSucceeded)
+            {
+                continue;
+            }
+
+            sum += measurement.CompilerReportedAnalyzerTotalMilliseconds ??
+                Statistics.CompilerReportedAnalyzerTotal(measurement.Analyzers);
+            count++;
+        }
+
+        return count > 0 ? sum / count : CompilerReportedAnalyzerTotal(Analyzers);
+    }
+
+    private double CompilerReportedGeneratorSummary()
+    {
+        if (CompilerReportedGeneratorMeanMilliseconds is { } total)
+        {
+            return total;
+        }
+
+        double sum = 0;
+        int count = 0;
+        foreach (MeasurementResult measurement in Measurements)
+        {
+            if (!measurement.BuildSucceeded)
+            {
+                continue;
+            }
+
+            sum += measurement.CompilerReportedGeneratorTotalMilliseconds ??
+                Statistics.CompilerReportedGeneratorTotal(measurement.Generators);
+            count++;
+        }
+
+        return count > 0 ? sum / count : CompilerReportedGeneratorTotal(Generators);
+    }
+
+    private static double CompilerReportedAnalyzerTotal(
+        IReadOnlyList<StatisticalMetric> metrics)
+    {
+        Dictionary<string, (double Children, double? AssemblyTotal)> assemblies =
+            new(StringComparer.Ordinal);
+        foreach (StatisticalMetric metric in metrics)
+        {
+            if (metric.Kind != MetricKind.Analyzer)
+            {
+                continue;
+            }
+
+            assemblies.TryGetValue(metric.Assembly, out (double Children, double? AssemblyTotal) current);
+            if (metric.Identity.Equals(metric.Assembly, StringComparison.Ordinal))
+            {
+                current.AssemblyTotal = metric.MeanMilliseconds;
+            }
+            else
+            {
+                current.Children += metric.MeanMilliseconds;
+            }
+
+            assemblies[metric.Assembly] = current;
+        }
+
+        double total = 0;
+        foreach ((double children, double? assemblyTotal) in assemblies.Values)
+        {
+            total += assemblyTotal ?? children;
+        }
+
+        return total;
+    }
+
+    private static double CompilerReportedGeneratorTotal(
+        IReadOnlyList<GeneratorMetric> metrics)
+    {
+        Dictionary<string, (double Children, double? AssemblyTotal)> assemblies =
+            new(StringComparer.Ordinal);
+        foreach (GeneratorMetric metric in metrics)
+        {
+            assemblies.TryGetValue(metric.Assembly, out (double Children, double? AssemblyTotal) current);
+            if (metric.Identity.Equals(metric.Assembly, StringComparison.Ordinal))
+            {
+                current.AssemblyTotal = metric.MeanMilliseconds;
+            }
+            else
+            {
+                current.Children += metric.MeanMilliseconds;
+            }
+
+            assemblies[metric.Assembly] = current;
+        }
+
+        double total = 0;
+        foreach ((double children, double? assemblyTotal) in assemblies.Values)
+        {
+            total += assemblyTotal ?? children;
+        }
+
+        return total;
     }
 }
 
@@ -288,7 +408,7 @@ public sealed record ComparisonResult(
     long GeneratedByteCountDelta,
     IReadOnlyList<string> Warnings);
 
-public sealed class YaapException : Exception
+public class YaapException : Exception
 {
     public YaapException(RunDiagnostic diagnostic, Exception? innerException = null)
         : base(diagnostic.Message, innerException)
@@ -299,6 +419,17 @@ public sealed class YaapException : Exception
     public RunDiagnostic Diagnostic { get; }
 }
 
+public sealed class ProcessDidNotTerminateException : YaapException
+{
+    public ProcessDidNotTerminateException(int processId)
+        : base(YaapErrors.ProcessDidNotTerminate(processId))
+    {
+        ProcessId = processId;
+    }
+
+    public int ProcessId { get; }
+}
+
 public static class YaapErrors
 {
     public static RunDiagnostic InvalidInput(string detail) => new(
@@ -306,6 +437,12 @@ public static class YaapErrors
         "入力を開けません。",
         detail,
         "存在する .sln、.slnx、または .csproj を指定してください。");
+
+    public static RunDiagnostic InvalidOption(string detail) => new(
+        "YAAP1002",
+        "指定した条件が無効です。",
+        detail,
+        "入力値、選択項目、許容範囲を確認してから再実行してください。");
 
     public static RunDiagnostic ProcessFailed(
         ProcessOperation operation,
@@ -315,6 +452,12 @@ public static class YaapErrors
             $"{GetOperationLabel(operation)} に失敗しました（終了コード {exitCode}）。",
             detail,
             GetProcessSuggestedAction(operation));
+
+    public static RunDiagnostic ProcessDidNotTerminate(int processId) => new(
+        "YAAP2002",
+        "キャンセル後も子プロセスが終了しませんでした。",
+        $"プロセスID: {processId}",
+        "対象プロセスをOSの管理ツールで終了し、安全に終了できるまでYAAPを閉じないでください。");
 
     public static RunDiagnostic BinlogFailed(string detail) => new(
         "YAAP3001",
@@ -328,7 +471,7 @@ public static class YaapErrors
         detail,
         "履歴ディレクトリのアクセス権、空き容量、破損ファイルを確認してください。");
 
-    public static RunDiagnostic Canceled(string detail = "Operation canceled by the user.") => new(
+    public static RunDiagnostic Canceled(string detail = "利用者の操作によりキャンセルされました。") => new(
         "YAAP5001",
         "処理をキャンセルしました。",
         detail,

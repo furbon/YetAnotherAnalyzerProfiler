@@ -1,0 +1,32 @@
+﻿name: バグ報告
+description: 再現可能な不具合を報告します
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: セキュリティ問題や秘密情報は記載せず、SECURITY.md の非公開経路を使用してください。
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 発生したこと
+      description: 期待した結果と実際の結果を記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小の再現手順
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: YAAP版・OS・.NET SDK
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 診断コードと無害化したログ
+      description: 絶対パス、資格情報、binlog内の機密情報を除去してください。

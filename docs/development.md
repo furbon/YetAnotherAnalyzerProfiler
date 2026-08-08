@@ -2,11 +2,11 @@
 
 ## 必要なもの
 
-- .NET 8 SDK または .NET 10 SDK
+- .NET SDK 8.0.423 と 10.0.302（検証では両方を使用）
 - WPF／GUIのビルドと実行には Windows
 - Git（製品の実行自体には必須ではありません）
 
-`global.json` は .NET 8 以上の最新メジャーを選択します。Core と CLI は `net8.0;net10.0`、
+`global.json` と `eng/toolchain.json` は検証SDKを固定します。Core と CLI は `net8.0;net10.0`、
 GUI は `net8.0-windows;net10.0-windows` を対象にします。バージョンは
 `eng/Version.props` だけを変更し、アセンブリ／ファイル版の4番目は常に0です。
 
@@ -48,8 +48,15 @@ Pull RequestではGitHub Actionsの全OS／両TFM検証が完了しない限り�
 `vX.Y.Z` タグを付けます。`.github/workflows/release.yml` はタグと唯一の版情報が一致することを全jobで確認し、
 .NET 8／10、Windows／Linux／macOSを再検証してからNuGetツールと4 RIDの自己完結型アーカイブを作成します。
 公開jobはGitHub Environment `release` に置き、Environmentへ `NUGET_API_KEY` secretと必要な承認者を設定します。
-成果物の検証が完了するまでNuGet pushとGitHub Release公開は行われません。再実行時は同一版のNuGetを
-skip-duplicateで扱い、draft releaseへ成果物を再添付してから公開します。
+成果物の検証が完了するまでNuGet pushとGitHub Release公開は行われません。workflowは公開済みReleaseの
+変更を拒否し、既存NuGetと候補のSHA-256を公開前後に照合します。パッケージと各RIDアーカイブは生成jobで
+provenance attestationを作り、draftへ同一成果物を添付してから公開します。復旧とホスト設定の必須条件は
+[公開チェックリスト](release-checklist.md)を参照してください。
+
+GitLab CIはLinuxの両TFMと、`windows`／`macos`タグを持つ自己管理runnerでプラットフォーム検証を行います。
+runner管理者は隔離された一時作業領域、必要SDK、PowerShell、WPFの対話可能セッションを用意してください。
+現在の公開経路の正本はGitHub release workflowです。GitLabから公開する場合は、保護tag、承認environment、
+digest照合、producer provenanceが同等になる別設計を承認してから有効化します。
 
 ## ファイルと品質
 

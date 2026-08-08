@@ -77,7 +77,7 @@ public static class RunComparison
             double? delta = hasBaseline && hasCandidate ? after - before : null;
             double? percent = delta is not null && before != 0 ? delta / before * 100 : null;
             target.Add(new MetricDelta(
-                identity,
+                FormatComparisonIdentity(identity, category),
                 category,
                 hasBaseline ? before : null,
                 hasCandidate ? after : null,
@@ -88,17 +88,36 @@ public static class RunComparison
         }
     }
 
+    private static string FormatComparisonIdentity(string key, string category)
+    {
+        string[] parts = key.Split(new[] { "::" }, StringSplitOptions.None);
+        if (parts.Length < 2)
+        {
+            return key;
+        }
+
+        string kind = category.Equals("analyzer", StringComparison.Ordinal) && parts.Length >= 3
+            ? parts[2] switch
+            {
+                nameof(MetricKind.Diagnostic) => "診断",
+                nameof(MetricKind.Analyzer) => "Analyzer",
+                _ => parts[2],
+            }
+            : "Generator";
+        return $"{parts[1]}（{parts[0]} / {kind}）";
+    }
+
     private static IReadOnlyList<string> GetWarnings(ProfileRun baseline, ProfileRun candidate)
     {
         List<string> warnings = new();
-        AddWarningIfDifferent(warnings, "状態", baseline.Status, candidate.Status);
-        AddWarningIfDifferent(warnings, "測定モード", baseline.Mode, candidate.Mode);
+        AddWarningIfDifferent(warnings, "状態", FormatStatus(baseline.Status), FormatStatus(candidate.Status));
+        AddWarningIfDifferent(warnings, "測定モード", FormatMode(baseline.Mode), FormatMode(candidate.Mode));
         AddWarningIfDifferent(warnings, "ウォームアップ回数", baseline.WarmupCount, candidate.WarmupCount);
         AddWarningIfDifferent(warnings, "測定回数", baseline.IterationCount, candidate.IterationCount);
-        AddWarningIfDifferent(warnings, "clean方針", baseline.CleanBeforeEach, candidate.CleanBeforeEach);
-        AddWarningIfDifferent(warnings, "restore方針", baseline.Restore, candidate.Restore);
-        AddWarningIfDifferent(warnings, "分離出力", baseline.Isolated, candidate.Isolated);
-        AddWarningIfDifferent(warnings, "成功測定数", baseline.Measurements.Count, candidate.Measurements.Count);
+        AddWarningIfDifferent(warnings, "clean方針", FormatEnabled(baseline.CleanBeforeEach), FormatEnabled(candidate.CleanBeforeEach));
+        AddWarningIfDifferent(warnings, "restore方針", FormatEnabled(baseline.Restore), FormatEnabled(candidate.Restore));
+        AddWarningIfDifferent(warnings, "分離出力", FormatEnabled(baseline.Isolated), FormatEnabled(candidate.Isolated));
+        AddWarningIfDifferent(warnings, "成功サンプル数", CountSuccessfulMeasurements(baseline), CountSuccessfulMeasurements(candidate));
         AddWarningIfDifferent(warnings, "SDK", baseline.Environment.DotNetSdk, candidate.Environment.DotNetSdk);
         AddWarningIfDifferent(warnings, "OS", baseline.Environment.OperatingSystem, candidate.Environment.OperatingSystem);
         AddWarningIfDifferent(warnings, "アーキテクチャ", baseline.Environment.Architecture, candidate.Environment.Architecture);
@@ -124,4 +143,38 @@ public static class RunComparison
             warnings.Add($"{field}が異なります: ベースライン={baseline}, 候補={candidate}");
         }
     }
+
+    private static int CountSuccessfulMeasurements(ProfileRun run)
+    {
+        int count = 0;
+        foreach (MeasurementResult measurement in run.Measurements)
+        {
+            if (measurement.BuildSucceeded)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static string FormatStatus(RunStatus status) => status switch
+    {
+        RunStatus.Running => "実行中",
+        RunStatus.Succeeded => "成功",
+        RunStatus.Partial => "部分結果",
+        RunStatus.Failed => "失敗",
+        RunStatus.Canceled => "キャンセル",
+        _ => status.ToString(),
+    };
+
+    private static string FormatMode(ProfileMode mode) => mode switch
+    {
+        ProfileMode.Warm => "ウォーム",
+        ProfileMode.Cold => "コールド",
+        ProfileMode.Custom => "カスタム",
+        _ => mode.ToString(),
+    };
+
+    private static string FormatEnabled(bool value) => value ? "有効" : "無効";
 }

@@ -1,0 +1,33 @@
+﻿name: 質問・利用相談
+description: 設定、測定結果、運用方法について相談します
+title: "[Question]: "
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: 機密情報、絶対パス、未公開コードを除去してください。脆弱性はSECURITY.mdの非公開経路へ報告してください。
+  - type: textarea
+    id: goal
+    attributes:
+      label: 実現したいこと
+      description: 測定対象と確認したい結果を簡潔に記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: 試したこと
+      description: 使用したコマンドやGUI操作、参照した文書を記載してください。
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: YAAP版・OS・.NET SDK
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 無害化した診断情報
+      description: 診断コードや必要最小限のログを記載してください。

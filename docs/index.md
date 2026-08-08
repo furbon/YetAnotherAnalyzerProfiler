@@ -17,6 +17,7 @@
 - [セキュリティ方針](../SECURITY.md) — 信頼境界、履歴／binlogの取扱い、脆弱性報告
 - [サポート方針](../SUPPORT.md) — 対応範囲、問い合わせ時に必要な情報
 - [変更履歴](../CHANGELOG.md) — リリース内容、互換性、既知の制約
+- [公開チェックリスト](release-checklist.md) — 公開ゲート、由来証明、復旧
 
 ### YAAPを開発する
 
@@ -81,7 +82,8 @@ GUIのキャンセルボタンは、測定、履歴I/O、比較、exportのう�
 
 ## 配布ディレクトリ
 
-`eng`ハーネスでpublishした場合の基本構成です。
+`eng`ハーネスでpublishした場合の主要ファイル例です。実際には自己完結実行に必要なruntimeファイルと
+`docs/`も含まれ、許可リストとMarkdownリンク検査が正本です。
 
 ```text
 artifacts/publish/<RID>/<TFM>/
@@ -97,7 +99,7 @@ artifacts/publish/<RID>/<TFM>/
     └── LICENSE、README.md、CHANGELOG.md、THIRD-PARTY-NOTICES.txt
 ```
 
-publishハーネスは上記以外のファイルが混入した場合に失敗します。`Yaap.BuildLogger.dll` を実行ファイル
+publishハーネスは許可リスト外のファイルが混入した場合に失敗します。`Yaap.BuildLogger.dll` を実行ファイル
 から分離すると測定できません。
 
 ## 履歴と機密情報
