@@ -2,14 +2,6 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
-      "Microsoft.Build.Framework": {
-        "type": "Transitive",
-        "resolved": "18.8.2",
-        "contentHash": "0rH2AaR+TyRhISTU3DEW1pskvOCrBa3QlHnItRqtBTExfCi14CxYNL3/COXxCfd+H40h2WB3XOYSYUlF5IFIwA==",
-        "dependencies": {
-          "Microsoft.NET.StringTools": "18.8.2"
-        }
-      },
       "Microsoft.NET.StringTools": {
         "type": "Transitive",
         "resolved": "18.8.2",
@@ -45,10 +37,14 @@
           "Yaap.Core": "[0.1.0, )"
         }
       },
+      "yaap.buildlogger": {
+        "type": "Project"
+      },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Build": "[18.8.2, )"
+          "Microsoft.Build": "[18.8.2, )",
+          "Yaap.BuildLogger": "[0.1.0, )"
         }
       },
       "Microsoft.Build": {
@@ -63,14 +59,18 @@
           "System.Reflection.MetadataLoadContext": "10.0.4",
           "System.Security.Cryptography.ProtectedData": "10.0.4"
         }
+      },
+      "Microsoft.Build.Framework": {
+        "type": "CentralTransitive",
+        "requested": "[18.8.2, )",
+        "resolved": "18.8.2",
+        "contentHash": "0rH2AaR+TyRhISTU3DEW1pskvOCrBa3QlHnItRqtBTExfCi14CxYNL3/COXxCfd+H40h2WB3XOYSYUlF5IFIwA==",
+        "dependencies": {
+          "Microsoft.NET.StringTools": "18.8.2"
+        }
       }
     },
     "net8.0": {
-      "Microsoft.Build.Framework": {
-        "type": "Transitive",
-        "resolved": "17.11.48",
-        "contentHash": "C3WIMt2wBl4++NX3jSEpTq5KXBhvAV154R4JrYHkfy9JSBcXWiL0mkgpspk5xSdOj+fS/uz7zluIy6bMM1fkkQ=="
-      },
       "Microsoft.NET.StringTools": {
         "type": "Transitive",
         "resolved": "17.11.48",
@@ -106,10 +106,14 @@
           "Yaap.Core": "[0.1.0, )"
         }
       },
+      "yaap.buildlogger": {
+        "type": "Project"
+      },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Build": "[17.11.48, )"
+          "Microsoft.Build": "[17.11.48, )",
+          "Yaap.BuildLogger": "[0.1.0, )"
         }
       },
       "Microsoft.Build": {
@@ -123,6 +127,12 @@
           "System.Configuration.ConfigurationManager": "8.0.0",
           "System.Reflection.MetadataLoadContext": "8.0.0"
         }
+      },
+      "Microsoft.Build.Framework": {
+        "type": "CentralTransitive",
+        "requested": "[17.11.48, )",
+        "resolved": "17.11.48",
+        "contentHash": "C3WIMt2wBl4++NX3jSEpTq5KXBhvAV154R4JrYHkfy9JSBcXWiL0mkgpspk5xSdOj+fS/uz7zluIy6bMM1fkkQ=="
       }
     }
   }

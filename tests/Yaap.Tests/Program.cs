@@ -12,6 +12,9 @@ List<TestCase> tests = new()
     new("history.search-retention-delete", HistoryAsync),
     new("export.csv-json-markdown", ExportAsync),
     new("functional.target-discovery", TargetDiscoveryAsync),
+    new("functional.compiler-invocation-capture", CompilerInvocationCaptureAsync),
+    new("failure.malformed-binlog-diagnostic", MalformedBinlogAsync),
+    new("functional.profile-prefers-sdk-capture", ProfilePrefersSdkCaptureAsync),
     new("functional.generated-output-inventory", GeneratedOutputAsync),
     new("functional.profile-isolated", ProfileIsolatedAsync),
     new("functional.profile-normal-output", ProfileNormalAsync),
@@ -200,6 +203,51 @@ static async Task TargetDiscoveryAsync()
     Assert.True(solution.TargetFrameworks.Contains("net8.0"));
     Assert.True(solutionXml.TargetFrameworks.Contains("net8.0"));
     await Assert.ThrowsAsync<YaapException>(() => TargetDiscovery.DiscoverAsync(System.IO.Path.Combine(temporary.Path, "missing.sln")));
+    Assert.True(TargetDiscovery.IsSupportedPath(project));
+    Assert.True(TargetDiscovery.HasSupportedExtension("sample.slnx"));
+    Assert.False(TargetDiscovery.IsSupportedPath(System.IO.Path.Combine(temporary.Path, "missing.csproj")));
+    Assert.False(TargetDiscovery.HasSupportedExtension("sample.txt"));
+    Assert.False(TargetDiscovery.IsSupportedPath("invalid.txt"));
+}
+
+static async Task CompilerInvocationCaptureAsync()
+{
+    using TemporaryDirectory temporary = new();
+    string project = System.IO.Path.Combine(temporary.Path, "Sample.csproj");
+    await File.WriteAllTextAsync(project, "<Project />");
+    string capture = System.IO.Path.Combine(temporary.Path, "capture.yaap");
+    const string commandLine = "dotnet csc.dll /reportanalyzer Program.cs";
+    string record = string.Join(
+        '\t',
+        "C",
+        Convert.ToBase64String(Encoding.UTF8.GetBytes(commandLine)),
+        Convert.ToBase64String(Encoding.UTF8.GetBytes(temporary.Path)));
+    await File.WriteAllTextAsync(
+        capture,
+        CompilerInvocationCapture.Header + Environment.NewLine + record + Environment.NewLine,
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    List<CompilerInvocation> invocations = new();
+    int count = await CompilerInvocationCapture.ReadAsync(capture, invocations.Add);
+    Assert.Equal(1, count);
+    CompilerInvocation invocation = Assert.Single(invocations);
+    Assert.Equal(commandLine, invocation.CommandLine);
+    Assert.Equal(temporary.Path, invocation.WorkingDirectory);
+
+    await File.WriteAllTextAsync(capture, "invalid");
+    YaapException exception = await Assert.ThrowsAsync<YaapException>(
+        () => CompilerInvocationCapture.ReadAsync(capture, _ => { }));
+    Assert.Equal("YAAP3001", exception.Diagnostic.Code);
+}
+
+static async Task MalformedBinlogAsync()
+{
+    using TemporaryDirectory temporary = new();
+    string binlog = System.IO.Path.Combine(temporary.Path, "malformed.binlog");
+    await File.WriteAllBytesAsync(binlog, new byte[] { 1, 2, 3 });
+    YaapException exception = await Assert.ThrowsAsync<YaapException>(
+        () => new BinlogAnalyzer().AnalyzeAsync(binlog));
+    Assert.Equal("YAAP3001", exception.Diagnostic.Code);
+    Assert.True(exception.InnerException is not null);
 }
 
 static async Task GeneratedOutputAsync()
@@ -247,8 +295,46 @@ static async Task ProfileIsolatedAsync()
         .Where(item => item.Arguments.FirstOrDefault() is "restore" or "clean" or "build")
         .ToArray();
     Assert.True(buildCommands.All(item => item.Arguments.Contains("--artifacts-path")));
+    Assert.True(buildCommands.Where(item => item.Arguments.FirstOrDefault() == "build").All(item =>
+        item.Arguments.Contains("--no-incremental")));
+    Assert.True(buildCommands.Where(item => item.Arguments.FirstOrDefault() == "build").All(item =>
+        item.Arguments.Any(argument => argument.StartsWith("-logger:", StringComparison.Ordinal))));
     Assert.False(Directory.Exists(System.IO.Path.Combine(target.Path, "bin")));
     Assert.False(Directory.Exists(System.IO.Path.Combine(target.Path, "obj")));
+}
+
+static async Task ProfilePrefersSdkCaptureAsync()
+{
+    using TemporaryDirectory target = new();
+    using TemporaryDirectory historyPath = new();
+    string project = await WriteProjectAsync(target.Path);
+    CountingBinlogAnalyzer binlog = new();
+    ProfileRun run = await new ProfileRunner(
+        new CaptureProcessRunner(),
+        binlog,
+        new EnvironmentDetector(new CaptureProcessRunner()))
+        .RunAsync(new ProfileOptions
+        {
+            TargetPath = project,
+            Mode = ProfileMode.Custom,
+            WarmupCount = 0,
+            IterationCount = 1,
+            CleanBeforeEach = true,
+            Isolated = true,
+            HistoryPath = historyPath.Path,
+        });
+    Assert.Equal(RunStatus.Succeeded, run.Status);
+    Assert.Equal(0, binlog.CallCount);
+    Assert.True(run.Analyzers.Any(item => item.Identity.Contains("FixtureAnalyzer", StringComparison.Ordinal)));
+    Assert.True(run.Generators.Any(item => item.Identity.Contains("FixtureGenerator", StringComparison.Ordinal)));
+    Assert.False(Directory.EnumerateFiles(
+        historyPath.Path,
+        "compiler-capture.yaap",
+        SearchOption.AllDirectories).Any());
+    Assert.False(Directory.EnumerateFiles(
+        historyPath.Path,
+        "*.rsp",
+        SearchOption.AllDirectories).Any());
 }
 
 static async Task ProfileFailureAsync()
@@ -440,6 +526,29 @@ static async Task IntegrationProfileAsync()
         Assert.True(run.Generators.Any(item => item.Identity.Contains("FixtureGenerator", StringComparison.Ordinal)));
         Assert.True(run.Generators.SelectMany(item => item.Outputs).Any(item =>
             item.RelativePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)));
+        if (target.EndsWith("Fixture.App.csproj", StringComparison.OrdinalIgnoreCase))
+        {
+            string binlog = Assert.Single(run.Measurements).BinlogPath;
+            int sdkMajor = int.Parse(run.Environment.DotNetSdk.Split('.')[0], System.Globalization.CultureInfo.InvariantCulture);
+            if (Environment.Version.Major >= sdkMajor)
+            {
+                BinlogAnalysis direct = await new BinlogAnalyzer().AnalyzeAsync(binlog);
+                Assert.True(direct.EventCount > 0);
+                Assert.True(direct.CompilerInvocations.Count > 0 || direct.Analyzers.Count > 0 || direct.Generators.Count > 0);
+            }
+            else
+            {
+                try
+                {
+                    BinlogAnalysis forwardCompatible = await new BinlogAnalyzer().AnalyzeAsync(binlog);
+                    Assert.True(forwardCompatible.EventCount > 0);
+                }
+                catch (YaapException incompatible)
+                {
+                    Assert.Equal("YAAP3001", incompatible.Diagnostic.Code);
+                }
+            }
+        }
     }
 
 
@@ -526,21 +635,7 @@ static ProcessResult SuccessfulProcess(ProcessInvocation invocation)
 
 static void CreateFakeBuildOutputs(ProcessInvocation invocation)
 {
-    if (invocation.Arguments.FirstOrDefault() != "build" ||
-        !invocation.Arguments.Any(item => item.StartsWith("-bl:", StringComparison.Ordinal)))
-    {
-        return;
-    }
-
-    string binlog = invocation.Arguments.Single(item => item.StartsWith("-bl:", StringComparison.Ordinal))[4..];
-    Directory.CreateDirectory(System.IO.Path.GetDirectoryName(binlog)!);
-    File.WriteAllBytes(binlog, new byte[] { 1, 2, 3 });
-    string property = invocation.Arguments.Single(item => item.StartsWith("-p:CompilerGeneratedFilesOutputPath=", StringComparison.Ordinal));
-    string root = property["-p:CompilerGeneratedFilesOutputPath=".Length..]
-        .Replace("$(MSBuildProjectName)", "Fixture.App", StringComparison.Ordinal);
-    string directory = System.IO.Path.Combine(root, "Fixture.Analyzers", "Fixture.Analyzers.FixtureGenerator");
-    Directory.CreateDirectory(directory);
-    File.WriteAllText(System.IO.Path.Combine(directory, "Generated.g.cs"), "line1\nline2\n");
+    TestBuildOutputs.Create(invocation);
 }
 
 static string FindRepositoryRoot()
@@ -557,6 +652,28 @@ static string FindRepositoryRoot()
     }
 
     throw new InvalidOperationException("Repository root was not found.");
+}
+
+internal static class TestBuildOutputs
+{
+    public static void Create(ProcessInvocation invocation)
+    {
+        if (invocation.Arguments.FirstOrDefault() != "build" ||
+            !invocation.Arguments.Any(item => item.StartsWith("-bl:", StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        string binlog = invocation.Arguments.Single(item => item.StartsWith("-bl:", StringComparison.Ordinal))[4..];
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(binlog)!);
+        File.WriteAllBytes(binlog, new byte[] { 1, 2, 3 });
+        string property = invocation.Arguments.Single(item => item.StartsWith("-p:CompilerGeneratedFilesOutputPath=", StringComparison.Ordinal));
+        string root = property["-p:CompilerGeneratedFilesOutputPath=".Length..]
+            .Replace("$(MSBuildProjectName)", "Fixture.App", StringComparison.Ordinal);
+        string directory = System.IO.Path.Combine(root, "Fixture.Analyzers", "Fixture.Analyzers.FixtureGenerator");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(System.IO.Path.Combine(directory, "Generated.g.cs"), "line1\nline2\n");
+    }
 }
 
 internal sealed record TestCase(string Name, Func<Task> Body);
@@ -615,6 +732,70 @@ internal sealed class FakeBinlogAnalyzer : IBinlogAnalyzer
             Array.Empty<RunDiagnostic>(),
             10,
             Array.Empty<CompilerInvocation>()));
+    }
+}
+
+internal sealed class CountingBinlogAnalyzer : IBinlogAnalyzer
+{
+    public int CallCount { get; private set; }
+
+    public Task<BinlogAnalysis> AnalyzeAsync(
+        string binlogPath,
+        CancellationToken cancellationToken = default,
+        Action<CompilerInvocation>? compilerInvocationSink = null)
+    {
+        CallCount++;
+        throw new InvalidOperationException("The SDK capture should be preferred over binlog replay.");
+    }
+}
+
+internal sealed class CaptureProcessRunner : IProcessRunner
+{
+    public Task<ProcessResult> RunAsync(
+        ProcessInvocation invocation,
+        Action<string, bool>? onLine = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (invocation.FileName.Equals("csc.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            onLine?.Invoke("アナライザー実行の合計時間: 0.010 秒。", false);
+            onLine?.Invoke("  0.004  40 Fixture.Analyzers.FixtureAnalyzer (YAAPF001)", false);
+            onLine?.Invoke("Total generator execution time: 0.020 seconds.", false);
+            onLine?.Invoke("  0.006  30 Fixture.Analyzers.FixtureGenerator", false);
+            return Task.FromResult(new ProcessResult(
+                0,
+                TimeSpan.FromMilliseconds(1),
+                Array.Empty<string>(),
+                Array.Empty<string>()));
+        }
+
+        TestBuildOutputs.Create(invocation);
+        if (invocation.Arguments.FirstOrDefault() == "build" &&
+            invocation.Environment?.TryGetValue(CompilerInvocationCapture.EnvironmentVariable, out string? capture) == true &&
+            !string.IsNullOrWhiteSpace(capture))
+        {
+            string project = invocation.Arguments[1];
+            string record = string.Join(
+                '\t',
+                "C",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes("csc.exe /reportanalyzer Program.cs")),
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(System.IO.Path.GetDirectoryName(project)!)));
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(capture)!);
+            File.WriteAllText(
+                capture,
+                CompilerInvocationCapture.Header + Environment.NewLine + record + Environment.NewLine,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+
+        IReadOnlyList<string> output = invocation.Arguments.FirstOrDefault() == "--version"
+            ? new[] { "10.0.100" }
+            : Array.Empty<string>();
+        return Task.FromResult(new ProcessResult(
+            0,
+            TimeSpan.FromMilliseconds(1),
+            output,
+            Array.Empty<string>()));
     }
 }
 

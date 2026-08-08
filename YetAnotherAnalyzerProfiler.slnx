@@ -1,5 +1,6 @@
 ﻿<Solution>
   <Folder Name="/src/">
+    <Project Path="src/Yaap.BuildLogger/Yaap.BuildLogger.csproj" />
     <Project Path="src/Yaap.Core/Yaap.Core.csproj" />
     <Project Path="src/Yaap.Cli/Yaap.Cli.csproj" />
     <Project Path="src/Yaap.Gui/Yaap.Gui.csproj" />

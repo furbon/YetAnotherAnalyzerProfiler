@@ -14,6 +14,41 @@ public static class TargetDiscovery
         new[] { ".sln", ".slnx", ".csproj" },
         StringComparer.OrdinalIgnoreCase);
 
+    public static bool HasSupportedExtension(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            return SupportedExtensions.Contains(Path.GetExtension(path));
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    public static bool IsSupportedPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            string fullPath = Path.GetFullPath(path);
+            return File.Exists(fullPath) && HasSupportedExtension(fullPath);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
     public static async Task<TargetInfo> DiscoverAsync(
         string path,
         CancellationToken cancellationToken = default)
@@ -23,7 +58,16 @@ public static class TargetDiscovery
             throw new YaapException(YaapErrors.InvalidInput("Target path is empty."));
         }
 
-        string fullPath = Path.GetFullPath(path);
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new YaapException(YaapErrors.InvalidInput(path), exception);
+        }
+
         string extension = Path.GetExtension(fullPath);
         if (!File.Exists(fullPath) || !SupportedExtensions.Contains(extension))
         {

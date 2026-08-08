@@ -6,6 +6,9 @@
         Height="800"
         MinWidth="960"
         MinHeight="640"
+        AllowDrop="True"
+        PreviewDragOver="OnPreviewDragOver"
+        PreviewDrop="OnPreviewDrop"
         WindowStartupLocation="CenterScreen">
     <DockPanel Margin="12">
         <Border DockPanel.Dock="Top"
@@ -35,8 +38,10 @@
                 <TextBox Grid.Row="0"
                          Grid.Column="1"
                          Margin="0,0,8,8"
+                         IsReadOnly="{Binding IsRunning}"
                          VerticalContentAlignment="Center"
-                         Text="{Binding TargetPath, UpdateSourceTrigger=PropertyChanged}" />
+                         Text="{Binding TargetPath, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip=".sln、.slnx、.csproj をこの画面へドロップできます。" />
                 <StackPanel Grid.Row="0"
                             Grid.Column="2"
                             Margin="0,0,8,8"
@@ -45,9 +50,6 @@
                             Padding="12,4"
                             Command="{Binding BrowseCommand}"
                             Content="参照" />
-                    <Button Padding="12,4"
-                            Command="{Binding DiscoverCommand}"
-                            Content="構成を検出" />
                 </StackPanel>
                 <ComboBox Grid.Row="0"
                           Grid.Column="3"

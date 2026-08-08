@@ -63,7 +63,7 @@ static async Task RestoreAsync(string root, string framework)
             "restore",
             project.Path,
         };
-        if (supportsAllTargets)
+        if (supportsAllTargets || project.Framework.Equals("netstandard2.0", StringComparison.OrdinalIgnoreCase))
         {
             arguments.Add("--locked-mode");
         }
@@ -172,6 +172,39 @@ static async Task TestAsync(string root, string framework)
         },
         new Dictionary<string, string?> { ["YAAP_RUN_INTEGRATION"] = "1" });
 
+    if (GetSdkMajor(root) >= 10 && framework.Equals("net10.0", StringComparison.OrdinalIgnoreCase))
+    {
+        string tests = Path.Combine(root, "tests", "Yaap.Tests", "Yaap.Tests.csproj");
+        await RunAsync(root, "dotnet", new[]
+        {
+            "build",
+            tests,
+            "--framework",
+            "net8.0",
+            "--configuration",
+            "Release",
+            "--no-restore",
+        });
+        await RunAsync(
+            root,
+            "dotnet",
+            new[]
+            {
+                "run",
+                "--project",
+                tests,
+                "--framework",
+                "net8.0",
+                "--configuration",
+                "Release",
+                "--no-build",
+                "--",
+                "--group",
+                "integration",
+            },
+            new Dictionary<string, string?> { ["YAAP_RUN_INTEGRATION"] = "1" });
+    }
+
     await TestLocalFeedAsync(root);
 }
 
@@ -227,6 +260,8 @@ static async Task PublishAsync(string root, string framework, string runtime)
         throw new InvalidOperationException($"Single-file CLI was not produced: {executable}");
     }
 
+    EnsureBuildLoggerPublished(Path.Combine(outputRoot, "cli"));
+
     if (runtime.StartsWith("win-", StringComparison.OrdinalIgnoreCase))
     {
         await PublishProjectAsync(
@@ -239,6 +274,17 @@ static async Task PublishAsync(string root, string framework, string runtime)
         {
             throw new InvalidOperationException("Single-file GUI was not produced.");
         }
+
+        EnsureBuildLoggerPublished(Path.Combine(outputRoot, "gui"));
+    }
+}
+
+static void EnsureBuildLoggerPublished(string output)
+{
+    string logger = Path.Combine(output, "Yaap.BuildLogger.dll");
+    if (!File.Exists(logger))
+    {
+        throw new InvalidOperationException($"SDK-hosted build logger was not published beside YAAP: {logger}");
     }
 }
 
@@ -275,6 +321,7 @@ static IReadOnlyList<ProjectTarget> Projects(string root, string framework)
 {
     List<ProjectTarget> projects = new()
     {
+        new(Path.Combine(root, "src", "Yaap.BuildLogger", "Yaap.BuildLogger.csproj"), "netstandard2.0"),
     };
     if (OperatingSystem.IsWindows())
     {
