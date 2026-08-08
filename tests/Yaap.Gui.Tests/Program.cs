@@ -156,6 +156,13 @@ static async Task WindowStartupSmokeAsync()
                 FindVisualDescendant<Wpf.Ui.Controls.SymbolIcon>(advancedSettingsButton) ??
                 throw new InvalidOperationException("The advanced-settings icon was not rendered.");
             DataGrid analyzerGrid = (DataGrid)window.FindName("AnalyzerGrid");
+            Border analyzerTableSurface = (Border)window.FindName("AnalyzerTableSurface");
+            Border analyzerTreeSurface = (Border)window.FindName("AnalyzerTreeSurface");
+            Grid analyzerTreeHeader = (Grid)window.FindName("AnalyzerTreeHeader");
+            TextBlock analyzerTableEmptyMessage =
+                (TextBlock)window.FindName("AnalyzerTableEmptyMessage");
+            TextBlock analyzerTreeEmptyMessage =
+                (TextBlock)window.FindName("AnalyzerTreeEmptyMessage");
             DataGrid generatorGrid = (DataGrid)window.FindName("GeneratorGrid");
             DataGrid historyGrid = (DataGrid)window.FindName("HistoryGrid");
             DataGrid comparisonGrid = (DataGrid)window.FindName("ComparisonGrid");
@@ -197,6 +204,28 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 advancedSettingsIcon.Symbol == Wpf.Ui.Controls.SymbolRegular.Options20,
                 "Advanced settings must use a compact Fluent options icon.");
+            Ensure(
+                analyzerTableSurface.BorderThickness == analyzerTreeSurface.BorderThickness &&
+                analyzerTableSurface.BorderThickness.Left == 1,
+                "Analyzer table and tree views must use the same visible result boundary.");
+            Ensure(
+                analyzerTableSurface.CornerRadius == analyzerTreeSurface.CornerRadius,
+                "Analyzer result surfaces must use the same corner treatment.");
+            Ensure(analyzerGrid.CanUserResizeColumns, "Analyzer table columns must remain resizable.");
+            Ensure(analyzerGrid.SelectionUnit == DataGridSelectionUnit.FullRow, "Analyzer table selection must represent complete result items.");
+            Ensure(analyzerGrid.ContextMenu is ContextMenu, "The Analyzer table must expose an item context menu.");
+            Ensure(analyzerTreeView.ContextMenu is ContextMenu, "The Analyzer tree must expose an item context menu.");
+            MenuItem analyzerGridCopyItem = (MenuItem)((ContextMenu)analyzerGrid.ContextMenu).Items[0];
+            MenuItem analyzerTreeCopyItem = (MenuItem)((ContextMenu)analyzerTreeView.ContextMenu).Items[0];
+            Ensure(
+                analyzerGridCopyItem.Header?.ToString() == analyzerTreeCopyItem.Header?.ToString() &&
+                analyzerGridCopyItem.Command == MainWindow.CopyAnalyzerResultCommand &&
+                analyzerTreeCopyItem.Command == MainWindow.CopyAnalyzerResultCommand,
+                "Analyzer table and tree context menus must expose the same copy action.");
+            Ensure(
+                MainWindow.CopyAnalyzerResultCommand.InputGestures.OfType<KeyGesture>().Any(
+                    gesture => gesture.Key == Key.C && gesture.Modifiers == ModifierKeys.Control),
+                "Analyzer copy must be discoverable through Ctrl+C.");
             DataGridCell analyzerMeanCell = GetDataGridCell(analyzerGrid, 0, 3);
             TextBlock analyzerMeanText = FindVisualDescendant<TextBlock>(analyzerMeanCell) ??
                 throw new InvalidOperationException("The analyzer mean cell text was not rendered.");
@@ -204,6 +233,37 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 Typography.GetNumeralAlignment(analyzerMeanText) == FontNumeralAlignment.Tabular,
                 "Timing values must use tabular numerals.");
+            IReadOnlyList<DataGridColumnHeader> analyzerHeaders =
+                FindVisualDescendants<DataGridColumnHeader>(analyzerGrid)
+                    .Where(header => header.Column is not null)
+                    .ToArray();
+            Ensure(analyzerHeaders.Count == 6, "Every Analyzer table column must render a header.");
+            Ensure(
+                analyzerHeaders.All(header => header.BorderThickness.Right == 1 && header.BorderThickness.Bottom == 1),
+                "Analyzer table headers must visibly separate every resize boundary.");
+            Ensure(
+                analyzerHeaders.All(header => header.ToolTip?.ToString()?.Contains("列幅", StringComparison.Ordinal) == true),
+                "Analyzer table headers must explain the drag-to-resize affordance.");
+            analyzerGrid.SelectedIndex = 0;
+            Ensure(
+                MainWindow.CopyAnalyzerResultCommand.CanExecute(null, analyzerGrid),
+                "The Analyzer table copy command must enable for a selected row.");
+            analyzerMeanCell.RaiseEvent(new MouseButtonEventArgs(
+                Mouse.PrimaryDevice,
+                Environment.TickCount,
+                MouseButton.Right)
+            {
+                RoutedEvent = Mouse.PreviewMouseDownEvent,
+            });
+            Ensure(analyzerGrid.SelectedIndex == 0, "Right-clicking an Analyzer table cell must select its row.");
+            analyzerGrid.RaiseEvent(new MouseButtonEventArgs(
+                Mouse.PrimaryDevice,
+                Environment.TickCount,
+                MouseButton.Right)
+            {
+                RoutedEvent = Mouse.PreviewMouseDownEvent,
+            });
+            Ensure(analyzerGrid.SelectedItem is null, "Right-clicking Analyzer table background must clear stale selection.");
             Ensure(analyzerGrid.Columns.Count == 6, "The Analyzer table must omit the low-value sample-count column.");
             Ensure(
                 analyzerGrid.Columns.All(column => !string.Equals(column.Header?.ToString(), "標本", StringComparison.Ordinal)),
@@ -217,6 +277,9 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 analyzerScroll.ComputedVerticalScrollBarVisibility == Visibility.Visible,
                 "A large Analyzer table must show its vertical scrollbar.");
+            Ensure(
+                analyzerScroll.ComputedHorizontalScrollBarVisibility == Visibility.Collapsed,
+                "The Analyzer table must not show a horizontal scrollbar at the normal window width.");
             EnsureAccessibleVerticalScrollBar(analyzerGrid, "Analyzer table");
             int realizedAnalyzerRows = FindVisualDescendants<DataGridRow>(analyzerGrid).Count();
             Ensure(
@@ -442,6 +505,38 @@ static async Task WindowStartupSmokeAsync()
                     if (index == 0)
                     {
                         EnsureAccessibleVerticalScrollBar(analyzerGrid, $"{mode} Analyzer table");
+                        analyzerGrid.SelectedIndex = 0;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-table-selected");
+                        ContextMenu analyzerTableMenu = analyzerGrid.ContextMenu ??
+                            throw new InvalidOperationException("The Analyzer table context menu was not created.");
+                        analyzerTableMenu.PlacementTarget = analyzerGrid;
+                        analyzerTableMenu.IsOpen = true;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(analyzerTableMenu.IsOpen, "The Analyzer table context menu must open for a selection.");
+                        CaptureElement(
+                            analyzerTableMenu,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-table-context-menu");
+                        analyzerTableMenu.IsOpen = false;
+                        double analyzerNormalWidth = window.Width;
+                        window.Width = window.MinWidth;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            analyzerScroll.ComputedHorizontalScrollBarVisibility == Visibility.Visible,
+                            "A narrow Analyzer table must allow horizontally scrolling resized columns.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-table-narrow");
+                        window.Width = analyzerNormalWidth;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            analyzerScroll.ComputedHorizontalScrollBarVisibility == Visibility.Collapsed,
+                            "Restoring the Analyzer table width must remove unnecessary horizontal scrolling.");
                         ScrollBar analyzerBar = FindVisualDescendants<ScrollBar>(analyzerGrid)
                             .Where(item => item.Orientation == Orientation.Vertical && item.IsVisible)
                             .OrderByDescending(item => item.ActualHeight)
@@ -458,11 +553,98 @@ static async Task WindowStartupSmokeAsync()
                             throw new InvalidOperationException("The Analyzer tree root was not rendered.");
                         analyzerAssembly.IsExpanded = true;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        analyzerAssembly.UpdateLayout();
+                        TreeViewItem analyzerLeaf =
+                            analyzerAssembly.ItemContainerGenerator.ContainerFromIndex(0) as TreeViewItem ??
+                            throw new InvalidOperationException("The Analyzer tree leaf was not rendered.");
+                        ResultTreeNode analyzerLeafNode = analyzerLeaf.DataContext as ResultTreeNode ??
+                            throw new InvalidOperationException("The Analyzer tree leaf data was not retained.");
+                        Ensure(analyzerLeafNode.IsAnalyzerMetric, "Analyzer tree leaves must carry metric columns.");
+                        IReadOnlyList<TextBlock> analyzerLeafTexts =
+                            FindVisualDescendants<TextBlock>(analyzerLeaf).ToArray();
+                        TextBlock analyzerTreeMeanText = analyzerLeafTexts.Single(text => text.Text == "10.000");
+                        TextBlock analyzerTreeMinimumText = analyzerLeafTexts.Single(text => text.Text == "9.000");
+                        TextBlock analyzerTreeMaximumText = analyzerLeafTexts.Single(text => text.Text == "11.000");
+                        foreach (TextBlock timingText in new[]
+                                 {
+                                     analyzerTreeMeanText,
+                                     analyzerTreeMinimumText,
+                                     analyzerTreeMaximumText,
+                                 })
+                        {
+                            Ensure(timingText.TextAlignment == TextAlignment.Right, "Analyzer tree timings must be right-aligned.");
+                            Ensure(
+                                Typography.GetNumeralAlignment(timingText) == FontNumeralAlignment.Tabular,
+                                "Analyzer tree timings must use tabular numerals.");
+                            EnsureReadableForeground(timingText.Foreground, mode, $"{mode} Analyzer tree timing");
+                        }
+
+                        IReadOnlyList<Border> analyzerTreeHeaderCells =
+                            analyzerTreeHeader.Children.OfType<Border>().ToArray();
+                        Ensure(analyzerTreeHeaderCells.Count == 5, "The Analyzer tree must expose all metric headers.");
+                        TextBlock[] analyzerTreeTimingTexts =
+                        {
+                            analyzerTreeMeanText,
+                            analyzerTreeMinimumText,
+                            analyzerTreeMaximumText,
+                        };
+                        for (int timingIndex = 0; timingIndex < analyzerTreeTimingTexts.Length; timingIndex++)
+                        {
+                            Border headerCell = analyzerTreeHeaderCells[timingIndex + 2];
+                            TextBlock timingText = analyzerTreeTimingTexts[timingIndex];
+                            double headerRight = headerCell.TransformToAncestor(window)
+                                .Transform(new Point(headerCell.ActualWidth, 0)).X;
+                            double valueRight = timingText.TransformToAncestor(window)
+                                .Transform(new Point(timingText.ActualWidth, 0)).X;
+                            Ensure(
+                                Math.Abs(headerRight - valueRight) < 3,
+                                $"Analyzer tree timing values must align with their headers ({headerRight:F1} vs {valueRight:F1}).");
+                        }
+
+                        analyzerLeaf.RaiseEvent(new MouseButtonEventArgs(
+                            Mouse.PrimaryDevice,
+                            Environment.TickCount,
+                            MouseButton.Right)
+                        {
+                            RoutedEvent = Mouse.PreviewMouseDownEvent,
+                        });
+                        Ensure(
+                            ReferenceEquals(analyzerTreeView.SelectedItem, analyzerLeafNode),
+                            "Right-clicking an Analyzer tree node must select that node.");
+                        Ensure(
+                            MainWindow.CopyAnalyzerResultCommand.CanExecute(null, analyzerTreeView),
+                            "The Analyzer tree copy command must enable for a selected node.");
+                        ContextMenu analyzerTreeMenu = analyzerTreeView.ContextMenu ??
+                            throw new InvalidOperationException("The Analyzer tree context menu was not created.");
+                        analyzerTreeMenu.PlacementTarget = analyzerTreeView;
+                        analyzerTreeMenu.IsOpen = true;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(analyzerTreeMenu.IsOpen, "The Analyzer tree context menu must open for a selection.");
+                        CaptureElement(
+                            analyzerTreeMenu,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-context-menu");
+                        analyzerTreeMenu.IsOpen = false;
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-selected");
+                        window.Width = window.MinWidth;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-narrow");
+                        window.Width = analyzerNormalWidth;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                         ScrollViewer treeScroll = FindVisualDescendants<ScrollViewer>(analyzerTreeView)
                             .OrderByDescending(viewer => viewer.ScrollableHeight)
                             .FirstOrDefault() ??
                             throw new InvalidOperationException("The Analyzer tree scroll host was not rendered.");
                         Ensure(treeScroll.ScrollableHeight > 0, "A large Analyzer tree must have a vertical scroll range.");
+                        Ensure(
+                            treeScroll.ComputedHorizontalScrollBarVisibility == Visibility.Collapsed,
+                            "The Analyzer tree must fit its metric columns without horizontal scrolling.");
                         Ensure(
                             treeScroll.ComputedVerticalScrollBarVisibility == Visibility.Visible,
                             "A large Analyzer tree must show its vertical scrollbar.");
@@ -473,7 +655,42 @@ static async Task WindowStartupSmokeAsync()
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-tree");
+                        analyzerTreeView.RaiseEvent(new MouseButtonEventArgs(
+                            Mouse.PrimaryDevice,
+                            Environment.TickCount,
+                            MouseButton.Right)
+                        {
+                            RoutedEvent = Mouse.PreviewMouseDownEvent,
+                        });
+                        Ensure(
+                            analyzerTreeView.SelectedItem is null,
+                            "Right-clicking Analyzer tree background must clear stale selection.");
+                        viewModel.ResultFilter = "__YAAP_NO_MATCH__";
+                        Task emptyProjection = viewModel.WaitForResultFilterAsync();
+                        PumpUntil(window.Dispatcher, () => emptyProjection.IsCompleted, TimeSpan.FromSeconds(5));
+                        emptyProjection.GetAwaiter().GetResult();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            analyzerTreeEmptyMessage.Visibility == Visibility.Visible,
+                            "The Analyzer tree must explain an empty result.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-empty");
                         analyzerViewTabs.SelectedIndex = 0;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            analyzerTableEmptyMessage.Visibility == Visibility.Visible,
+                            "The Analyzer table must explain an empty result.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-table-empty");
+                        viewModel.ResultFilter = string.Empty;
+                        Task restoredProjection = viewModel.WaitForResultFilterAsync();
+                        PumpUntil(window.Dispatcher, () => restoredProjection.IsCompleted, TimeSpan.FromSeconds(5));
+                        restoredProjection.GetAwaiter().GetResult();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                     }
                     else if (index == 1)
                     {
@@ -1761,6 +1978,32 @@ static Task ResultTreeFilteringAsync()
     Ensure(analyzerTree[0].Children.Count == 1, "The analyzer tree should filter nonmatching metrics.");
     Ensure(analyzerTree[0].Children[0].Name.Contains("YAAP001", StringComparison.Ordinal), "Diagnostic IDs should be visible in the tree.");
     Ensure(!analyzerTree[0].Children[0].Detail.Contains("標本", StringComparison.Ordinal), "Analyzer tree details must omit sample count.");
+    ResultTreeNode analyzerLeaf = analyzerTree[0].Children[0];
+    Ensure(analyzerTree[0].Assembly == diagnostic.Assembly, "The analyzer tree root must retain its assembly value.");
+    Ensure(!analyzerTree[0].IsAnalyzerMetric, "An assembly root must not render as an analyzer metric.");
+    Ensure(analyzerLeaf.IsAnalyzerMetric, "An analyzer tree leaf must expose metric columns.");
+    Ensure(analyzerLeaf.Kind == diagnostic.Kind, "The analyzer tree must retain the metric kind.");
+    Ensure(analyzerLeaf.MeanMilliseconds == diagnostic.MeanMilliseconds, "The analyzer tree must retain mean time.");
+    Ensure(analyzerLeaf.MinimumMilliseconds == diagnostic.MinimumMilliseconds, "The analyzer tree must retain minimum time.");
+    Ensure(analyzerLeaf.MaximumMilliseconds == diagnostic.MaximumMilliseconds, "The analyzer tree must retain maximum time.");
+    Ensure(
+        analyzerLeaf.Detail.Contains("最小 3.000 ms", StringComparison.Ordinal) &&
+        analyzerLeaf.Detail.Contains("最大 5.000 ms", StringComparison.Ordinal),
+        "Analyzer tree details must carry the complete table timing range.");
+    Ensure(
+        analyzerLeaf.ClipboardText.Equals(
+            AnalyzerResultClipboardFormatter.Format(diagnostic),
+            StringComparison.Ordinal),
+        "Analyzer tree and table rows must use the same clipboard representation.");
+    Ensure(
+        MainWindow.GetAnalyzerResultClipboardText(diagnostic) == analyzerLeaf.ClipboardText,
+        "Analyzer table and tree clipboard commands must resolve equivalent details.");
+    Ensure(
+        MainWindow.GetAnalyzerResultClipboardText(analyzerTree[0])?.Contains("項目数: 1", StringComparison.Ordinal) == true,
+        "Assembly roots must provide a useful clipboard summary.");
+    Ensure(
+        MainWindow.GetAnalyzerResultClipboardText(new object()) is null,
+        "Unrelated selections must not produce Analyzer clipboard text.");
 
     GeneratorMetric generator = new(
         "SampleGenerator",
@@ -2134,6 +2377,13 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("PlaceholderText=\"Analyzer、診断ID、アセンブリを検索\"", StringComparison.Ordinal), "The analyzer search placeholder is required.");
     Ensure(xaml.Contains("PlaceholderText=\"Generator、アセンブリ、生成ファイルを検索\"", StringComparison.Ordinal), "The generator search placeholder is required.");
     Ensure(xaml.Contains("ItemsSource=\"{Binding AnalyzerTree}\"", StringComparison.Ordinal), "The analyzer tree view is required.");
+    Ensure(xaml.Contains("x:Key=\"AnalyzerResultSurfaceStyle\"", StringComparison.Ordinal), "Analyzer views must share one result-surface contract.");
+    Ensure(xaml.Contains("x:Key=\"ResultColumnHeaderStyle\"", StringComparison.Ordinal), "Analyzer table headers must expose resize boundaries.");
+    Ensure(xaml.Contains("Header=\"詳細をコピー\"", StringComparison.Ordinal), "Analyzer table and tree items must expose a shared copy action.");
+    Ensure(xaml.Contains("OnAnalyzerGridPreviewMouseRightButtonDown", StringComparison.Ordinal), "Analyzer table right-click must select its target row.");
+    Ensure(xaml.Contains("OnAnalyzerTreePreviewMouseRightButtonDown", StringComparison.Ordinal), "Analyzer tree right-click must select its target node.");
+    Ensure(xaml.Contains("表示する Analyzer 結果がありません", StringComparison.Ordinal), "Both Analyzer views must explain empty results.");
+    Ensure(xaml.Contains("MinimumMilliseconds", StringComparison.Ordinal) && xaml.Contains("MaximumMilliseconds", StringComparison.Ordinal), "Analyzer tree leaves must expose the complete timing range.");
     Ensure(xaml.Contains("ItemsSource=\"{Binding GeneratorTree}\"", StringComparison.Ordinal), "The generator tree view is required.");
     Ensure(xaml.Contains("Header=\"設定\"", StringComparison.Ordinal), "The settings tab is required.");
     Ensure(xaml.Contains("AccentFillColorDefaultBrush", StringComparison.Ordinal), "Selected main tabs should have a visible accent.");
