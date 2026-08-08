@@ -7,10 +7,15 @@ using Yaap.Core;
 
 namespace Yaap.Gui;
 
-public sealed class MainViewModel : INotifyPropertyChanged
+public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly ProfileRunner _profileRunner;
+    private readonly Func<string, CancellationToken, Task<TargetInfo>> _targetDiscoverer;
+    private readonly TimeSpan _targetDiscoveryDelay;
     private CancellationTokenSource? _profileCancellation;
+    private CancellationTokenSource? _targetDiscoveryCancellation;
+    private Task _targetDiscoveryTask = Task.CompletedTask;
+    private long _targetDiscoveryGeneration;
     private string _targetPath = string.Empty;
     private string _configuration = "Release";
     private string _historyPath = string.Empty;
@@ -26,6 +31,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _isolated = true;
     private bool _cleanBeforeEach = true;
     private bool _isRunning;
+    private bool _isDiscoveringTarget;
+    private bool _hasValidTarget;
+    private bool _disposed;
     private int _warmupCount = 1;
     private int _iterationCount = 3;
     private int _retentionCount = 50;
@@ -34,12 +42,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private ProfileRun? _selectedRun;
     private ComparisonResult? _comparison;
 
-    public MainViewModel(ProfileRunner? profileRunner = null)
+    public MainViewModel(
+        ProfileRunner? profileRunner = null,
+        Func<string, CancellationToken, Task<TargetInfo>>? targetDiscoverer = null,
+        TimeSpan? targetDiscoveryDelay = null)
     {
         _profileRunner = profileRunner ?? new ProfileRunner();
+        _targetDiscoverer = targetDiscoverer ?? TargetDiscovery.DiscoverAsync;
+        _targetDiscoveryDelay = targetDiscoveryDelay ?? TimeSpan.FromMilliseconds(350);
         BrowseCommand = new RelayCommand(Browse, () => !IsRunning);
-        StartCommand = new AsyncRelayCommand(StartAsync, () => !IsRunning, SetError);
-        DiscoverCommand = new AsyncRelayCommand(DiscoverAsync, () => !IsRunning, SetError);
+        StartCommand = new AsyncRelayCommand(StartAsync, CanStart, SetError);
         RefreshHistoryCommand = new AsyncRelayCommand(RefreshHistoryAsync, () => !IsRunning, SetError);
         LoadSelectedCommand = new AsyncRelayCommand(LoadSelectedAsync, () => SelectedHistory is not null, SetError);
         DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync, () => SelectedHistory is not null && !IsRunning, SetError);
@@ -62,7 +74,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string TargetPath
     {
         get => _targetPath;
-        set => Set(ref _targetPath, value);
+        set
+        {
+            if (Set(ref _targetPath, value))
+            {
+                _hasValidTarget = false;
+                QueueTargetDiscovery();
+                RaiseCommandStates();
+            }
+        }
     }
 
     public string Configuration
@@ -195,6 +215,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    public bool IsDiscoveringTarget
+    {
+        get => _isDiscoveringTarget;
+        private set
+        {
+            if (Set(ref _isDiscoveringTarget, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
+
     public RunSummary? SelectedHistory
     {
         get => _selectedHistory;
@@ -252,8 +284,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public ICommand BrowseCommand { get; }
 
-    public ICommand DiscoverCommand { get; }
-
     public ICommand CancelCommand { get; }
 
     public ICommand RefreshHistoryCommand { get; }
@@ -268,25 +298,172 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        await RefreshHistoryAsync(cancellationToken);
+        try
+        {
+            await RefreshHistoryAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            SetError(exception);
+        }
     }
 
-    private async Task DiscoverAsync(CancellationToken cancellationToken)
+    public Task WaitForTargetDiscoveryAsync() => _targetDiscoveryTask;
+
+    public bool CanAcceptDroppedTarget(IReadOnlyList<string> paths)
     {
-        TargetInfo target = await TargetDiscovery.DiscoverAsync(TargetPath, cancellationToken);
-        Configurations.Clear();
-        foreach (string configuration in target.Configurations)
+        return !IsRunning && paths.Count == 1 && TargetDiscovery.IsSupportedPath(paths[0]);
+    }
+
+    public bool TrySetDroppedTarget(IReadOnlyList<string> paths)
+    {
+        if (IsRunning)
         {
-            Configurations.Add(configuration);
+            StatusText = "測定中は対象を変更できません。";
+            return false;
         }
 
-        if (Configurations.Count > 0 &&
-            !Configurations.Any(item => item.Equals(Configuration, StringComparison.OrdinalIgnoreCase)))
+        if (paths.Count != 1)
         {
-            Configuration = Configurations[0];
+            StatusText = "1つの .sln、.slnx、または .csproj をドロップしてください。";
+            return false;
         }
 
-        StatusText = $"構成を {Configurations.Count} 件検出しました。";
+        if (!TargetDiscovery.IsSupportedPath(paths[0]))
+        {
+            StatusText = "存在する .sln、.slnx、または .csproj のみドロップできます。";
+            return false;
+        }
+
+        TargetPath = Path.GetFullPath(paths[0]);
+        return true;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        CancellationTokenSource? discovery = Interlocked.Exchange(ref _targetDiscoveryCancellation, null);
+        discovery?.Cancel();
+        _profileCancellation?.Cancel();
+        GC.SuppressFinalize(this);
+    }
+
+    private void QueueTargetDiscovery()
+    {
+        long generation = Interlocked.Increment(ref _targetDiscoveryGeneration);
+        CancellationTokenSource? previous = Interlocked.Exchange(ref _targetDiscoveryCancellation, null);
+        previous?.Cancel();
+        if (_disposed || IsRunning)
+        {
+            return;
+        }
+
+        string path = TargetPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            IsDiscoveringTarget = false;
+            _hasValidTarget = false;
+            StatusText = "測定対象を指定してください。";
+            _targetDiscoveryTask = Task.CompletedTask;
+            return;
+        }
+
+        CancellationTokenSource cancellation = new();
+        _targetDiscoveryCancellation = cancellation;
+        _targetDiscoveryTask = DiscoverTargetAsync(path, generation, cancellation);
+    }
+
+    private async Task DiscoverTargetAsync(
+        string path,
+        long generation,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            IsDiscoveringTarget = true;
+            StatusText = "構成を自動検出しています。";
+            await Task.Delay(_targetDiscoveryDelay, cancellation.Token);
+            if (!TargetDiscovery.HasSupportedExtension(path))
+            {
+                if (IsCurrentDiscovery(path, generation))
+                {
+                    _hasValidTarget = false;
+                    Configurations.Clear();
+                    StatusText = "存在する .sln、.slnx、または .csproj を指定してください。";
+                }
+
+                return;
+            }
+
+            TargetInfo target = await Task.Run(
+                () => _targetDiscoverer(path, cancellation.Token),
+                cancellation.Token);
+            if (!IsCurrentDiscovery(path, generation))
+            {
+                return;
+            }
+
+            string selectedConfiguration = Configuration;
+            _hasValidTarget = true;
+            string[] discovered = target.Configurations
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            Configurations.Clear();
+            foreach (string configuration in discovered)
+            {
+                Configurations.Add(configuration);
+            }
+
+            if (Configurations.Count > 0 &&
+                !Configurations.Any(item => item.Equals(selectedConfiguration, StringComparison.OrdinalIgnoreCase)))
+            {
+                Configuration = Configurations.FirstOrDefault(item =>
+                    item.Equals("Release", StringComparison.OrdinalIgnoreCase)) ?? Configurations[0];
+            }
+
+            StatusText = $"構成を {Configurations.Count} 件検出しました。";
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (IsCurrentDiscovery(path, generation))
+            {
+                _hasValidTarget = false;
+                SetError(exception);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_targetDiscoveryCancellation, cancellation))
+            {
+                _targetDiscoveryCancellation = null;
+                IsDiscoveringTarget = false;
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private bool IsCurrentDiscovery(string path, long generation)
+    {
+        return !_disposed &&
+            generation == Interlocked.Read(ref _targetDiscoveryGeneration) &&
+            path.Equals(TargetPath, StringComparison.Ordinal);
+    }
+
+    private bool CanStart()
+    {
+        return !IsRunning &&
+            !IsDiscoveringTarget &&
+            _hasValidTarget &&
+            !string.IsNullOrWhiteSpace(Configuration);
     }
 
     private void Browse()
@@ -431,7 +608,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         StatusText = exception is YaapException yaap
             ? $"{yaap.Diagnostic.Code}: {yaap.Diagnostic.Message} {yaap.Diagnostic.SuggestedAction}"
             : exception.Message;
-        IsRunning = false;
     }
 
     private void RaiseCommandStates()
@@ -439,7 +615,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         foreach (ICommand command in new[]
                  {
                      StartCommand,
-                     DiscoverCommand,
                      RefreshHistoryCommand,
                      LoadSelectedCommand,
                      DeleteSelectedCommand,

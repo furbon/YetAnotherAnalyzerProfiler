@@ -1,20 +1,24 @@
 ﻿# 設計
 
-YAAP は `Yaap.Core`、`Yaap.Cli`、`Yaap.Gui` の3層です。Core が入力検出、子プロセス、
-binlog 逐次解析、統計、履歴、比較、出力を所有し、CLI と GUI は同じAPIを利用します。
+YAAP は `Yaap.Core`、`Yaap.Cli`、`Yaap.Gui` と、測定対象のMSBuild内で動く
+`Yaap.BuildLogger` で構成します。Core が入力検出、子プロセス、binlog 逐次解析、統計、履歴、
+比較、出力を所有し、CLI と GUI は同じAPIを利用します。
 
 ## 測定パイプライン
 
 1. 入力と構成をストリーミング XML／テキストで検出します。
 2. Git、SDK、OS、CPU、対象フレームワークを記録します。
 3. 対象の通常の restore を一度だけ実行します。
-4. 必要なウォームアップ後、clean と `/reportanalyzer` 付き build を反復します。
-5. `BinaryLogReplayEventSource` で binlog をイベント単位に読み、全体を展開しません。
-6. binlog に保存された C# コンパイラ呼び出しを応答ファイルで忠実に再実行し、Roslyn の
+4. 必要なウォームアップ後、clean と `/reportanalyzer` 付き非インクリメンタル build を反復します。
+5. 測定対象をビルドするMSBuild自身が、C# コンパイラ呼び出しだけを行単位のサイドカーへ逐次
+   記録します。YAAPが .NET 8 で動作し、対象が新しいSDKでビルドされてもbinlog形式に依存しません。
+6. 記録した C# コンパイラ呼び出しを応答ファイルで忠実に再実行し、Roslyn の
    Analyzer／Generator レポートを取得します。この追加コンパイラパスはビルド経過時間には
    含めず、Analyzer／Generator のコンパイラ報告値だけに利用します。
-7. `EmitCompilerGeneratedFiles` の外部出力を64 KiB単位で走査し、ファイル情報を収集します。
-8. 平均、最小、最大、母標準偏差と部分結果を原子的に保存します。
+7. 単体のbinlog解析および古い測定経路では、`BinaryLogReplayEventSource` でイベント単位に読み、
+   全体を展開しません。
+8. `EmitCompilerGeneratedFiles` の外部出力を64 KiB単位で走査し、ファイル情報を収集します。
+9. 平均、最小、最大、母標準偏差と部分結果を原子的に保存します。
 
 Roslyn のレポートは Analyzer と診断型、Generator アセンブリと型の時間を提供します。
 生成された個別ファイルの実行時間は提供しないため、YAAP は推測しません。`<0.001 秒` は
@@ -22,7 +26,8 @@ Roslyn のレポートは Analyzer と診断型、Generator アセンブリと�
 
 ## 大規模入力
 
-binlog はイベントストリームとして処理し、子プロセス出力は末尾200行に制限します。
+binlog とコンパイラ呼び出しサイドカーはイベント／行ストリームとして処理し、子プロセス出力は
+末尾200行に制限します。
 履歴一覧は小さい summary のみを読み、run 全体は選択時に読みます。生成ファイルは1件ずつ
 走査し、GUI の DataGrid は行・列仮想化します。これにより、巨大ソリューションでもメモリ量が
 binlog サイズに比例して増えない設計です。

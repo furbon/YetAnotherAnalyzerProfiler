@@ -8,14 +8,6 @@
         "resolved": "10.0.10",
         "contentHash": "f5VCIE7AJpd5YvzNTeMGVzQIgyE9tX+AreTYwQF+REbu+DZo/2Ae+jNSwhPEYrVz6RRkd7y8ubXjk6Nn6Ka+Cg=="
       },
-      "Microsoft.Build.Framework": {
-        "type": "Transitive",
-        "resolved": "18.8.2",
-        "contentHash": "0rH2AaR+TyRhISTU3DEW1pskvOCrBa3QlHnItRqtBTExfCi14CxYNL3/COXxCfd+H40h2WB3XOYSYUlF5IFIwA==",
-        "dependencies": {
-          "Microsoft.NET.StringTools": "18.8.2"
-        }
-      },
       "Microsoft.NET.StringTools": {
         "type": "Transitive",
         "resolved": "18.8.2",
@@ -45,10 +37,14 @@
         "resolved": "10.0.4",
         "contentHash": "LmDnaYkcWkZSlZ07L7YcB6bH8sCiBZ7j28kPbYiXdF6f0iUiN7rxsRORlZGdj5saN/wZIqvF7lDBn/cpjU+e2g=="
       },
+      "yaap.buildlogger": {
+        "type": "Project"
+      },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Build": "[18.8.2, )"
+          "Microsoft.Build": "[18.8.2, )",
+          "Yaap.BuildLogger": "[0.1.0, )"
         }
       },
       "Microsoft.Build": {
@@ -62,6 +58,15 @@
           "System.Diagnostics.EventLog": "10.0.4",
           "System.Reflection.MetadataLoadContext": "10.0.4",
           "System.Security.Cryptography.ProtectedData": "10.0.4"
+        }
+      },
+      "Microsoft.Build.Framework": {
+        "type": "CentralTransitive",
+        "requested": "[18.8.2, )",
+        "resolved": "18.8.2",
+        "contentHash": "0rH2AaR+TyRhISTU3DEW1pskvOCrBa3QlHnItRqtBTExfCi14CxYNL3/COXxCfd+H40h2WB3XOYSYUlF5IFIwA==",
+        "dependencies": {
+          "Microsoft.NET.StringTools": "18.8.2"
         }
       }
     },
@@ -78,11 +83,6 @@
         "requested": "[8.0.29, )",
         "resolved": "8.0.29",
         "contentHash": "HSBTfrkIZijz8z3ybLRKB7E8rHk4QQufFwpHa9fc5CMIgRhRzdn4mBGmlyXZqaueiMPtuJcnjresGvSTfaW8Mg=="
-      },
-      "Microsoft.Build.Framework": {
-        "type": "Transitive",
-        "resolved": "17.11.48",
-        "contentHash": "C3WIMt2wBl4++NX3jSEpTq5KXBhvAV154R4JrYHkfy9JSBcXWiL0mkgpspk5xSdOj+fS/uz7zluIy6bMM1fkkQ=="
       },
       "Microsoft.NET.StringTools": {
         "type": "Transitive",
@@ -113,10 +113,14 @@
         "resolved": "8.0.0",
         "contentHash": "+TUFINV2q2ifyXauQXRwy4CiBhqvDEDZeVJU7qfxya4aRYOKzVBpN+4acx25VcPB9ywUN6C0n8drWl110PhZEg=="
       },
+      "yaap.buildlogger": {
+        "type": "Project"
+      },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Build": "[17.11.48, )"
+          "Microsoft.Build": "[17.11.48, )",
+          "Yaap.BuildLogger": "[0.1.0, )"
         }
       },
       "Microsoft.Build": {
@@ -130,6 +134,12 @@
           "System.Configuration.ConfigurationManager": "8.0.0",
           "System.Reflection.MetadataLoadContext": "8.0.0"
         }
+      },
+      "Microsoft.Build.Framework": {
+        "type": "CentralTransitive",
+        "requested": "[17.11.48, )",
+        "resolved": "17.11.48",
+        "contentHash": "C3WIMt2wBl4++NX3jSEpTq5KXBhvAV154R4JrYHkfy9JSBcXWiL0mkgpspk5xSdOj+fS/uz7zluIy6bMM1fkkQ=="
       }
     },
     "net8.0/win-x64": {

@@ -8,4 +8,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Build" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Yaap.BuildLogger/Yaap.BuildLogger.csproj"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="TargetFrameworks" />
+  </ItemGroup>
 </Project>

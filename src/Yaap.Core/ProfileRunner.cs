@@ -46,6 +46,7 @@ public sealed class ProfileRunner
 
         string runDirectory = history.GetRunDirectory(run.Id);
         string workDirectory = Path.Combine(runDirectory, "work");
+        string buildLoggerPath = string.Empty;
         string artifactsPath = ResolveArtifactsPath(options, targetDirectory, workDirectory);
         if (options.Isolated)
         {
@@ -60,6 +61,7 @@ public sealed class ProfileRunner
 
         try
         {
+            buildLoggerPath = ResolveBuildLoggerPath();
             effectiveTarget = await CreateCompatibilitySolutionIfRequiredAsync(
                 target,
                 environment.DotNetSdk,
@@ -109,6 +111,7 @@ public sealed class ProfileRunner
                 string measurementDirectory = Path.Combine(workDirectory, $"measurement-{index:D3}");
                 string generatedPath = Path.Combine(measurementDirectory, "generated");
                 string binlogPath = Path.Combine(measurementDirectory, "build.binlog");
+                string compilerCapturePath = Path.Combine(measurementDirectory, "compiler-capture.yaap");
                 Directory.CreateDirectory(measurementDirectory);
                 progress?.Report(new ProfileProgress(
                     ProfileStage.Building,
@@ -124,111 +127,133 @@ public sealed class ProfileRunner
                             options,
                             artifactsPath,
                             binlogPath,
-                            generatedPath),
-                        targetDirectory),
+                            generatedPath,
+                            buildLoggerPath),
+                        targetDirectory,
+                        new Dictionary<string, string?>
+                        {
+                            [CompilerInvocationCapture.EnvironmentVariable] = compilerCapturePath,
+                        }),
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 List<RunDiagnostic> measurementDiagnostics = new();
                 IReadOnlyList<AnalyzerSample> analyzers = Array.Empty<AnalyzerSample>();
                 IReadOnlyList<GeneratorSample> generators = Array.Empty<GeneratorSample>();
                 bool profilingSucceeded = true;
-                if (File.Exists(binlogPath))
+                if (File.Exists(compilerCapturePath) || File.Exists(binlogPath))
                 {
                     progress?.Report(new ProfileProgress(
                         ProfileStage.Analyzing,
-                        $"binlog {index}/{options.IterationCount} を逐次解析しています。",
+                        $"コンパイラー情報 {index}/{options.IterationCount} を逐次解析しています。",
                         index - 1,
                         options.IterationCount));
                     List<SpooledCompilerInvocation> compilerInvocations = new();
                     int compilerSpoolIndex = 0;
-                    BinlogAnalysis analysis = await _binlogAnalyzer.AnalyzeAsync(
-                        binlogPath,
-                        cancellationToken,
-                        invocation =>
-                        {
-                            string commandLinePath = Path.Combine(
-                                measurementDirectory,
-                                $"compiler-{++compilerSpoolIndex:D3}.commandline");
-                            File.WriteAllText(
-                                commandLinePath,
-                                invocation.CommandLine,
-                                new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                            compilerInvocations.Add(new SpooledCompilerInvocation(
-                                commandLinePath,
-                                invocation.WorkingDirectory));
-                        }).ConfigureAwait(false);
-                    foreach (CompilerInvocation invocation in analysis.CompilerInvocations)
+                    Action<CompilerInvocation> spoolInvocation = invocation =>
                     {
                         string commandLinePath = Path.Combine(
                             measurementDirectory,
                             $"compiler-{++compilerSpoolIndex:D3}.commandline");
-                        await File.WriteAllTextAsync(
+                        File.WriteAllText(
                             commandLinePath,
                             invocation.CommandLine,
-                            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-                            cancellationToken).ConfigureAwait(false);
+                            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                         compilerInvocations.Add(new SpooledCompilerInvocation(
                             commandLinePath,
                             invocation.WorkingDirectory));
+                    };
+                    BinlogAnalysis analysis = new(
+                        Array.Empty<AnalyzerSample>(),
+                        Array.Empty<GeneratorSample>(),
+                        Array.Empty<RunDiagnostic>(),
+                        0,
+                        Array.Empty<CompilerInvocation>());
+                    if (File.Exists(compilerCapturePath))
+                    {
+                        await CompilerInvocationCapture.ReadAsync(
+                            compilerCapturePath,
+                            spoolInvocation,
+                            cancellationToken).ConfigureAwait(false);
                     }
+                    else
+                    {
+                        analysis = await _binlogAnalyzer.AnalyzeAsync(
+                            binlogPath,
+                            cancellationToken,
+                            spoolInvocation).ConfigureAwait(false);
+                    }
+
+                    foreach (CompilerInvocation invocation in analysis.CompilerInvocations)
+                    {
+                        spoolInvocation(invocation);
+                    }
+
                     Dictionary<(string Identity, string Assembly, MetricKind Kind, string? DiagnosticId), double>
                         analyzerTotals = new();
                     Dictionary<(string Identity, string Assembly), double> generatorTotals = new();
-                    AddAnalyzerSamples(analyzerTotals, analysis.Analyzers);
-                    AddGeneratorSamples(generatorTotals, analysis.Generators);
+                    if (compilerInvocations.Count == 0)
+                    {
+                        AddAnalyzerSamples(analyzerTotals, analysis.Analyzers);
+                        AddGeneratorSamples(generatorTotals, analysis.Generators);
+                    }
+
                     measurementDiagnostics.AddRange(analysis.Diagnostics);
                     for (int compilerIndex = 0; compilerIndex < compilerInvocations.Count; compilerIndex++)
                     {
                         SpooledCompilerInvocation invocation = compilerInvocations[compilerIndex];
                         BinlogAnalyzer.CompilerReportAccumulator reports =
                             BinlogAnalyzer.CreateCompilerReportAccumulator();
-                        CompilerCommand command;
                         try
                         {
-                            command = CommandLineTokenizer.ParseCompilerCommand(
+                            CompilerCommand command = CommandLineTokenizer.ParseCompilerCommand(
                                 await File.ReadAllTextAsync(
                                     invocation.CommandLinePath,
                                     cancellationToken).ConfigureAwait(false));
+                            string responseFile = Path.Combine(
+                                measurementDirectory,
+                                $"compiler-{compilerIndex + 1:D3}.rsp");
+                            try
+                            {
+                                await File.WriteAllTextAsync(
+                                    responseFile,
+                                    command.CompilerArguments,
+                                    new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                                    cancellationToken).ConfigureAwait(false);
+                                string[] compilerArguments = command.HostArguments
+                                    .Append($"@{responseFile}")
+                                    .ToArray();
+
+                                ProcessResult compiler = await _processRunner.RunAsync(
+                                    new ProcessInvocation(command.FileName, compilerArguments, invocation.WorkingDirectory),
+                                    reports.Accept,
+                                    cancellationToken).ConfigureAwait(false);
+                                BinlogAnalysis report = reports.Complete();
+                                AddAnalyzerSamples(analyzerTotals, report.Analyzers);
+                                AddGeneratorSamples(generatorTotals, report.Generators);
+                                measurementDiagnostics.AddRange(report.Diagnostics);
+                                if (compiler.ExitCode != 0)
+                                {
+                                    profilingSucceeded = false;
+                                    measurementDiagnostics.Add(YaapErrors.ProcessFailed(
+                                        "compiler profiling replay",
+                                        compiler.ExitCode,
+                                        compiler.CombinedTail));
+                                }
+                            }
+                            finally
+                            {
+                                TryDeleteFile(responseFile);
+                            }
                         }
                         catch (FormatException exception)
                         {
+                            profilingSucceeded = false;
                             measurementDiagnostics.Add(YaapErrors.BinlogFailed(exception.Message));
-                            profilingSucceeded = false;
-                            TryDeleteFile(invocation.CommandLinePath);
-                            continue;
                         }
-
-                        string responseFile = Path.Combine(
-                            measurementDirectory,
-                            $"compiler-{compilerIndex + 1:D3}.rsp");
-                        await File.WriteAllTextAsync(
-                            responseFile,
-                            command.CompilerArguments,
-                            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-                            cancellationToken).ConfigureAwait(false);
-                        string[] compilerArguments = command.HostArguments
-                            .Append($"@{responseFile}")
-                            .ToArray();
-
-                        ProcessResult compiler = await _processRunner.RunAsync(
-                            new ProcessInvocation(command.FileName, compilerArguments, invocation.WorkingDirectory),
-                            reports.Accept,
-                            cancellationToken).ConfigureAwait(false);
-                        BinlogAnalysis report = reports.Complete();
-                        AddAnalyzerSamples(analyzerTotals, report.Analyzers);
-                        AddGeneratorSamples(generatorTotals, report.Generators);
-                        measurementDiagnostics.AddRange(report.Diagnostics);
-                        if (compiler.ExitCode != 0)
+                        finally
                         {
-                            profilingSucceeded = false;
-                            measurementDiagnostics.Add(YaapErrors.ProcessFailed(
-                                "compiler profiling replay",
-                                compiler.ExitCode,
-                                compiler.CombinedTail));
+                            TryDeleteFile(invocation.CommandLinePath);
                         }
-
-                        TryDeleteFile(invocation.CommandLinePath);
-                        TryDeleteFile(responseFile);
                     }
 
                     analyzers = analyzerTotals.Select(pair => new AnalyzerSample(
@@ -280,6 +305,7 @@ public sealed class ProfileRunner
                 await history.SaveAsync(run, cancellationToken).ConfigureAwait(false);
 
                 TryDeleteDirectory(generatedPath);
+                TryDeleteFile(compilerCapturePath);
                 if (!succeeded)
                 {
                     break;
@@ -313,6 +339,7 @@ public sealed class ProfileRunner
         run.Generators = Statistics.AggregateGenerators(measurements);
         run.Diagnostics = run.Diagnostics.Concat(runDiagnostics).Distinct().ToArray();
         run.FinishedAt = DateTimeOffset.UtcNow;
+        CleanupTransientCompilerFiles(workDirectory);
         await history.SaveAsync(run, CancellationToken.None).ConfigureAwait(false);
         await history.ApplyRetentionAsync(options.RetentionCount, CancellationToken.None).ConfigureAwait(false);
         if (options.Isolated && string.IsNullOrWhiteSpace(options.ArtifactsPath))
@@ -517,7 +544,8 @@ public sealed class ProfileRunner
         ProfileOptions options,
         string artifactsPath,
         string binlogPath,
-        string generatedPath)
+        string generatedPath,
+        string buildLoggerPath)
     {
         List<string> arguments = new()
         {
@@ -526,15 +554,32 @@ public sealed class ProfileRunner
             "--no-restore",
             "--configuration",
             options.Configuration,
+            "--no-incremental",
             "--verbosity",
             "normal",
             $"-bl:{binlogPath}",
+            $"-logger:{buildLoggerPath}",
             "-p:ReportAnalyzer=true",
             "-p:EmitCompilerGeneratedFiles=true",
             $"-p:CompilerGeneratedFilesOutputPath={generatedPath}",
         };
         AddArtifactsPath(arguments, options, artifactsPath);
         return arguments;
+    }
+
+    private static string ResolveBuildLoggerPath()
+    {
+        string fileName = "Yaap.BuildLogger.dll";
+        string candidate = Path.Combine(AppContext.BaseDirectory, fileName);
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        throw new YaapException(YaapErrors.ProcessFailed(
+            "profile logger",
+            -1,
+            $"Required file was not found beside YAAP: {fileName}"));
     }
 
     private static void AddArtifactsPath(
@@ -618,6 +663,31 @@ public sealed class ProfileRunner
         try
         {
             File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void CleanupTransientCompilerFiles(string workDirectory)
+    {
+        if (!Directory.Exists(workDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (string pattern in new[] { "*.commandline", "*.rsp", "compiler-capture.yaap" })
+            {
+                foreach (string path in Directory.EnumerateFiles(workDirectory, pattern, SearchOption.AllDirectories))
+                {
+                    TryDeleteFile(path);
+                }
+            }
         }
         catch (IOException)
         {

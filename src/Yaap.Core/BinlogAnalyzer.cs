@@ -93,7 +93,14 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
 
         try
         {
-            source.Replay(binlogPath, cancellationToken);
+            using FileStream input = new(
+                binlogPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                64 * 1024,
+                FileOptions.SequentialScan);
+            source.Replay(input, cancellationToken);
         }
         catch (OperationCanceledException)
         {
