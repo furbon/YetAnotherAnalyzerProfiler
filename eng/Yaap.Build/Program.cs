@@ -819,6 +819,7 @@ static void CheckRepository(string root)
         }
     }
 
+    EnsureDeepReviewHarness(root, canonical);
     EnsureGuiStartupSmokeGuard(root);
     EnsureThirdPartyNoticeSync(root);
 
@@ -833,6 +834,10 @@ static void CheckRepository(string root)
 
         byte[] bytes = File.ReadAllBytes(path);
         bool shell = relative.EndsWith(".sh", StringComparison.OrdinalIgnoreCase);
+        bool agentSkill = relative.Replace('\\', '/').StartsWith(
+            ".agents/skills/",
+            StringComparison.OrdinalIgnoreCase);
+        bool portableLf = shell || agentSkill;
         bool hasBom = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
         string text;
         try
@@ -844,11 +849,12 @@ static void CheckRepository(string root)
         {
             throw new InvalidOperationException($"Text must contain valid UTF-8: {relative}", exception);
         }
-        if (shell)
+        if (portableLf)
         {
             if (hasBom || text.Contains("\r\n", StringComparison.Ordinal))
             {
-                throw new InvalidOperationException($"Shell script must be UTF-8 without BOM and LF: {relative}");
+                throw new InvalidOperationException(
+                    $"Shell scripts and agent skills must be UTF-8 without BOM and LF: {relative}");
             }
         }
         else if (!hasBom || (text.Contains('\n') && !text.Contains("\r\n", StringComparison.Ordinal)) ||
@@ -892,6 +898,125 @@ static void CheckRepository(string root)
     }
 
     Console.WriteLine($"Repository guards passed for {files.Length} files.");
+}
+
+static void EnsureDeepReviewHarness(string root, string canonicalAgentInstructions)
+{
+    string skillRoot = Path.Combine(root, ".agents", "skills", "deep-review");
+    string skillPath = Path.Combine(skillRoot, "SKILL.md");
+    string metadataPath = Path.Combine(skillRoot, "agents", "openai.yaml");
+    string designPath = Path.Combine(skillRoot, "references", "review-design.md");
+    string templatePath = Path.Combine(skillRoot, "assets", "deep-review-plan-template.md");
+    string humanGuidePath = Path.Combine(root, "docs", "deep-review.md");
+
+    foreach (string path in new[]
+    {
+        skillPath,
+        metadataPath,
+        designPath,
+        templatePath,
+        humanGuidePath,
+    })
+    {
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException($"DeepReview harness file is required: {path}");
+        }
+    }
+
+    string skill = File.ReadAllText(skillPath);
+    foreach (string contract in new[]
+    {
+        "name: deep-review",
+        "only when the user explicitly invokes `$deep-review`",
+        "Never use it for a generic code review",
+        "references/review-design.md",
+        "assets/deep-review-plan-template.md",
+        "at least 9.5/10",
+        "Repeat remediation and independent re-review",
+    })
+    {
+        if (!skill.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"DeepReview skill is missing contract: {contract}");
+        }
+    }
+
+    string metadata = File.ReadAllText(metadataPath);
+    foreach (string contract in new[]
+    {
+        "display_name: \"DeepReview\"",
+        "default_prompt: \"$deep-review ",
+        "allow_implicit_invocation: false",
+    })
+    {
+        if (!metadata.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"DeepReview metadata is missing contract: {contract}");
+        }
+    }
+
+    string design = File.ReadAllText(designPath);
+    foreach (string contract in new[]
+    {
+        "## Axis selection",
+        "## Persona construction and independence",
+        "## User confirmation policy",
+        "## Scoring rubric",
+        "score >= 9.5",
+        "zero unresolved blockers",
+    })
+    {
+        if (!design.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"DeepReview design is missing contract: {contract}");
+        }
+    }
+
+    string template = File.ReadAllText(templatePath);
+    foreach (string contract in new[]
+    {
+        "## Status and invocation",
+        "## Adaptive review configuration",
+        "## Finding ledger",
+        "## Remediation and re-review cycles",
+        "## Verification matrix",
+        "## Final scorecard",
+        "## Git and delivery plan",
+    })
+    {
+        if (!template.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"DeepReview plan template is missing section: {contract}");
+        }
+    }
+
+    if (!canonicalAgentInstructions.Contains(".agents/skills/deep-review/SKILL.md", StringComparison.Ordinal) ||
+        !canonicalAgentInstructions.Contains("Never infer DeepReview from a generic", StringComparison.Ordinal) ||
+        !canonicalAgentInstructions.Contains("docs/deep-review.md", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException("Canonical agent instructions must index explicit-only DeepReview.");
+    }
+
+    string humanGuide = File.ReadAllText(humanGuidePath);
+    if (!humanGuide.Contains("自動・暗黙には起動しません", StringComparison.Ordinal) ||
+        !humanGuide.Contains("$deep-review", StringComparison.Ordinal) ||
+        !humanGuide.Contains("deep-review-plan-template.md", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException("The Japanese DeepReview guide must explain invocation and resources.");
+    }
+
+    foreach ((string path, string link) in new[]
+    {
+        (Path.Combine(root, "README.md"), "docs/deep-review.md"),
+        (Path.Combine(root, "docs", "index.md"), "deep-review.md"),
+    })
+    {
+        if (!File.ReadAllText(path).Contains(link, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"DeepReview documentation is not indexed from {path}.");
+        }
+    }
 }
 
 static void EnsureAgentBranchPolicy(string root)

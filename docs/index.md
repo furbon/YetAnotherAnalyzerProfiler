@@ -23,6 +23,7 @@
 - [設計](architecture.md) — コンポーネント、測定パイプライン、データ保存
 - [開発ガイド](development.md) — SDK、共通コマンド、リポジトリ規約
 - [テスト方針](testing.md) — 検証範囲とCI
+- [DeepReview](deep-review.md) — 明示起動専用の複数観点・敵対的リポジトリ総合レビュー
 - [貢献ガイド](../CONTRIBUTING.md) — 変更提案、実装、レビュー
 - [行動規範](../CODE_OF_CONDUCT.md)
 

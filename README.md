@@ -97,6 +97,7 @@ binlogやビルド出力には、対象プロジェクト由来の機密情報�
 - [トラブルシュート](docs/troubleshooting.md) — エラーコードと対処
 - [設計](docs/architecture.md) — コンポーネントとデータフロー
 - [開発ガイド](docs/development.md)／[テスト方針](docs/testing.md)
+- [DeepReviewガイド](docs/deep-review.md) — 明示起動専用の最高水準リポジトリ総合レビュー
 - [変更履歴](CHANGELOG.md)、[貢献ガイド](CONTRIBUTING.md)、
   [セキュリティ方針](SECURITY.md)、[サポート方針](SUPPORT.md)
 
