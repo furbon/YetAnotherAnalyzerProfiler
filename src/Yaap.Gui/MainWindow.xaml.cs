@@ -1,9 +1,11 @@
 ﻿using System.ComponentModel;
 using System.Windows;
+using Wpf.Ui.Appearance;
+using Wpf.Ui.Controls;
 
 namespace Yaap.Gui;
 
-public partial class MainWindow : Window
+public partial class MainWindow : FluentWindow
 {
     public MainWindow()
     {
@@ -11,10 +13,14 @@ public partial class MainWindow : Window
         MainViewModel viewModel = new();
         DataContext = viewModel;
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
-        Loaded += async (_, _) => await viewModel.InitializeAsync();
-        Activated += (_, _) => ApplySelectedTheme();
+        Loaded += async (_, _) =>
+        {
+            ApplySelectedTheme();
+            await viewModel.InitializeAsync();
+        };
         Closed += (_, _) =>
         {
+            SystemThemeWatcher.UnWatch(this);
             viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             viewModel.Dispose();
         };
