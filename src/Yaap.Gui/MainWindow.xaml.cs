@@ -17,6 +17,8 @@ public partial class MainWindow : FluentWindow
         ArgumentNullException.ThrowIfNull(viewModel);
         InitializeComponent();
         DataContext = viewModel;
+        RecentTargetsPopup.DataContext = viewModel;
+
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
         Loaded += async (_, _) =>
         {
@@ -71,7 +73,8 @@ public partial class MainWindow : FluentWindow
             DataContext is MainViewModel viewModel)
         {
             viewModel.SelectedRecentTarget = recentTarget;
-            RecentTargetsButton.IsDropDownOpen = false;
+            RecentTargetsButton.IsChecked = false;
+            RecentTargetsPopup.IsOpen = false;
         }
     }
 
