@@ -108,6 +108,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         BrowseArtifactsDirectoryCommand = new RelayCommand(BrowseArtifactsDirectory, () => !IsBusy);
         OpenHistoryDirectoryCommand = new RelayCommand(OpenHistoryDirectory, () => !IsBusy);
         StartCommand = new AsyncRelayCommand(StartAsync, CanStart, SetError);
+        ClearHistoryPeriodCommand = new RelayCommand(
+            ClearHistoryPeriod,
+            () => !IsBusy && HasHistoryPeriod);
         RefreshHistoryCommand = CreateOperationCommand("履歴を更新しています。", RefreshHistoryAsync);
         LoadSelectedCommand = CreateOperationCommand(
             "選択した測定結果を読み込んでいます。",
@@ -268,6 +271,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (Set(ref _historyFrom, value))
             {
+                ((RelayCommand)ClearHistoryPeriodCommand).RaiseCanExecuteChanged();
                 QueueHistoryRefresh();
             }
         }
@@ -280,6 +284,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (Set(ref _historyTo, value))
             {
+                ((RelayCommand)ClearHistoryPeriodCommand).RaiseCanExecuteChanged();
                 QueueHistoryRefresh();
             }
         }
@@ -589,6 +594,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand CancelCommand { get; }
 
     public ICommand RefreshHistoryCommand { get; }
+
+    public ICommand ClearHistoryPeriodCommand { get; }
 
     public ICommand LoadSelectedCommand { get; }
 
@@ -981,6 +988,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             cancellation);
         previous?.Cancel();
         _historyRefreshTask = RefreshHistoryAfterDelayAsync(cancellation);
+    }
+
+    private bool HasHistoryPeriod =>
+        !string.IsNullOrWhiteSpace(_historyFrom) || !string.IsNullOrWhiteSpace(_historyTo);
+
+    private void ClearHistoryPeriod()
+    {
+        if (!HasHistoryPeriod)
+        {
+            return;
+        }
+
+        _historyFrom = string.Empty;
+        _historyTo = string.Empty;
+        OnPropertyChanged(nameof(HistoryFrom));
+        OnPropertyChanged(nameof(HistoryTo));
+        ((RelayCommand)ClearHistoryPeriodCommand).RaiseCanExecuteChanged();
+        QueueHistoryRefresh();
     }
 
     private async Task RefreshHistoryAfterDelayAsync(CancellationTokenSource cancellation)
@@ -1593,6 +1618,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ((RelayCommand)BrowseHistoryDirectoryCommand).RaiseCanExecuteChanged();
         ((RelayCommand)BrowseArtifactsDirectoryCommand).RaiseCanExecuteChanged();
         ((RelayCommand)OpenHistoryDirectoryCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)ClearHistoryPeriodCommand).RaiseCanExecuteChanged();
     }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

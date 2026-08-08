@@ -55,10 +55,45 @@
             <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
             <EventSetter Event="Loaded" Handler="OnScrollableControlLoaded" />
         </Style>
-        <ControlTemplate x:Key="AccessibleScrollThumbTemplate" TargetType="{x:Type Thumb}">
-            <Border Margin="2"
-                    Background="{DynamicResource TextFillColorSecondaryBrush}"
-                    CornerRadius="6" />
+        <Style BasedOn="{StaticResource {x:Type ScrollBar}}" TargetType="{x:Type ScrollBar}">
+            <EventSetter Event="Loaded" Handler="OnAccessibleScrollBarLoaded" />
+            <EventSetter Event="Unloaded" Handler="OnAccessibleScrollBarUnloaded" />
+        </Style>
+        <ControlTemplate x:Key="AccessibleVerticalScrollThumbTemplate" TargetType="{x:Type Thumb}">
+            <Border x:Name="ThumbBody"
+                    Background="{DynamicResource TextFillColorPrimaryBrush}"
+                    CornerRadius="2"
+                    Width="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                    Height="{Binding ActualHeight, RelativeSource={RelativeSource TemplatedParent}}"
+                    Opacity="0.72" />
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="ThumbBody" Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                    <Setter TargetName="ThumbBody" Property="Opacity" Value="1" />
+                </Trigger>
+                <Trigger Property="IsDragging" Value="True">
+                    <Setter TargetName="ThumbBody" Property="Background" Value="{DynamicResource AccentFillColorSecondaryBrush}" />
+                    <Setter TargetName="ThumbBody" Property="Opacity" Value="1" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        <ControlTemplate x:Key="AccessibleHorizontalScrollThumbTemplate" TargetType="{x:Type Thumb}">
+            <Border x:Name="ThumbBody"
+                    Background="{DynamicResource TextFillColorPrimaryBrush}"
+                    CornerRadius="2"
+                    Width="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                    Height="{Binding ActualHeight, RelativeSource={RelativeSource TemplatedParent}}"
+                    Opacity="0.72" />
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="ThumbBody" Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                    <Setter TargetName="ThumbBody" Property="Opacity" Value="1" />
+                </Trigger>
+                <Trigger Property="IsDragging" Value="True">
+                    <Setter TargetName="ThumbBody" Property="Background" Value="{DynamicResource AccentFillColorSecondaryBrush}" />
+                    <Setter TargetName="ThumbBody" Property="Opacity" Value="1" />
+                </Trigger>
+            </ControlTemplate.Triggers>
         </ControlTemplate>
         <Style x:Key="OpaqueCalendarStyle"
                BasedOn="{StaticResource {x:Type Calendar}}"
@@ -73,6 +108,13 @@
                     <Style BasedOn="{StaticResource {x:Type CalendarButton}}"
                            TargetType="{x:Type CalendarButton}">
                         <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                        <Setter Property="Opacity" Value="1" />
+                        <Style.Triggers>
+                            <Trigger Property="IsInactive" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Setter Property="Opacity" Value="1" />
+                            </Trigger>
+                        </Style.Triggers>
                     </Style>
                 </Setter.Value>
             </Setter>
@@ -671,9 +713,9 @@
                     <Grid Grid.Row="0" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="360" />
+                            <ColumnDefinition Width="*" MinWidth="220" />
                             <ColumnDefinition Width="120" />
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Margin="0,0,12,0"
@@ -691,12 +733,16 @@
                                   AutomationProperties.Name="履歴の状態"
                                   ItemsSource="{Binding HistoryStatuses}"
                                   SelectedItem="{Binding HistoryStatus}" />
-                        <Grid Grid.Column="3" Margin="16,0" HorizontalAlignment="Right">
+                        <Grid x:Name="HistoryPeriodPanel"
+                              Grid.Column="3"
+                              Margin="16,0,24,0"
+                              HorizontalAlignment="Right">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="132" />
                                 <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="132" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="HistoryFromLabel"
                                        Margin="0,0,8,0"
@@ -721,8 +767,20 @@
                                         SelectedDateFormat="Short"
                                         Text="{Binding HistoryTo}"
                                         ToolTip="終了日。この日を含みます。" />
+                            <Button x:Name="HistoryPeriodClearButton"
+                                    Grid.Column="4"
+                                    Width="32"
+                                    Height="32"
+                                    Margin="8,0,0,0"
+                                    Padding="6"
+                                    AutomationProperties.Name="履歴の期間をクリア"
+                                    Command="{Binding ClearHistoryPeriodCommand}"
+                                    Content="×"
+                                    FontSize="18"
+                                    ToolTip="期間をクリア" />
                         </Grid>
-                        <Button Grid.Column="4"
+                        <Button x:Name="HistoryRefreshButton"
+                                Grid.Column="4"
                                 Width="34"
                                 Height="32"
                                 Padding="6"
@@ -734,16 +792,16 @@
                     </Grid>
                     <Grid Grid.Row="1" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="360" />
+                            <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="1"
+                        <TextBlock Grid.Column="0"
                                    Margin="0,0,8,0"
                                    VerticalAlignment="Center"
                                    Text="選択中のラベル" />
                         <ui:TextBox x:Name="HistoryLabelTextBox"
-                                    Grid.Column="2"
+                                    Grid.Column="1"
                                     IsEnabled="{Binding SelectedHistory}"
                                     MaxLength="120"
                                     PlaceholderText="例: 最適化前（自動保存）"
@@ -895,7 +953,7 @@
                                         Grid.Column="1"
                                         Margin="0,0,8,0"
                                         AutomationProperties.LabeledBy="{Binding ElementName=ExportPathLabel}"
-                                        PlaceholderText=".json／.csv／.md／.markdown の保存ファイルを選択"
+                                        PlaceholderText="パスを入力、または参照"
                                         Text="{Binding ExportPath, UpdateSourceTrigger=PropertyChanged}"
                                         ToolTip="拡張子から出力形式を判定します。未対応または拡張子なしのファイルは出力できません。" />
                             <Button Grid.Row="1"
@@ -935,7 +993,7 @@
                         <ui:TextBox Grid.Column="1"
                                     Margin="0,0,8,0"
                                     AutomationProperties.LabeledBy="{Binding ElementName=BinlogPathLabel}"
-                                    PlaceholderText="解析する .binlog ファイルを選択"
+                                    PlaceholderText="パスを入力、または参照"
                                     Text="{Binding BinlogPath, UpdateSourceTrigger=PropertyChanged}" />
                         <Button Grid.Column="2" Margin="0,0,8,0" Padding="12,4" Command="{Binding BrowseBinlogCommand}" Content="参照" />
                         <Button Grid.Column="3" Padding="12,4" Command="{Binding AnalyzeBinlogCommand}" Content="解析して結果に表示" />
