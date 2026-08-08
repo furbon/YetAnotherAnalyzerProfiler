@@ -24,107 +24,134 @@
                      Title="YetAnotherAnalyzerProfiler" />
         <DockPanel Grid.Row="1"
                    Margin="20,12,20,20">
-        <ui:Card DockPanel.Dock="Top"
-                 Padding="16">
+        <ui:Card x:Name="TargetCard"
+                 DockPanel.Dock="Top"
+                 Padding="12">
+            <ui:Card.Style>
+                <Style BasedOn="{StaticResource {x:Type ui:Card}}" TargetType="{x:Type ui:Card}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ui:Card.Style>
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="200" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0"
                            Grid.Column="0"
-                           Margin="0,0,8,8"
+                           Margin="0,0,8,0"
                            VerticalAlignment="Center"
                            Text="対象" />
-                <TextBox Grid.Row="0"
-                         Grid.Column="1"
-                         Margin="0,0,8,8"
-                         IsReadOnly="{Binding IsRunning}"
-                         VerticalContentAlignment="Center"
-                         Text="{Binding TargetPath, UpdateSourceTrigger=PropertyChanged}"
-                         ToolTip=".sln、.slnx、.csproj をこの画面へドロップできます。" />
+                <ui:TextBox Grid.Row="0"
+                            Grid.Column="1"
+                            Margin="0,0,8,0"
+                            IsReadOnly="{Binding IsRunning}"
+                            PlaceholderText="*.csproj; *.slnx; *.sln"
+                            Text="{Binding TargetPath, UpdateSourceTrigger=PropertyChanged}"
+                            ToolTip=".sln、.slnx、.csproj をこの画面へドロップできます。" />
                 <StackPanel Grid.Row="0"
                             Grid.Column="2"
-                            Margin="0,0,8,8"
+                            Margin="0,0,8,0"
                             Orientation="Horizontal">
                     <Button Margin="0,0,4,0"
                             Padding="12,4"
                             Command="{Binding BrowseCommand}"
                             Content="参照" />
+                    <ui:DropDownButton x:Name="RecentTargetsButton"
+                                       Padding="10,4"
+                                       Content="最近使用"
+                                       ToolTip="履歴にある測定対象を選択">
+                        <ui:DropDownButton.Flyout>
+                            <ui:Flyout Placement="Bottom">
+                                <ui:Card Width="440" Padding="8">
+                                    <Grid>
+                                        <TextBlock HorizontalAlignment="Center"
+                                                   Margin="12"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                   Text="最近使った対象はありません">
+                                            <TextBlock.Style>
+                                                <Style TargetType="{x:Type TextBlock}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RecentTargets.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+                                            <ItemsControl ItemsSource="{Binding RecentTargets}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Button Margin="0,0,0,4"
+                                                                Padding="10,6"
+                                                                HorizontalContentAlignment="Stretch"
+                                                                Click="OnRecentTargetClick">
+                                                            <StackPanel>
+                                                                <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                                                <TextBlock FontSize="11"
+                                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                                           Text="{Binding Path}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </Grid>
+                                </ui:Card>
+                            </ui:Flyout>
+                        </ui:DropDownButton.Flyout>
+                    </ui:DropDownButton>
                 </StackPanel>
                 <ComboBox x:Name="ConfigurationSelector"
                           Grid.Row="0"
                           Grid.Column="3"
-                          Margin="0,0,8,8"
+                          Margin="0,0,8,0"
                           ItemsSource="{Binding Configurations}"
                           SelectedItem="{Binding Configuration, Mode=TwoWay}"
                           ToolTip="対象から検出したビルド構成" />
                 <ui:Button Grid.Row="0"
                            Grid.Column="4"
-                           Margin="0,0,0,8"
+                           Margin="0"
                            Appearance="Primary"
                            Command="{Binding StartCommand}"
                            Content="測定開始"
                            ToolTip="{Binding MeasurementStateText}"
                            ToolTipService.ShowOnDisabled="True" />
 
-                <TextBlock Grid.Row="1"
-                           Grid.Column="0"
-                           Margin="0,0,8,8"
-                           VerticalAlignment="Center"
-                           Text="測定" />
-                <StackPanel Grid.Row="1"
-                            Grid.Column="1"
-                            Grid.ColumnSpan="3"
-                            Margin="0,0,8,8"
-                            Orientation="Horizontal">
-                    <ComboBox Width="110"
-                              Margin="0,0,12,0"
-                              ItemsSource="{Binding Modes}"
-                              SelectedItem="{Binding SelectedMode}" />
-                    <TextBlock Margin="0,0,4,0"
-                               VerticalAlignment="Center"
-                               Text="ウォームアップ" />
-                    <TextBox Width="45"
-                             Margin="0,0,12,0"
-                             Text="{Binding WarmupCount}" />
-                    <TextBlock Margin="0,0,4,0"
-                               VerticalAlignment="Center"
-                               Text="測定回数" />
-                    <TextBox Width="45"
-                             Margin="0,0,12,0"
-                             Text="{Binding IterationCount}" />
-                    <TextBlock Margin="8,0,4,0"
-                               VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               Text="テーマ" />
-                    <ComboBox Width="105"
-                              DisplayMemberPath="Label"
-                              ItemsSource="{Binding Source={x:Static local:MainViewModel.ThemeOptions}}"
-                              SelectedItem="{Binding SelectedTheme}" />
-                </StackPanel>
-                <Button Grid.Row="1"
-                        Grid.Column="4"
-                        Margin="0,0,0,8"
-                        Command="{Binding CancelCommand}"
-                        Content="キャンセル" />
-
-                <ui:CardExpander Grid.Row="2"
-                                 Grid.Column="0"
-                                 Grid.ColumnSpan="5"
-                                 Margin="0,2,0,0"
-                                 ContentPadding="12"
-                                 Header="{Binding AdvancedSettingsSummary}"
-                                 IsExpanded="False">
-                    <Grid>
+                <Expander Grid.Row="1"
+                          Grid.Column="1"
+                          Grid.ColumnSpan="4"
+                          Margin="0,6,0,0"
+                          HorizontalAlignment="Left"
+                          Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                          IsExpanded="False">
+                    <Expander.Header>
+                        <TextBlock FontSize="12"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Text="{Binding AdvancedSettingsSummary}" />
+                    </Expander.Header>
+                    <Border Margin="0,6,0,0"
+                            Padding="10"
+                            Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="4">
+                        <Grid Width="720">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
@@ -135,53 +162,79 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0"
-                                   Grid.Column="0"
-                                   Margin="0,0,8,8"
-                                   VerticalAlignment="Center"
-                                   Text="履歴場所" />
-                        <TextBox Grid.Row="0"
-                                 Grid.Column="1"
-                                 Margin="0,0,12,8"
-                                 Text="{Binding HistoryPath, UpdateSourceTrigger=PropertyChanged}"
-                                 ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
-                        <TextBlock Grid.Row="0"
-                                   Grid.Column="2"
-                                   Margin="0,0,8,8"
-                                   VerticalAlignment="Center"
-                                   Text="保持件数" />
-                        <TextBox Grid.Row="0"
-                                 Grid.Column="3"
-                                 Margin="0,0,0,8"
-                                 Text="{Binding RetentionCount}" />
-                        <CheckBox Grid.Row="1"
-                                  Grid.Column="0"
-                                  Grid.ColumnSpan="2"
-                                  Margin="0,0,12,8"
-                                  VerticalAlignment="Center"
-                                  Content="毎回 clean"
-                                  IsChecked="{Binding CleanBeforeEach}" />
-                        <CheckBox Grid.Row="1"
-                                  Grid.Column="2"
-                                  Grid.ColumnSpan="2"
-                                  Margin="0,0,0,8"
-                                  VerticalAlignment="Center"
-                                  Content="分離出力 (--artifacts-path)"
-                                  IsChecked="{Binding Isolated}" />
-                        <TextBlock Grid.Row="2"
-                                   Grid.Column="0"
-                                   Margin="0,0,8,0"
-                                   VerticalAlignment="Center"
-                                   Text="分離出力先" />
-                        <TextBox Grid.Row="2"
-                                 Grid.Column="1"
-                                 Grid.ColumnSpan="3"
-                                 IsEnabled="{Binding Isolated}"
-                                 Text="{Binding ArtifactsPath, UpdateSourceTrigger=PropertyChanged}"
-                                 ToolTip="空欄ではYAAP管理の一時領域を使います。対象ディレクトリ外を指定してください。" />
-                    </Grid>
-                </ui:CardExpander>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="測定モード" />
+                        <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,8" Orientation="Horizontal">
+                            <ComboBox Width="120" Margin="0,0,20,0" ItemsSource="{Binding Modes}" SelectedItem="{Binding SelectedMode}" />
+                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="ウォームアップ回数" />
+                            <TextBox Width="50" Margin="0,0,20,0" Text="{Binding WarmupCount}" />
+                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="測定回数" />
+                            <TextBox Width="50" Text="{Binding IterationCount}" />
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="履歴場所" />
+                        <ui:TextBox Grid.Row="1"
+                                    Grid.Column="1"
+                                    Margin="0,0,12,8"
+                                    PlaceholderText="OS標準の履歴場所を使用"
+                                    Text="{Binding HistoryPath, UpdateSourceTrigger=PropertyChanged}"
+                                    ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
+                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,0,8,8" VerticalAlignment="Center" Text="保持件数" />
+                        <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,0,8" Text="{Binding RetentionCount}" />
+                        <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,12,8" Content="毎回 clean" IsChecked="{Binding CleanBeforeEach}" />
+                        <CheckBox Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" Margin="0,0,0,8" Content="分離出力 (--artifacts-path)" IsChecked="{Binding Isolated}" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Text="分離出力先" />
+                        <ui:TextBox Grid.Row="3"
+                                    Grid.Column="1"
+                                    Grid.ColumnSpan="3"
+                                    IsEnabled="{Binding Isolated}"
+                                    PlaceholderText="YAAP管理の一時領域を使用"
+                                    Text="{Binding ArtifactsPath, UpdateSourceTrigger=PropertyChanged}"
+                                    ToolTip="空欄ではYAAP管理の一時領域を使います。対象ディレクトリ外を指定してください。" />
+                        </Grid>
+                    </Border>
+                </Expander>
+            </Grid>
+        </ui:Card>
+
+        <ui:Card x:Name="BusyCard"
+                 DockPanel.Dock="Top"
+                 Margin="0,8,0,0"
+                 Padding="10">
+            <ui:Card.Style>
+                <Style BasedOn="{StaticResource {x:Type ui:Card}}" TargetType="{x:Type ui:Card}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ui:Card.Style>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ui:ProgressRing Grid.Column="0"
+                                 Width="26"
+                                 Height="26"
+                                 Margin="0,0,10,0"
+                                 IsIndeterminate="True" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               Text="測定を実行しています" />
+                    <TextBlock FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Text="{Binding StatusText}" />
+                </StackPanel>
+                <Button x:Name="BusyCancelButton"
+                        Grid.Column="2"
+                        Padding="14,5"
+                        Command="{Binding CancelCommand}"
+                        Content="キャンセル" />
             </Grid>
         </ui:Card>
 
@@ -192,85 +245,204 @@
                     Message="{Binding StatusText}"
                     Title="{Binding MeasurementStateText}" />
 
-        <TabControl Margin="0,12,0,0"
-                    Padding="1">
+        <TabControl x:Name="MainTabs"
+                    Margin="0,12,0,0"
+                    Padding="1"
+                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+            <TabControl.Style>
+                <Style BasedOn="{StaticResource {x:Type TabControl}}" TargetType="{x:Type TabControl}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TabControl.Style>
+            <TabControl.ItemContainerStyle>
+                <Style TargetType="{x:Type TabItem}">
+                    <Setter Property="Margin" Value="0,0,4,0" />
+                    <Setter Property="Padding" Value="16,8" />
+                    <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="{x:Type TabItem}">
+                                <Border x:Name="TabBorder"
+                                        Margin="{TemplateBinding Margin}"
+                                        Padding="{TemplateBinding Padding}"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}">
+                                    <ContentPresenter x:Name="HeaderPresenter"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"
+                                                      ContentSource="Header"
+                                                      RecognizesAccessKey="True"
+                                                      TextElement.Foreground="{TemplateBinding Foreground}" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                                        <Setter TargetName="HeaderPresenter"
+                                                Property="TextElement.Foreground"
+                                                Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+                                        <Setter TargetName="HeaderPresenter"
+                                                Property="TextElement.FontWeight"
+                                                Value="SemiBold" />
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter TargetName="TabBorder" Property="Opacity" Value="0.55" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </TabControl.ItemContainerStyle>
             <TabItem Header="Analyzer">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <TextBox Grid.Row="0"
-                             Margin="6"
-                             Text="{Binding ResultFilter, UpdateSourceTrigger=PropertyChanged}"
-                             ToolTip="Analyzer、診断ID、アセンブリを絞り込み" />
-                    <ui:DataGrid Grid.Row="1"
-                                 ItemsSource="{Binding Analyzers}"
-                                 AutoGenerateColumns="False"
-                                 EnableRowVirtualization="True"
-                                 EnableColumnVirtualization="True"
-                                 IsReadOnly="True"
-                                 VirtualizingPanel.IsVirtualizing="True"
-                                 VirtualizingPanel.VirtualizationMode="Recycling">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Width="110" Binding="{Binding Kind}" Header="種別" />
-                            <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Analyzer／診断" />
-                            <DataGridTextColumn Width="220" Binding="{Binding Assembly}" Header="アセンブリ" />
-                            <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" Header="平均 ms" />
-                            <DataGridTextColumn Width="100" Binding="{Binding MinimumMilliseconds, StringFormat=N3}" Header="最小 ms" />
-                            <DataGridTextColumn Width="100" Binding="{Binding MaximumMilliseconds, StringFormat=N3}" Header="最大 ms" />
-                            <DataGridTextColumn Width="80" Binding="{Binding SampleCount}" Header="標本" />
-                        </DataGrid.Columns>
-                    </ui:DataGrid>
+                    <ui:TextBox Grid.Row="0"
+                                Margin="8"
+                                PlaceholderText="Analyzer、診断ID、アセンブリを検索"
+                                Text="{Binding ResultFilter, UpdateSourceTrigger=PropertyChanged}"
+                                ToolTip="Analyzer、診断ID、アセンブリを絞り込み" />
+                    <TabControl Grid.Row="1"
+                                Margin="8,0,8,8"
+                                Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                        <TabItem Header="表形式">
+                            <ui:DataGrid ItemsSource="{Binding Analyzers}"
+                                         AutoGenerateColumns="False"
+                                         EnableRowVirtualization="True"
+                                         EnableColumnVirtualization="True"
+                                         IsReadOnly="True"
+                                         VirtualizingPanel.IsVirtualizing="True"
+                                         VirtualizingPanel.VirtualizationMode="Recycling">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Width="110" Binding="{Binding Kind}" Header="種別" />
+                                    <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Analyzer／診断" />
+                                    <DataGridTextColumn Width="220" Binding="{Binding Assembly}" Header="アセンブリ" />
+                                    <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" Header="平均 ms" />
+                                    <DataGridTextColumn Width="100" Binding="{Binding MinimumMilliseconds, StringFormat=N3}" Header="最小 ms" />
+                                    <DataGridTextColumn Width="100" Binding="{Binding MaximumMilliseconds, StringFormat=N3}" Header="最大 ms" />
+                                    <DataGridTextColumn Width="80" Binding="{Binding SampleCount}" Header="標本" />
+                                </DataGrid.Columns>
+                            </ui:DataGrid>
+                        </TabItem>
+                        <TabItem Header="ツリー形式">
+                            <TreeView ItemsSource="{Binding AnalyzerTree}"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling">
+                                <TreeView.ItemTemplate>
+                                    <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                            <TextBlock Margin="12,0,0,0"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                       Text="{Binding Detail}" />
+                                        </StackPanel>
+                                    </HierarchicalDataTemplate>
+                                </TreeView.ItemTemplate>
+                            </TreeView>
+                        </TabItem>
+                    </TabControl>
                 </Grid>
             </TabItem>
             <TabItem Header="Source Generator">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="2*" />
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <TextBox Grid.Row="0"
-                             Margin="6"
-                             Text="{Binding ResultFilter, UpdateSourceTrigger=PropertyChanged}"
-                             ToolTip="Generator 型またはアセンブリを絞り込み" />
-                    <ui:DataGrid x:Name="GeneratorGrid"
-                              Grid.Row="1"
-                              ItemsSource="{Binding Generators}"
-                              AutoGenerateColumns="False"
-                              EnableRowVirtualization="True"
-                              EnableColumnVirtualization="True"
-                              IsReadOnly="True"
-                              VirtualizingPanel.IsVirtualizing="True"
-                              VirtualizingPanel.VirtualizationMode="Recycling">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Generator 型" />
-                            <DataGridTextColumn Width="220" Binding="{Binding Assembly}" Header="アセンブリ" />
-                            <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" Header="平均 ms" />
-                            <DataGridTextColumn Width="90" Binding="{Binding GeneratedFileCount}" Header="ファイル数" />
-                            <DataGridTextColumn Width="100" Binding="{Binding GeneratedByteCount}" Header="バイト数" />
-                            <DataGridTextColumn Width="90" Binding="{Binding GeneratedLineCount}" Header="行数" />
-                        </DataGrid.Columns>
-                    </ui:DataGrid>
-                    <TextBlock Grid.Row="2"
-                               Margin="6"
-                               FontWeight="SemiBold"
-                               Text="以下は生成物の一覧です。Roslyn は生成ファイル単位の実行時間を提供しないため表示しません。" />
-                    <ui:DataGrid Grid.Row="3"
-                              ItemsSource="{Binding SelectedItem.Outputs, ElementName=GeneratorGrid}"
-                              AutoGenerateColumns="False"
-                              EnableRowVirtualization="True"
-                              IsReadOnly="True"
-                              VirtualizingPanel.IsVirtualizing="True"
-                              VirtualizingPanel.VirtualizationMode="Recycling">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Width="*" Binding="{Binding RelativePath}" Header="生成ファイル" />
-                            <DataGridTextColumn Width="120" Binding="{Binding ByteCount}" Header="バイト数" />
-                            <DataGridTextColumn Width="100" Binding="{Binding LineCount}" Header="行数" />
-                        </DataGrid.Columns>
-                    </ui:DataGrid>
+                    <ui:TextBox Grid.Row="0"
+                                Margin="8"
+                                PlaceholderText="Generator、アセンブリ、生成ファイルを検索"
+                                Text="{Binding ResultFilter, UpdateSourceTrigger=PropertyChanged}"
+                                ToolTip="Generator 型、アセンブリ、生成ファイルを絞り込み" />
+                    <TabControl Grid.Row="1"
+                                Margin="8,0,8,8"
+                                Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                        <TabItem Header="表形式">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="2*" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <ui:DataGrid x:Name="GeneratorGrid"
+                                             Grid.Row="0"
+                                             ItemsSource="{Binding Generators}"
+                                             AutoGenerateColumns="False"
+                                             EnableRowVirtualization="True"
+                                             EnableColumnVirtualization="True"
+                                             IsReadOnly="True"
+                                             VirtualizingPanel.IsVirtualizing="True"
+                                             VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Generator 型" />
+                                        <DataGridTextColumn Width="220" Binding="{Binding Assembly}" Header="アセンブリ" />
+                                        <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" Header="平均 ms" />
+                                        <DataGridTextColumn Width="90" Binding="{Binding GeneratedFileCount}" Header="ファイル数" />
+                                        <DataGridTextColumn Width="100" Binding="{Binding GeneratedByteCount}" Header="バイト数" />
+                                        <DataGridTextColumn Width="90" Binding="{Binding GeneratedLineCount}" Header="行数" />
+                                    </DataGrid.Columns>
+                                </ui:DataGrid>
+                                <TextBlock Grid.Row="1"
+                                           Margin="6"
+                                           FontWeight="SemiBold"
+                                           Text="以下は生成物の一覧です。Roslyn は生成ファイル単位の実行時間を提供しないため表示しません。" />
+                                <ui:DataGrid Grid.Row="2"
+                                             ItemsSource="{Binding SelectedItem.Outputs, ElementName=GeneratorGrid}"
+                                             AutoGenerateColumns="False"
+                                             EnableRowVirtualization="True"
+                                             IsReadOnly="True"
+                                             VirtualizingPanel.IsVirtualizing="True"
+                                             VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Width="*" Binding="{Binding RelativePath}" Header="生成ファイル" />
+                                        <DataGridTextColumn Width="120" Binding="{Binding ByteCount}" Header="バイト数" />
+                                        <DataGridTextColumn Width="100" Binding="{Binding LineCount}" Header="行数" />
+                                    </DataGrid.Columns>
+                                </ui:DataGrid>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="ツリー形式">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0"
+                                           Margin="6"
+                                           FontWeight="SemiBold"
+                                           Text="生成ファイル単位の実行時間はRoslynから提供されないため表示しません。" />
+                                <TreeView Grid.Row="1"
+                                          ItemsSource="{Binding GeneratorTree}"
+                                          VirtualizingPanel.IsVirtualizing="True"
+                                          VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <TreeView.ItemTemplate>
+                                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                                <TextBlock Margin="12,0,0,0"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                           Text="{Binding Detail}" />
+                                            </StackPanel>
+                                        </HierarchicalDataTemplate>
+                                    </TreeView.ItemTemplate>
+                                </TreeView>
+                            </Grid>
+                        </TabItem>
+                    </TabControl>
                 </Grid>
             </TabItem>
             <TabItem Header="履歴">
@@ -284,10 +456,11 @@
                                    VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    Text="{Binding HistoryCountText}" />
-                        <TextBox Width="320"
-                                 Margin="0,0,8,0"
-                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                                 ToolTip="名前、パス、IDを検索" />
+                        <ui:TextBox Width="320"
+                                    Margin="0,0,8,0"
+                                    PlaceholderText="対象名、パス、履歴IDを検索"
+                                    Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                    ToolTip="名前、パス、IDを検索" />
                         <ComboBox Width="110"
                                   Margin="0,0,8,0"
                                   ItemsSource="{Binding HistoryStatuses}"
@@ -325,7 +498,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="0,0,0,8" Orientation="Horizontal">
-                        <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="ベースライン" />
+                        <TextBlock x:Name="CompareBaselineLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="ベースライン" />
                         <TextBox Width="280" Margin="0,0,12,0" Text="{Binding BaselineId}" />
                         <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="候補" />
                         <TextBox Width="280" Margin="0,0,12,0" Text="{Binding CandidateId}" />
@@ -360,7 +533,7 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="0,0,0,8" Orientation="Horizontal">
-                        <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="形式" />
+                        <TextBlock x:Name="ExportFormatLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="形式" />
                         <ComboBox Width="110" Margin="0,0,8,0" Text="{Binding ExportFormat}">
                             <ComboBoxItem Content="json" />
                             <ComboBoxItem Content="csv" />
@@ -382,6 +555,48 @@
                             <DataGridTextColumn Width="320" Binding="{Binding SuggestedAction}" Header="対処" />
                         </DataGrid.Columns>
                     </ui:DataGrid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="設定">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="SettingsTitle"
+                               Grid.Row="0"
+                               Margin="0,0,0,12"
+                               FontSize="20"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               Text="設定" />
+                    <StackPanel Grid.Row="1" Margin="0,0,0,24" Orientation="Horizontal">
+                        <TextBlock Width="140"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   Text="テーマ" />
+                        <ComboBox Width="160"
+                                  DisplayMemberPath="Label"
+                                  ItemsSource="{Binding Source={x:Static local:MainViewModel.ThemeOptions}}"
+                                  SelectedItem="{Binding SelectedTheme}" />
+                    </StackPanel>
+                    <ui:Card Grid.Row="2" Padding="16">
+                        <StackPanel>
+                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="YetAnotherAnalyzerProfiler" />
+                            <TextBlock Margin="0,4,0,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="Analyzer / Source Generator プロファイラー" />
+                            <TextBlock Margin="0,12,0,0">
+                                <Run Text="バージョン " />
+                                <Run Text="{Binding ApplicationVersion, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock Margin="0,4,0,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="測定データはローカルに保存され、YAAP自身はネットワークへ送信しません。" />
+                        </StackPanel>
+                    </ui:Card>
                 </Grid>
             </TabItem>
         </TabControl>

@@ -1,6 +1,7 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using Yaap.Core;
@@ -42,6 +43,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private int _retentionCount = 50;
     private ProfileMode _selectedMode = ProfileMode.Warm;
     private ThemeOption _selectedTheme;
+    private RecentTarget? _selectedRecentTarget;
     private RunSummary? _selectedHistory;
     private ProfileRun? _selectedRun;
     private ComparisonResult? _comparison;
@@ -71,6 +73,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<string> Configurations { get; } = new();
 
+    public ObservableCollection<RecentTarget> RecentTargets { get; } = new();
+
     public IReadOnlyList<ProfileMode> Modes { get; } = Enum.GetValues<ProfileMode>();
 
     public static IReadOnlyList<ThemeOption> ThemeOptions { get; } =
@@ -91,6 +95,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (Set(ref _targetPath, value))
             {
+                RecentTarget? matchingRecentTarget = RecentTargets.FirstOrDefault(item =>
+                    PathsEqual(item.Path, value));
+                Set(ref _selectedRecentTarget, matchingRecentTarget, nameof(SelectedRecentTarget));
                 _hasValidTarget = false;
                 Configurations.Clear();
                 Configuration = string.Empty;
@@ -122,6 +129,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 _historyInitialized = false;
                 _latestConfigurationByTarget =
                     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                RecentTargets.Clear();
+                Set(ref _selectedRecentTarget, null, nameof(SelectedRecentTarget));
                 OnPropertyChanged(nameof(AdvancedSettingsSummary));
                 if (_hasValidTarget && !IsRunning)
                 {
@@ -164,6 +173,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 OnPropertyChanged(nameof(Analyzers));
                 OnPropertyChanged(nameof(Generators));
+                OnPropertyChanged(nameof(AnalyzerTree));
+                OnPropertyChanged(nameof(GeneratorTree));
             }
         }
     }
@@ -261,6 +272,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    public RecentTarget? SelectedRecentTarget
+    {
+        get => _selectedRecentTarget;
+        set
+        {
+            if (Set(ref _selectedRecentTarget, value) && value is not null &&
+                !PathsEqual(TargetPath, value.Path))
+            {
+                TargetPath = value.Path;
+            }
+        }
+    }
+
     public bool IsRunning
     {
         get => _isRunning;
@@ -306,6 +330,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 OnPropertyChanged(nameof(Analyzers));
                 OnPropertyChanged(nameof(Generators));
+                OnPropertyChanged(nameof(AnalyzerTree));
+                OnPropertyChanged(nameof(GeneratorTree));
                 OnPropertyChanged(nameof(Diagnostics));
                 RaiseCommandStates();
             }
@@ -336,13 +362,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public string HistoryCountText => $"履歴 {History.Count} 件";
 
+    public string ApplicationVersion { get; } =
+        typeof(MainViewModel).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion.Split('+')[0] ?? "不明";
+
     public IReadOnlyList<StatisticalMetric> Analyzers => SelectedRun?.Analyzers
         .Where(item => MatchesResultFilter(item.Identity, item.Assembly, item.DiagnosticId))
         .ToArray() ?? Array.Empty<StatisticalMetric>();
 
     public IReadOnlyList<GeneratorMetric> Generators => SelectedRun?.Generators
-        .Where(item => MatchesResultFilter(item.Identity, item.Assembly))
+        .Where(MatchesGeneratorFilter)
         .ToArray() ?? Array.Empty<GeneratorMetric>();
+
+    public IReadOnlyList<ResultTreeNode> AnalyzerTree => ResultTreeBuilder.BuildAnalyzers(
+        SelectedRun?.Analyzers ?? Array.Empty<StatisticalMetric>(),
+        ResultFilter);
+
+    public IReadOnlyList<ResultTreeNode> GeneratorTree => ResultTreeBuilder.BuildGenerators(
+        SelectedRun?.Generators ?? Array.Empty<GeneratorMetric>(),
+        ResultFilter);
 
     public IReadOnlyList<RunDiagnostic> Diagnostics => SelectedRun?.Diagnostics ?? Array.Empty<RunDiagnostic>();
 
@@ -781,16 +820,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void SetConfigurationHistory(IEnumerable<RunSummary> summaries)
     {
         Dictionary<string, string> latest = new(StringComparer.OrdinalIgnoreCase);
+        List<RecentTarget> recentTargets = new();
         foreach (RunSummary summary in summaries.OrderByDescending(summary => summary.StartedAt))
         {
             string? normalizedPath = TryNormalizePath(summary.TargetPath);
             if (normalizedPath is not null)
             {
-                latest.TryAdd(normalizedPath, summary.Configuration);
+                if (latest.TryAdd(normalizedPath, summary.Configuration))
+                {
+                    recentTargets.Add(new RecentTarget(
+                        Path.GetFileName(normalizedPath),
+                        normalizedPath,
+                        summary.StartedAt));
+                }
             }
         }
 
         _latestConfigurationByTarget = latest;
+        RecentTargets.Clear();
+        foreach (RecentTarget recentTarget in recentTargets)
+        {
+            RecentTargets.Add(recentTarget);
+        }
+
+        Set(
+            ref _selectedRecentTarget,
+            RecentTargets.FirstOrDefault(item => PathsEqual(item.Path, TargetPath)),
+            nameof(SelectedRecentTarget));
         _historyInitialized = true;
     }
 
@@ -818,6 +874,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             values.Any(value => value?.Contains(ResultFilter, StringComparison.OrdinalIgnoreCase) == true);
     }
 
+    private bool MatchesGeneratorFilter(GeneratorMetric generator)
+    {
+        return MatchesResultFilter(generator.Identity, generator.Assembly) ||
+            generator.Outputs.Any(output => MatchesResultFilter(output.RelativePath));
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        string? normalizedLeft = TryNormalizePath(left);
+        string? normalizedRight = TryNormalizePath(right);
+        return normalizedLeft is not null && normalizedRight is not null &&
+            normalizedLeft.Equals(normalizedRight, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class RelayCommand : ICommand
     {
         private readonly Action _execute;
@@ -836,5 +906,77 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         public void Execute(object? parameter) => _execute();
 
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    }
+}
+
+public sealed record RecentTarget(string Name, string Path, DateTimeOffset LastUsed);
+
+public sealed record ResultTreeNode(
+    string Name,
+    string Detail,
+    IReadOnlyList<ResultTreeNode> Children);
+
+public static class ResultTreeBuilder
+{
+    public static IReadOnlyList<ResultTreeNode> BuildAnalyzers(
+        IEnumerable<StatisticalMetric> metrics,
+        string? filter)
+    {
+        return metrics
+            .Where(item => Matches(filter, item.Identity, item.Assembly, item.DiagnosticId))
+            .GroupBy(item => item.Assembly, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new ResultTreeNode(
+                group.Key,
+                $"{group.Count()} 項目",
+                group.OrderBy(item => item.Identity, StringComparer.OrdinalIgnoreCase)
+                    .Select(item => new ResultTreeNode(
+                        item.DiagnosticId is null
+                            ? item.Identity
+                            : $"{item.DiagnosticId}: {item.Identity}",
+                        $"{item.Kind}、平均 {item.MeanMilliseconds:N3} ms、標本 {item.SampleCount}",
+                        Array.Empty<ResultTreeNode>()))
+                    .ToArray()))
+            .ToArray();
+    }
+
+    public static IReadOnlyList<ResultTreeNode> BuildGenerators(
+        IEnumerable<GeneratorMetric> metrics,
+        string? filter)
+    {
+        return metrics
+            .Where(item => Matches(filter, item.Identity, item.Assembly) ||
+                item.Outputs.Any(output => Matches(filter, output.RelativePath)))
+            .GroupBy(item => item.Assembly, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new ResultTreeNode(
+                group.Key,
+                $"{group.Count()} Generator",
+                group.OrderBy(item => item.Identity, StringComparer.OrdinalIgnoreCase)
+                    .Select(item => new ResultTreeNode(
+                        item.Identity,
+                        $"平均 {item.MeanMilliseconds:N3} ms、生成 {item.GeneratedFileCount} ファイル",
+                        FilterOutputs(item, filter)
+                            .OrderBy(output => output.RelativePath, StringComparer.OrdinalIgnoreCase)
+                            .Select(output => new ResultTreeNode(
+                                output.RelativePath,
+                                $"{output.ByteCount:N0} バイト、{output.LineCount:N0} 行",
+                                Array.Empty<ResultTreeNode>()))
+                            .ToArray()))
+                    .ToArray()))
+            .ToArray();
+    }
+
+    private static IEnumerable<GeneratedOutput> FilterOutputs(GeneratorMetric generator, string? filter)
+    {
+        return Matches(filter, generator.Identity, generator.Assembly)
+            ? generator.Outputs
+            : generator.Outputs.Where(output => Matches(filter, output.RelativePath));
+    }
+
+    private static bool Matches(string? filter, params string?[] values)
+    {
+        return string.IsNullOrWhiteSpace(filter) ||
+            values.Any(value => value?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
     }
 }

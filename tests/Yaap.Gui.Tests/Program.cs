@@ -1,13 +1,22 @@
-﻿using Wpf.Ui.Appearance;
+﻿using System.Reflection;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using Wpf.Ui.Appearance;
 using Yaap.Core;
 using Yaap.Gui;
 
 List<(string Name, Func<Task> Body)> tests = new()
 {
     ("gui.viewmodel-initialization", ViewModelInitializationAsync),
+    ("gui.window-startup-smoke", WindowStartupSmokeAsync),
     ("gui.drop-and-auto-discovery", DropAndAutoDiscoveryAsync),
     ("gui.configuration-priority", ConfigurationPriorityAsync),
     ("gui.configuration-history", ConfigurationHistoryAsync),
+    ("gui.result-tree-filtering", ResultTreeFilteringAsync),
     ("gui.discovery-discards-stale-results", DiscoveryDiscardsStaleResultsAsync),
     ("gui.measurement-state", MeasurementStateAsync),
     ("gui.theme-framework", ThemeFrameworkAsync),
@@ -31,6 +40,247 @@ foreach ((string name, Func<Task> body) in tests)
 }
 
 return failures == 0 ? 0 : 1;
+
+static async Task WindowStartupSmokeAsync()
+{
+    string historyPath = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(),
+        "yaap-gui-tests",
+        Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(historyPath);
+    TaskCompletionSource<Exception?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    Thread thread = new(() =>
+    {
+        App? app = null;
+        try
+        {
+            app = new App();
+            app.InitializeComponent();
+            using MainViewModel viewModel = new(targetDiscoveryDelay: TimeSpan.Zero)
+            {
+                HistoryPath = historyPath,
+            };
+            SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualRun());
+            MainWindow window = new(viewModel);
+            window.Show();
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+
+            TabControl mainTabs = (TabControl)window.FindName("MainTabs");
+            FrameworkElement targetCard = (FrameworkElement)window.FindName("TargetCard");
+            FrameworkElement busyCard = (FrameworkElement)window.FindName("BusyCard");
+            Button cancelButton = (Button)window.FindName("BusyCancelButton");
+            TextBlock compareBaselineLabel = (TextBlock)window.FindName("CompareBaselineLabel");
+            TextBlock exportFormatLabel = (TextBlock)window.FindName("ExportFormatLabel");
+            TextBlock settingsTitle = (TextBlock)window.FindName("SettingsTitle");
+            SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), true);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            Ensure(!targetCard.IsEnabled, "The target controls must be disabled while measuring.");
+            Ensure(!mainTabs.IsEnabled, "Result and history tabs must be disabled while measuring.");
+            Ensure(busyCard.Visibility == Visibility.Visible, "The measurement progress surface must be visible.");
+            Ensure(cancelButton.IsEnabled, "Cancel must remain enabled while measuring.");
+
+            string? captureDirectory = Environment.GetEnvironmentVariable("YAAP_GUI_CAPTURE_DIR");
+            foreach (AppThemeMode mode in new[] { AppThemeMode.Light, AppThemeMode.Dark })
+            {
+                viewModel.SelectedTheme = MainViewModel.ThemeOptions.Single(option => option.Mode == mode);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                EnsureReadableForeground(mainTabs.Foreground, mode, "MainTabs");
+                CaptureWindow(window, captureDirectory, $"{mode.ToString().ToLowerInvariant()}-busy");
+
+                SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), false);
+                for (int index = 0; index < mainTabs.Items.Count; index++)
+                {
+                    mainTabs.SelectedIndex = index;
+                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                    TabItem selectedTab = (TabItem)mainTabs.ItemContainerGenerator.ContainerFromIndex(index);
+                    Border tabBorder = (Border)selectedTab.Template.FindName("TabBorder", selectedTab);
+                    ContentPresenter headerPresenter =
+                        (ContentPresenter)selectedTab.Template.FindName("HeaderPresenter", selectedTab);
+                    EnsureContrast(
+                        TextElement.GetForeground(headerPresenter),
+                        tabBorder.Background,
+                        $"{mode} main tab {index + 1}");
+                    if (index == 3)
+                    {
+                        EnsureReadableForeground(compareBaselineLabel.Foreground, mode, "CompareBaselineLabel");
+                    }
+                    else if (index == 4)
+                    {
+                        EnsureReadableForeground(exportFormatLabel.Foreground, mode, "ExportFormatLabel");
+                    }
+                    else if (index == 5)
+                    {
+                        EnsureReadableForeground(settingsTitle.Foreground, mode, "SettingsTitle");
+                    }
+
+                    CaptureWindow(
+                        window,
+                        captureDirectory,
+                        $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
+                }
+
+                SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), true);
+            }
+
+            SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), false);
+            window.Close();
+            completion.TrySetResult(null);
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetResult(exception);
+        }
+        finally
+        {
+            app?.Shutdown();
+        }
+    })
+    {
+        IsBackground = true,
+        Name = "YAAP GUI startup smoke test",
+    };
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+
+    try
+    {
+        Exception? exception = await completion.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Ensure(exception is null, $"MainWindow failed during startup: {exception}");
+        Ensure(thread.Join(TimeSpan.FromSeconds(5)), "The GUI startup smoke thread did not exit.");
+    }
+    finally
+    {
+        if (Directory.Exists(historyPath))
+        {
+            Directory.Delete(historyPath, recursive: true);
+        }
+    }
+}
+
+static void CaptureWindow(Window window, string? captureDirectory, string name)
+{
+    int width = Math.Max(1, (int)Math.Ceiling(window.ActualWidth));
+    int height = Math.Max(1, (int)Math.Ceiling(window.ActualHeight));
+    RenderTargetBitmap bitmap = new(width, height, 96, 96, PixelFormats.Pbgra32);
+    bitmap.Render(window);
+    Ensure(bitmap.PixelWidth == width && bitmap.PixelHeight == height, "The GUI render bitmap is invalid.");
+    if (string.IsNullOrWhiteSpace(captureDirectory))
+    {
+        return;
+    }
+
+    Directory.CreateDirectory(captureDirectory);
+    PngBitmapEncoder encoder = new();
+    encoder.Frames.Add(BitmapFrame.Create(bitmap));
+    using FileStream stream = File.Create(System.IO.Path.Combine(captureDirectory, $"{name}.png"));
+    encoder.Save(stream);
+}
+
+static void EnsureReadableForeground(Brush brush, AppThemeMode mode, string name)
+{
+    Ensure(brush is SolidColorBrush, $"{name} must use a solid theme foreground.");
+    Color color = ((SolidColorBrush)brush).Color;
+    double luminance = (0.2126 * color.ScR) + (0.7152 * color.ScG) + (0.0722 * color.ScB);
+    if (mode == AppThemeMode.Dark)
+    {
+        Ensure(luminance >= 0.5, $"{name} foreground is too dark for the dark theme.");
+    }
+    else
+    {
+        Ensure(luminance <= 0.5, $"{name} foreground is too light for the light theme.");
+    }
+}
+
+static void EnsureContrast(Brush foreground, Brush background, string name)
+{
+    Ensure(foreground is SolidColorBrush, $"{name} foreground must be a solid brush.");
+    Ensure(background is SolidColorBrush, $"{name} background must be a solid brush.");
+    double foregroundLuminance = RelativeLuminance(((SolidColorBrush)foreground).Color);
+    double backgroundLuminance = RelativeLuminance(((SolidColorBrush)background).Color);
+    double ratio = (Math.Max(foregroundLuminance, backgroundLuminance) + 0.05) /
+        (Math.Min(foregroundLuminance, backgroundLuminance) + 0.05);
+    Ensure(ratio >= 4.5, $"{name} contrast ratio {ratio:N2} is below 4.5:1.");
+}
+
+static double RelativeLuminance(Color color)
+{
+    static double Linearize(byte component)
+    {
+        double channel = component / 255.0;
+        return channel <= 0.04045 ? channel / 12.92 : Math.Pow((channel + 0.055) / 1.055, 2.4);
+    }
+
+    return (0.2126 * Linearize(color.R)) +
+        (0.7152 * Linearize(color.G)) +
+        (0.0722 * Linearize(color.B));
+}
+
+static void SetPrivateProperty<T>(object target, string propertyName, T value)
+{
+    PropertyInfo property = target.GetType().GetProperty(propertyName) ??
+        throw new InvalidOperationException($"Property was not found: {propertyName}");
+    MethodInfo setter = property.GetSetMethod(nonPublic: true) ??
+        throw new InvalidOperationException($"Property setter was not found: {propertyName}");
+    setter.Invoke(target, new object?[] { value });
+}
+
+static ProfileRun CreateVisualRun()
+{
+    DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+    return new ProfileRun
+    {
+        TargetPath = "sample.csproj",
+        TargetName = "sample.csproj",
+        Configuration = "Release",
+        Mode = ProfileMode.Warm,
+        StartedAt = startedAt,
+        FinishedAt = startedAt.AddSeconds(1),
+        Status = RunStatus.Succeeded,
+        Environment = new EnvironmentSnapshot(
+            "Windows",
+            "x64",
+            8,
+            ".NET",
+            "10.0.100",
+            null,
+            null,
+            false),
+        Analyzers = new[]
+        {
+            new StatisticalMetric(
+                "Sample.Analyzers.PerformanceAnalyzer",
+                "Sample.Analyzers",
+                MetricKind.Analyzer,
+                null,
+                12.5,
+                11,
+                14,
+                1.2,
+                3),
+        },
+        Generators = new[]
+        {
+            new GeneratorMetric(
+                "Sample.Generators.ModelGenerator",
+                "Sample.Generators",
+                8.5,
+                8,
+                9,
+                0.5,
+                3,
+                1,
+                256,
+                12,
+                new[] { new GeneratedOutput("Sample.Generators.ModelGenerator", "Generated/Model.g.cs", 256, 12) }),
+        },
+        Diagnostics = new[]
+        {
+            new RunDiagnostic("YAAP0000", "確認用診断", "テーマ描画確認", "操作は不要です。"),
+        },
+        Isolated = true,
+    };
+}
 
 static async Task ViewModelInitializationAsync()
 {
@@ -161,8 +411,11 @@ static async Task ConfigurationHistoryAsync()
             HistoryPath = historyPath,
         };
         await historyFirst.InitializeAsync();
-        historyFirst.TargetPath = project;
+        Ensure(historyFirst.RecentTargets.Count == 1, "Recent targets should be deduplicated by path.");
+        Ensure(historyFirst.RecentTargets[0].Path == System.IO.Path.GetFullPath(project), "The historical target path should be selectable.");
+        historyFirst.SelectedRecentTarget = historyFirst.RecentTargets[0];
         await historyFirst.WaitForTargetDiscoveryAsync();
+        Ensure(historyFirst.TargetPath == System.IO.Path.GetFullPath(project), "Selecting a recent target should update the target path.");
         Ensure(historyFirst.Configuration == "Profile", "The newest same-target history should win when history loads first.");
         Ensure(historyFirst.StartCommand.CanExecute(null), "A historical configuration should be ready to start.");
     }
@@ -170,6 +423,61 @@ static async Task ConfigurationHistoryAsync()
     {
         Directory.Delete(path, recursive: true);
     }
+}
+
+static Task ResultTreeFilteringAsync()
+{
+    StatisticalMetric analyzer = new(
+        "SampleAnalyzer",
+        "Sample.Assembly",
+        MetricKind.Analyzer,
+        null,
+        12,
+        10,
+        14,
+        1,
+        3);
+    StatisticalMetric diagnostic = new(
+        "SampleAnalyzer",
+        "Sample.Assembly",
+        MetricKind.Diagnostic,
+        "YAAP001",
+        4,
+        3,
+        5,
+        1,
+        3);
+    IReadOnlyList<ResultTreeNode> analyzerTree = ResultTreeBuilder.BuildAnalyzers(
+        new[] { analyzer, diagnostic },
+        "YAAP001");
+    Ensure(analyzerTree.Count == 1, "The analyzer tree should retain the matching assembly branch.");
+    Ensure(analyzerTree[0].Children.Count == 1, "The analyzer tree should filter nonmatching metrics.");
+    Ensure(analyzerTree[0].Children[0].Name.Contains("YAAP001", StringComparison.Ordinal), "Diagnostic IDs should be visible in the tree.");
+
+    GeneratorMetric generator = new(
+        "SampleGenerator",
+        "Sample.Assembly",
+        8,
+        7,
+        9,
+        1,
+        3,
+        2,
+        300,
+        20,
+        new[]
+        {
+            new GeneratedOutput("SampleGenerator", "Generated/First.g.cs", 100, 8),
+            new GeneratedOutput("SampleGenerator", "Generated/Second.g.cs", 200, 12),
+        });
+    IReadOnlyList<ResultTreeNode> generatorTree = ResultTreeBuilder.BuildGenerators(
+        new[] { generator },
+        "Second");
+    Ensure(generatorTree.Count == 1, "A generated-file match should retain its generator branch.");
+    Ensure(generatorTree[0].Children[0].Children.Count == 1, "Only matching generated files should remain in a filtered tree.");
+    Ensure(generatorTree[0].Children[0].Children[0].Name.EndsWith("Second.g.cs", StringComparison.Ordinal), "The matching generated file should be visible.");
+    Ensure(ResultTreeBuilder.BuildGenerators(new[] { generator }, "Missing").Count == 0, "Nonmatching generator branches should be removed.");
+    return Task.CompletedTask;
 }
 
 static ProfileRun CreateHistoricalRun(string targetPath, string configuration, DateTimeOffset startedAt)
@@ -327,6 +635,18 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("生成ファイル単位の実行時間", StringComparison.Ordinal), "Generator timing disclaimer is required.");
     Ensure(xaml.Contains("キャンセル", StringComparison.Ordinal), "Cancellation UI is required.");
     Ensure(xaml.Contains("ResultFilter", StringComparison.Ordinal), "Analyzer and generator filtering is required.");
+    Ensure(xaml.Contains("PlaceholderText=\"*.csproj; *.slnx; *.sln\"", StringComparison.Ordinal), "The target placeholder is required.");
+    Ensure(xaml.Contains("RecentTargets", StringComparison.Ordinal), "Recent targets must be selectable from history.");
+    Ensure(xaml.Contains("PlaceholderText=\"Analyzer、診断ID、アセンブリを検索\"", StringComparison.Ordinal), "The analyzer search placeholder is required.");
+    Ensure(xaml.Contains("PlaceholderText=\"Generator、アセンブリ、生成ファイルを検索\"", StringComparison.Ordinal), "The generator search placeholder is required.");
+    Ensure(xaml.Contains("ItemsSource=\"{Binding AnalyzerTree}\"", StringComparison.Ordinal), "The analyzer tree view is required.");
+    Ensure(xaml.Contains("ItemsSource=\"{Binding GeneratorTree}\"", StringComparison.Ordinal), "The generator tree view is required.");
+    Ensure(xaml.Contains("Header=\"設定\"", StringComparison.Ordinal), "The settings tab is required.");
+    Ensure(xaml.Contains("AccentFillColorDefaultBrush", StringComparison.Ordinal), "Selected main tabs should have a visible accent.");
+    Ensure(xaml.Contains("TextOnAccentFillColorPrimaryBrush", StringComparison.Ordinal), "Selected tab text must contrast with the accent.");
+    Ensure(xaml.Contains("ui:DropDownButton", StringComparison.Ordinal), "Recent targets must use a compact drop-down.");
+    Ensure(xaml.Contains("ui:ProgressRing", StringComparison.Ordinal), "Measurement progress must be visually prominent.");
+    Ensure(xaml.Contains("x:Name=\"BusyCancelButton\"", StringComparison.Ordinal), "Cancel must remain available on the busy surface.");
     Ensure(xaml.Contains("AllowDrop=\"True\"", StringComparison.Ordinal), "File drop must be enabled.");
     Ensure(xaml.Contains("PreviewDrop=\"OnPreviewDrop\"", StringComparison.Ordinal), "File drop must be handled.");
     Ensure(!xaml.Contains("DiscoverCommand", StringComparison.Ordinal), "Manual discovery should not remain in the GUI.");

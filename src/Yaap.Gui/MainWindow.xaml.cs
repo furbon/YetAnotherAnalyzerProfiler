@@ -8,9 +8,14 @@ namespace Yaap.Gui;
 public partial class MainWindow : FluentWindow
 {
     public MainWindow()
+        : this(new MainViewModel())
     {
+    }
+
+    public MainWindow(MainViewModel viewModel)
+    {
+        ArgumentNullException.ThrowIfNull(viewModel);
         InitializeComponent();
-        MainViewModel viewModel = new();
         DataContext = viewModel;
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
         Loaded += async (_, _) =>
@@ -18,9 +23,9 @@ public partial class MainWindow : FluentWindow
             ApplySelectedTheme();
             await viewModel.InitializeAsync();
         };
+        Closing += (_, _) => SystemThemeWatcher.UnWatch(this);
         Closed += (_, _) =>
         {
-            SystemThemeWatcher.UnWatch(this);
             viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             viewModel.Dispose();
         };
@@ -58,6 +63,16 @@ public partial class MainWindow : FluentWindow
             ? DragDropEffects.Copy
             : DragDropEffects.None;
         eventArgs.Handled = true;
+    }
+
+    private void OnRecentTargetClick(object sender, RoutedEventArgs eventArgs)
+    {
+        if (sender is FrameworkElement { DataContext: RecentTarget recentTarget } &&
+            DataContext is MainViewModel viewModel)
+        {
+            viewModel.SelectedRecentTarget = recentTarget;
+            RecentTargetsButton.IsDropDownOpen = false;
+        }
     }
 
     private static string[] GetDroppedPaths(DragEventArgs eventArgs) =>
