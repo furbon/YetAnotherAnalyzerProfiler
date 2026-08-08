@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -61,19 +62,34 @@ static async Task WindowStartupSmokeAsync()
     await File.WriteAllTextAsync(
         longerRecentTargetPath,
         "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
+    HistoryStore visualHistory = new(historyPath);
+    ProfileRun optimizationBefore = CreateHistoricalRun(
+        recentTargetPath,
+        "Release",
+        DateTimeOffset.UtcNow.AddDays(-1));
+    optimizationBefore.Label = "最適化前";
+    ProfileRun optimizationAfter = CreateHistoricalRun(
+        recentTargetPath,
+        "Release",
+        DateTimeOffset.UtcNow.AddHours(-1));
+    optimizationAfter.Label = "最適化後";
+    await visualHistory.SaveAsync(optimizationBefore);
+    await visualHistory.SaveAsync(optimizationAfter);
     TaskCompletionSource<Exception?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     Thread thread = new(() =>
     {
         App? app = null;
         try
         {
-            app = new App();
-            app.InitializeComponent();
             using MainViewModel viewModel = new(targetDiscoveryDelay: TimeSpan.Zero)
             {
                 HistoryPath = historyPath,
             };
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
             SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualRun());
+            viewModel.WaitForResultFilterAsync().GetAwaiter().GetResult();
+            app = new App();
+            app.InitializeComponent();
             MainWindow window = new(viewModel);
             window.Show();
             window.UpdateLayout();
@@ -113,6 +129,7 @@ static async Task WindowStartupSmokeAsync()
                 throw new InvalidOperationException("The advanced-settings icon was not rendered.");
             DataGrid analyzerGrid = (DataGrid)window.FindName("AnalyzerGrid");
             DataGrid generatorGrid = (DataGrid)window.FindName("GeneratorGrid");
+            DataGrid historyGrid = (DataGrid)window.FindName("HistoryGrid");
             TextBlock generatorOutputsTruncatedNotice =
                 (TextBlock)window.FindName("GeneratorOutputsTruncatedNotice");
             TextBlock compareBaselineLabel = (TextBlock)window.FindName("CompareBaselineLabel");
@@ -147,6 +164,49 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 analyzerGrid.Columns.All(column => !string.Equals(column.Header?.ToString(), "標本", StringComparison.Ordinal)),
                 "The Analyzer table must not present sample count as 標本.");
+            Ensure(analyzerGrid.ActualHeight < 600, "The Analyzer table must be constrained to the tab viewport.");
+            ScrollViewer analyzerScroll = FindVisualDescendants<ScrollViewer>(analyzerGrid)
+                .OrderByDescending(viewer => viewer.ScrollableHeight)
+                .FirstOrDefault() ??
+                throw new InvalidOperationException("The Analyzer table scroll host was not rendered.");
+            Ensure(analyzerScroll.ScrollableHeight > 0, "A large Analyzer table must have a vertical scroll range.");
+            Ensure(
+                analyzerScroll.ComputedVerticalScrollBarVisibility == Visibility.Visible,
+                "A large Analyzer table must show its vertical scrollbar.");
+            int realizedAnalyzerRows = FindVisualDescendants<DataGridRow>(analyzerGrid).Count();
+            Ensure(
+                realizedAnalyzerRows < analyzerGrid.Items.Count / 2,
+                "The Analyzer table must virtualize rows instead of realizing the entire result set.");
+            analyzerGrid.SelectedIndex = analyzerGrid.Items.Count - 1;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            Ensure(analyzerScroll.VerticalOffset > 0, "Selecting an off-screen Analyzer must scroll it into view.");
+            analyzerScroll.ScrollToTop();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            MouseWheelEventArgs wheel = new(Mouse.PrimaryDevice, Environment.TickCount, -120)
+            {
+                RoutedEvent = Mouse.MouseWheelEvent,
+            };
+            analyzerScroll.RaiseEvent(wheel);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            Ensure(analyzerScroll.VerticalOffset > 0, "The mouse wheel must scroll the Analyzer table.");
+            Ensure(
+                ReferenceEquals(viewModel.Analyzers, viewModel.Analyzers),
+                "Unchanged Analyzer projections must be cached across tab switches.");
+            mainTabs.SelectedIndex = 1;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            ScrollViewer generatorScroll = FindVisualDescendants<ScrollViewer>(generatorGrid)
+                .OrderByDescending(viewer => viewer.ScrollableHeight)
+                .FirstOrDefault() ??
+                throw new InvalidOperationException("The Generator table scroll host was not rendered.");
+            Ensure(generatorScroll.ScrollableHeight > 0, "A large Generator table must have a vertical scroll range.");
+            Ensure(
+                generatorScroll.ComputedVerticalScrollBarVisibility == Visibility.Visible,
+                "A large Generator table must show its vertical scrollbar.");
+            Ensure(
+                FindVisualDescendants<DataGridRow>(generatorGrid).Count() < generatorGrid.Items.Count / 2,
+                "The Generator table must virtualize rows.");
+            mainTabs.SelectedIndex = 0;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(startButton.FontWeight == FontWeights.SemiBold, "The primary measurement action must use emphasized text.");
             Ensure(busyCard.Visibility == Visibility.Collapsed, "The measurement progress surface must be hidden while idle.");
             Ensure(statusBar.Visibility == Visibility.Visible, "The persistent status bar must be visible while idle.");
@@ -154,8 +214,8 @@ static async Task WindowStartupSmokeAsync()
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(recentTargetsPopup.IsOpen, "The empty recent-target popup should still open.");
             Ensure(
-                recentTargetsEmptyMessage.Visibility == Visibility.Visible,
-                "The empty recent-target popup should explain that there are no items.");
+                recentTargetsEmptyMessage.Visibility == Visibility.Collapsed,
+                "The recent-target empty state must be hidden when history provides an item.");
             recentTargetsButton.IsChecked = false;
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             SetPrivateProperty(viewModel, nameof(MainViewModel.StatusText), "コンパイラー情報 1/3 を逐次解析しています。");
@@ -170,10 +230,6 @@ static async Task WindowStartupSmokeAsync()
                 "The busy heading must use the canonical measurement state text.");
             Ensure(busyMessage.Text == viewModel.StatusText, "The busy surface must show the current progress message.");
             Ensure(cancelButton.IsEnabled, "Cancel must remain enabled while measuring.");
-            viewModel.RecentTargets.Add(new RecentTarget(
-                System.IO.Path.GetFileName(recentTargetPath),
-                recentTargetPath,
-                DateTimeOffset.UtcNow));
             viewModel.RecentTargets.Add(new RecentTarget(
                 System.IO.Path.GetFileName(longerRecentTargetPath),
                 longerRecentTargetPath,
@@ -210,7 +266,7 @@ static async Task WindowStartupSmokeAsync()
                     {
                         EnsureReadableForeground(exportFormatLabel.Foreground, mode, "ExportFormatLabel");
                     }
-                    else if (index == 5)
+                    else if (index == 6)
                     {
                         EnsureReadableForeground(settingsTitle.Foreground, mode, "SettingsTitle");
                     }
@@ -222,6 +278,11 @@ static async Task WindowStartupSmokeAsync()
                         Ensure(
                             generatorOutputsTruncatedNotice.Visibility == Visibility.Visible,
                             "A truncated generated-output preview must direct users to full export.");
+                    }
+                    else if (index == 2)
+                    {
+                        historyGrid.SelectedIndex = 0;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
                     }
 
                     CaptureWindow(
@@ -239,11 +300,33 @@ static async Task WindowStartupSmokeAsync()
                             throw new InvalidOperationException("The Analyzer tree root was not rendered.");
                         analyzerAssembly.IsExpanded = true;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        ScrollViewer treeScroll = FindVisualDescendants<ScrollViewer>(analyzerTreeView)
+                            .OrderByDescending(viewer => viewer.ScrollableHeight)
+                            .FirstOrDefault() ??
+                            throw new InvalidOperationException("The Analyzer tree scroll host was not rendered.");
+                        Ensure(treeScroll.ScrollableHeight > 0, "A large Analyzer tree must have a vertical scroll range.");
+                        Ensure(
+                            treeScroll.ComputedVerticalScrollBarVisibility == Visibility.Visible,
+                            "A large Analyzer tree must show its vertical scrollbar.");
+                        Ensure(
+                            FindVisualDescendants<TreeViewItem>(analyzerTreeView).Count() < 300,
+                            "The Analyzer tree must virtualize expanded children.");
                         CaptureWindow(
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-tree");
                         analyzerViewTabs.SelectedIndex = 0;
+                    }
+                    else if (index == 2 && historyGrid.ContextMenu is ContextMenu historyMenu)
+                    {
+                        historyMenu.PlacementTarget = historyGrid;
+                        historyMenu.IsOpen = true;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        CaptureElement(
+                            historyMenu,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-context-menu");
+                        historyMenu.IsOpen = false;
                     }
                 }
 
@@ -424,6 +507,24 @@ static T? FindVisualDescendant<T>(DependencyObject root)
     return null;
 }
 
+static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
+    where T : DependencyObject
+{
+    for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+    {
+        DependencyObject child = VisualTreeHelper.GetChild(root, index);
+        if (child is T match)
+        {
+            yield return match;
+        }
+
+        foreach (T descendant in FindVisualDescendants<T>(child))
+        {
+            yield return descendant;
+        }
+    }
+}
+
 static DataGridCell GetDataGridCell(DataGrid grid, int rowIndex, int columnIndex)
 {
     grid.UpdateLayout();
@@ -449,6 +550,41 @@ static void SetPrivateProperty<T>(object target, string propertyName, T value)
 static ProfileRun CreateVisualRun()
 {
     DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+    StatisticalMetric[] analyzers = Enumerable.Range(0, 600)
+        .Select(index => new StatisticalMetric(
+            $"Sample.Analyzers.PerformanceAnalyzer{index:D4}",
+            "Sample.Analyzers",
+            MetricKind.Analyzer,
+            null,
+            10 + index,
+            9 + index,
+            11 + index,
+            1.2,
+            3))
+        .ToArray();
+    GeneratorMetric[] generators = Enumerable.Range(0, 240)
+        .Select(index => new GeneratorMetric(
+            $"Sample.Generators.ModelGenerator{index:D4}",
+            "Sample.Generators",
+            8.5 + index,
+            8 + index,
+            9 + index,
+            0.5,
+            3,
+            1,
+            256,
+            12,
+            new[]
+            {
+                new GeneratedOutput(
+                    $"Sample.Generators.ModelGenerator{index:D4}",
+                    "Sample.Generators",
+                    $"Generated/Model{index:D4}.g.cs",
+                    256,
+                    12),
+            }))
+        .ToArray();
+    generators[0] = generators[0] with { OutputsTruncated = true };
     return new ProfileRun
     {
         TargetPath = "sample.csproj",
@@ -467,61 +603,15 @@ static ProfileRun CreateVisualRun()
             null,
             null,
             false),
-        Analyzers = new[]
-        {
-            new StatisticalMetric(
-                "Sample.Analyzers.PerformanceAnalyzer",
-                "Sample.Analyzers",
-                MetricKind.Analyzer,
-                null,
-                12.5,
-                11,
-                14,
-                1.2,
-                3),
-            new StatisticalMetric(
-                "Sample.Analyzers.CompilationAnalyzer",
-                "Sample.Analyzers",
-                MetricKind.Analyzer,
-                null,
-                1986,
-                1831,
-                2138,
-                125.4,
-                3),
-            new StatisticalMetric(
-                "Sample.Analyzers.SyntaxAnalyzer",
-                "Sample.Analyzers",
-                MetricKind.Analyzer,
-                null,
-                422.333,
-                388,
-                484,
-                32.7,
-                3),
-        },
-        Generators = new[]
-        {
-            new GeneratorMetric(
-                "Sample.Generators.ModelGenerator",
-                "Sample.Generators",
-                8.5,
-                8,
-                9,
-                0.5,
-                3,
-                101,
-                25_856,
-                1_212,
-                new[] { new GeneratedOutput("Sample.Generators.ModelGenerator", "Sample.Generators", "Generated/Model.g.cs", 256, 12) })
-            {
-                OutputsTruncated = true,
-            },
-        },
-        Diagnostics = new[]
-        {
-            new RunDiagnostic("YAAP0000", "確認用診断", "テーマ描画確認", "操作は不要です。"),
-        },
+        Analyzers = analyzers,
+        Generators = generators,
+        Diagnostics = Enumerable.Range(0, 180)
+            .Select(index => new RunDiagnostic(
+                $"YAAP{index:D4}",
+                "確認用診断",
+                $"テーマ描画確認 {index:D3}",
+                "操作は不要です。"))
+            .ToArray(),
         Isolated = true,
     };
 }
@@ -546,6 +636,9 @@ static async Task ViewModelInitializationAsync()
         Ensure(viewModel.CancelCommand.CanExecute(null) == false, "Cancel should be disabled while idle.");
         Ensure(viewModel.SelectedTheme.Mode == AppThemeMode.Auto, "The system theme should be the default.");
         Ensure(viewModel.MeasurementStateText.Contains("測定対象", StringComparison.Ordinal), "The disabled-start reason should be visible.");
+        Ensure(MainViewModel.TryParseHistoryDateText("2026/01/31", out _), "Slash-separated dates should be accepted.");
+        Ensure(MainViewModel.TryParseHistoryDateText("2026-01-31", out _), "ISO dates should be accepted.");
+        Ensure(MainViewModel.TryParseHistoryDateText("31/Jan/2026", out _), "Invariant month-name dates should be accepted.");
     }
     finally
     {
@@ -775,8 +868,32 @@ static async Task FeatureParityAsync()
         };
         await viewModel.InitializeAsync();
         Ensure(viewModel.History.Count == 2, "History should initially contain both runs.");
+        Ensure(viewModel.ComparisonChoices.Count == 2, "Readable comparison choices should follow history.");
+        Ensure(viewModel.SelectedBaseline is not null && viewModel.SelectedCandidate is not null, "Comparison should select sensible defaults.");
+        Ensure(viewModel.CompareCommand.CanExecute(null), "Two different history choices should enable comparison.");
+
+        viewModel.SelectedHistory = viewModel.History[0];
+        viewModel.SelectedHistoryLabel = "最適化後";
+        await viewModel.WaitForLabelSaveAsync();
+        RunSummary labeled = AssertSingle(await history.ListAsync(new HistoryQuery(Search: "最適化後")));
+        Ensure(labeled.Id == viewModel.SelectedHistory.Id, "The edited history label was not persisted.");
+        Ensure(viewModel.UndoLabelCommand.CanExecute(null), "A saved label edit should enable Undo.");
+        viewModel.UndoLabelCommand.Execute(null);
+        await WaitForOperationAsync(viewModel);
+        Ensure((await history.ListAsync()).Single(item => item.Id == labeled.Id).Label is null, "Undo did not restore the previous label.");
+        Ensure(viewModel.RedoLabelCommand.CanExecute(null), "Undo should enable Redo.");
+        viewModel.RedoLabelCommand.Execute(null);
+        await WaitForOperationAsync(viewModel);
+        Ensure((await history.ListAsync()).Single(item => item.Id == labeled.Id).Label == "最適化後", "Redo did not restore the label.");
+
+        viewModel.HistoryFrom = "31/Jan/2026";
+        viewModel.HistoryTo = "2026-12-31";
+        viewModel.RefreshHistoryCommand.Execute(null);
+        await WaitForOperationAsync(viewModel);
+        Ensure(viewModel.History.Count == 2, "Common fuzzy date formats should be accepted.");
 
         viewModel.HistoryFrom = DateTimeOffset.UtcNow.AddHours(-1).ToString("O");
+        viewModel.HistoryTo = string.Empty;
         viewModel.HistoryLimit = "1";
         viewModel.RefreshHistoryCommand.Execute(null);
         await WaitForOperationAsync(viewModel);
@@ -796,6 +913,12 @@ static async Task FeatureParityAsync()
     {
         Directory.Delete(path, recursive: true);
     }
+}
+
+static T AssertSingle<T>(IReadOnlyList<T> values)
+{
+    Ensure(values.Count == 1, $"Expected one item, actual {values.Count}.");
+    return values[0];
 }
 
 static async Task WaitForOperationAsync(MainViewModel viewModel)
@@ -1052,7 +1175,11 @@ static async Task XamlContractAsync()
     string viewModel = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "src", "Yaap.Gui", "MainViewModel.cs"));
     string appXaml = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "src", "Yaap.Gui", "App.xaml"));
     string notices = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "THIRD-PARTY-NOTICES.txt"));
-    Ensure(xaml.Contains("VirtualizationMode=\"Recycling\"", StringComparison.Ordinal), "Virtualization is required.");
+    Ensure(xaml.Contains("x:Key=\"ScrollableDataGridStyle\"", StringComparison.Ordinal), "Large grids must share a scrolling contract.");
+    Ensure(xaml.Contains("x:Key=\"VirtualizedTreeViewStyle\"", StringComparison.Ordinal), "Large trees must share a scrolling contract.");
+    Ensure(xaml.Contains("VerticalScrollBarVisibility\" Value=\"Auto\"", StringComparison.Ordinal), "Large result controls must expose vertical scrollbars.");
+    Ensure(xaml.Contains("VirtualizationMode\" Value=\"Recycling\"", StringComparison.Ordinal), "Recycling virtualization is required.");
+    Ensure(xaml.Contains("Grid.Row=\"2\"", StringComparison.Ordinal), "The Analyzer result view must occupy the bounded star row.");
     Ensure(xaml.Contains("生成ファイル単位の実行時間", StringComparison.Ordinal), "Generator timing disclaimer is required.");
     Ensure(xaml.Contains("先頭100件を表示しています。全件はexportで確認できます。", StringComparison.Ordinal), "Truncated generated-output previews must explain full export.");
     Ensure(xaml.Contains("SelectedItem.OutputsTruncated", StringComparison.Ordinal), "The truncated-preview notice must be conditional.");
@@ -1077,9 +1204,21 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("x:Name=\"RestoreCheckBox\"", StringComparison.Ordinal), "Advanced settings must expose restore control.");
     Ensure(xaml.Contains("IsChecked=\"{Binding Restore}\"", StringComparison.Ordinal), "The restore control must bind to the view model.");
     Ensure(viewModel.Contains("Restore = Restore", StringComparison.Ordinal), "The GUI restore setting must reach ProfileOptions.");
-    Ensure(xaml.Contains("Text=\"{Binding HistoryFrom}\"", StringComparison.Ordinal), "GUI history must expose the CLI-equivalent start filter.");
-    Ensure(xaml.Contains("Text=\"{Binding HistoryTo}\"", StringComparison.Ordinal), "GUI history must expose the CLI-equivalent end filter.");
-    Ensure(xaml.Contains("Text=\"{Binding HistoryLimit}\"", StringComparison.Ordinal), "GUI history must expose the CLI-equivalent limit filter.");
+    Ensure(xaml.Contains("<DatePicker", StringComparison.Ordinal), "History date filters must provide calendar pickers.");
+    Ensure(xaml.Contains("Text=\"{Binding HistoryFrom}\"", StringComparison.Ordinal), "GUI history must expose the start-date filter.");
+    Ensure(xaml.Contains("Text=\"{Binding HistoryTo}\"", StringComparison.Ordinal), "GUI history must expose the end-date filter.");
+    Ensure(xaml.Contains("HistoryLimit, UpdateSourceTrigger=LostFocus", StringComparison.Ordinal), "The history display limit must live in Settings.");
+    Ensure(xaml.Contains("Header=\"ラベル\"", StringComparison.Ordinal), "History labels must be visible.");
+    Ensure(!xaml.Contains("Binding Id}\" Header=\"ID\"", StringComparison.Ordinal), "Internal history IDs must not be shown.");
+    Ensure(!xaml.Contains("詳細を遅延読込", StringComparison.Ordinal), "Implementation-oriented history wording must not be shown.");
+    Ensure(!xaml.Contains("選択履歴を削除", StringComparison.Ordinal), "History delete must not occupy a primary toolbar button.");
+    Ensure(xaml.Contains("<ContextMenu>", StringComparison.Ordinal) && xaml.Contains("Header=\"削除\"", StringComparison.Ordinal), "History delete must be available from a context menu.");
+    Ensure(xaml.Contains("DisplayMemberPath=\"DisplayText\"", StringComparison.Ordinal), "Comparison must use readable history selectors.");
+    Ensure(!xaml.Contains("Header=\"出力・トラブルシュート\"", StringComparison.Ordinal), "Export and troubleshooting must be separate tabs.");
+    Ensure(xaml.Contains("Header=\"出力\"", StringComparison.Ordinal) && xaml.Contains("Header=\"トラブルシュート\"", StringComparison.Ordinal), "Export and troubleshooting tabs are required.");
+    Ensure(xaml.Contains("Command=\"{Binding BrowseExportCommand}\"", StringComparison.Ordinal), "Export must provide a save-file picker.");
+    Ensure(xaml.Contains("Command=\"{Binding BrowseHistoryDirectoryCommand}\"", StringComparison.Ordinal), "History paths must provide a folder picker.");
+    Ensure(xaml.Contains("Command=\"{Binding BrowseArtifactsDirectoryCommand}\"", StringComparison.Ordinal), "Artifact paths must provide a folder picker.");
     Ensure(xaml.Contains("Command=\"{Binding AnalyzeBinlogCommand}\"", StringComparison.Ordinal), "GUI must expose existing-binlog analysis.");
     Ensure(xaml.Contains("Symbol=\"Options20\"", StringComparison.Ordinal), "Advanced settings must use a Fluent options icon.");
     Ensure(!xaml.Contains("<Expander", StringComparison.Ordinal), "Advanced settings must not reserve an expander row.");

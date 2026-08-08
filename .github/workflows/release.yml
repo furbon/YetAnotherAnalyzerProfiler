@@ -1,0 +1,159 @@
+﻿name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Verify ${{ matrix.os }} / ${{ matrix.framework }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            sdk: "8.0.423"
+            framework: net8.0
+          - os: ubuntu-24.04
+            sdk: "10.0.302"
+            framework: net10.0
+            package: true
+          - os: windows-2025
+            sdk: "8.0.423"
+            framework: net8.0
+          - os: windows-2025
+            sdk: "10.0.302"
+            framework: net10.0
+          - os: macos-15
+            sdk: "10.0.302"
+            framework: net10.0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Verify tag matches the canonical version
+        shell: pwsh
+        run: ./eng/validate-release.ps1 -Tag $env:GITHUB_REF_NAME
+      - name: Verify
+        shell: pwsh
+        run: ./eng/build.ps1 verify --framework "${{ matrix.framework }}"
+      - name: Preserve validated NuGet tool package
+        if: matrix.package == true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nuget-package
+          path: artifacts/packages/*.nupkg
+          if-no-files-found: error
+          retention-days: 7
+
+  binaries:
+    name: Publish ${{ matrix.runtime }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            runtime: linux-x64
+          - os: windows-2025
+            runtime: win-x64
+          - os: macos-15
+            runtime: osx-x64
+          - os: macos-15
+            runtime: osx-arm64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.302
+      - name: Verify tag matches the canonical version
+        shell: pwsh
+        run: ./eng/validate-release.ps1 -Tag $env:GITHUB_REF_NAME
+      - name: Publish self-contained single files
+        shell: pwsh
+        run: ./eng/build.ps1 publish --framework net10.0 --runtime "${{ matrix.runtime }}"
+      - name: Archive distribution
+        shell: pwsh
+        run: Compress-Archive -Path "artifacts/publish/${{ matrix.runtime }}/net10.0/*" -DestinationPath "artifacts/yaap-${{ matrix.runtime }}.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: binary-${{ matrix.runtime }}
+          path: artifacts/yaap-${{ matrix.runtime }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish NuGet and GitHub release
+    needs: [validate, binaries]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.302
+      - name: Verify tag matches the canonical version
+        shell: pwsh
+        run: ./eng/validate-release.ps1 -Tag $env:GITHUB_REF_NAME
+      - name: Download validated artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts/release | Out-Null
+          gh run download $env:GITHUB_RUN_ID --name nuget-package --dir artifacts/release
+          gh run download $env:GITHUB_RUN_ID --pattern "binary-*" --dir artifacts/release
+      - name: Create or retain a draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:GITHUB_REF_NAME --draft --verify-tag --generate-notes --title "YAAP $env:GITHUB_REF_NAME"
+          }
+      - name: Publish NuGet tool
+        shell: pwsh
+        run: dotnet nuget push "artifacts/release/YetAnotherAnalyzerProfiler.Tool.*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+      - name: Create SHA-256 checksums
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem artifacts/release -Recurse -File |
+            Where-Object { $_.Extension -in '.zip', '.nupkg' } |
+            Sort-Object Name
+          $lines = $files | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          $lines | Set-Content -LiteralPath artifacts/release/SHA256SUMS.txt -Encoding utf8NoBOM
+      - name: Publish GitHub release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem artifacts/release -Recurse -File |
+            Where-Object { $_.Extension -in '.zip', '.nupkg', '.txt' } |
+            ForEach-Object FullName
+          gh release upload $env:GITHUB_REF_NAME $assets --clobber
+          gh release edit $env:GITHUB_REF_NAME --draft=false
