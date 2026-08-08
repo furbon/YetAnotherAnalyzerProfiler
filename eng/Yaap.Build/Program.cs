@@ -147,17 +147,7 @@ static async Task TestAsync(string root, string framework)
 
     if (OperatingSystem.IsWindows())
     {
-        await RunAsync(root, "dotnet", new[]
-        {
-            "run",
-            "--project",
-            Path.Combine(root, "tests", "Yaap.Gui.Tests", "Yaap.Gui.Tests.csproj"),
-            "--framework",
-            $"{framework}-windows",
-            "--configuration",
-            "Release",
-            "--no-build",
-        });
+        await RunGuiTestsAsync(root, $"{framework}-windows");
     }
 
     await RunAsync(
@@ -207,9 +197,44 @@ static async Task TestAsync(string root, string framework)
                 "integration",
             },
             new Dictionary<string, string?> { ["YAAP_RUN_INTEGRATION"] = "1" });
+
+        if (OperatingSystem.IsWindows())
+        {
+            await BuildAndRunGuiTestsAsync(root, "net8.0-windows");
+        }
     }
 
     await TestLocalFeedAsync(root);
+}
+
+static async Task BuildAndRunGuiTestsAsync(string root, string framework)
+{
+    await RunAsync(root, "dotnet", new[]
+    {
+        "build",
+        Path.Combine(root, "tests", "Yaap.Gui.Tests", "Yaap.Gui.Tests.csproj"),
+        "--framework",
+        framework,
+        "--configuration",
+        "Release",
+        "--no-restore",
+    });
+    await RunGuiTestsAsync(root, framework);
+}
+
+static Task RunGuiTestsAsync(string root, string framework)
+{
+    return RunAsync(root, "dotnet", new[]
+    {
+        "run",
+        "--project",
+        Path.Combine(root, "tests", "Yaap.Gui.Tests", "Yaap.Gui.Tests.csproj"),
+        "--framework",
+        framework,
+        "--configuration",
+        "Release",
+        "--no-build",
+    });
 }
 
 static async Task TestLocalFeedAsync(string root)
@@ -346,6 +371,9 @@ static IReadOnlyList<ProjectTarget> Projects(string root, string framework)
 
 static void CheckRepository(string root)
 {
+    EnsureAgentBranchPolicy(root);
+    EnsureAgentBranchGuardrailFiles(root);
+
     string canonical = File.ReadAllText(Path.Combine(root, "eng", "agent-instructions.md"));
     foreach (string path in new[]
     {
@@ -358,6 +386,8 @@ static void CheckRepository(string root)
             throw new InvalidOperationException($"Agent instructions are out of sync: {path}");
         }
     }
+
+    EnsureGuiStartupSmokeGuard(root);
 
     string[] files = GetRepositoryFiles(root);
     foreach (string relative in files)
@@ -422,6 +452,89 @@ static void CheckRepository(string root)
     Console.WriteLine($"Repository guards passed for {files.Length} files.");
 }
 
+static void EnsureAgentBranchPolicy(string root)
+{
+    string branch = GetGitOutput(root, "branch", "--show-current").Trim();
+    string status = GetGitOutput(root, "status", "--porcelain=v1", "--untracked-files=all");
+    if (!string.IsNullOrWhiteSpace(status) &&
+        !branch.StartsWith("agent/", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            $"Tracked worktree changes must be made on agent/*, not '{branch}'. " +
+            "Create the work branch from the current develop/v... branch before editing.");
+    }
+}
+
+static void EnsureAgentBranchGuardrailFiles(string root)
+{
+    string hookPath = Path.Combine(root, ".githooks", "pre-commit");
+    string installerPath = Path.Combine(root, "eng", "install-git-hooks.ps1");
+    if (!File.Exists(hookPath) || !File.Exists(installerPath))
+    {
+        throw new InvalidOperationException(
+            "The tracked Git pre-commit guard and installer are required.");
+    }
+
+    string hook = File.ReadAllText(hookPath);
+    if (!hook.Contains("agent/*", StringComparison.Ordinal) ||
+        !hook.Contains("develop/*", StringComparison.Ordinal) ||
+        !hook.Contains("MERGE_HEAD", StringComparison.Ordinal) ||
+        !hook.Contains("YAAP_ALLOW_MAIN_MERGE", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "The Git pre-commit guard must protect agent, develop, and main workflows.");
+    }
+
+    string installer = File.ReadAllText(installerPath);
+    if (!installer.Contains("core.hooksPath .githooks", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "The Git hook installer must configure the tracked .githooks directory.");
+    }
+}
+
+static void EnsureGuiStartupSmokeGuard(string root)
+{
+    string testProject = File.ReadAllText(Path.Combine(
+        root,
+        "tests",
+        "Yaap.Gui.Tests",
+        "Yaap.Gui.Tests.csproj"));
+    if (!testProject.Contains(
+            "<TargetFrameworks>net8.0-windows;net10.0-windows</TargetFrameworks>",
+            StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException("GUI tests must target both net8.0-windows and net10.0-windows.");
+    }
+
+    string testSource = File.ReadAllText(Path.Combine(
+        root,
+        "tests",
+        "Yaap.Gui.Tests",
+        "Program.cs"));
+    foreach (string contract in new[]
+    {
+        "(\"gui.window-startup-smoke\", WindowStartupSmokeAsync)",
+        "window.Show();",
+        "window.UpdateLayout();",
+        "window.Close();",
+    })
+    {
+        if (!testSource.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GUI startup smoke contract is missing: {contract}");
+        }
+    }
+
+    string buildSource = File.ReadAllText(Path.Combine(root, "eng", "Yaap.Build", "Program.cs"));
+    if (!buildSource.Contains(
+            "BuildAndRunGuiTestsAsync(root, \"net8.0-windows\")",
+            StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException("Default .NET 10 verification must also run .NET 8 GUI tests.");
+    }
+}
+
 static string[] GetRepositoryFiles(string root)
 {
     ProcessStartInfo start = new("git")
@@ -445,6 +558,32 @@ static string[] GetRepositoryFiles(string root)
     return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToArray();
+}
+
+static string GetGitOutput(string root, params string[] arguments)
+{
+    ProcessStartInfo start = new("git")
+    {
+        WorkingDirectory = root,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+    };
+    foreach (string argument in arguments)
+    {
+        start.ArgumentList.Add(argument);
+    }
+
+    using Process process = Process.Start(start) ?? throw new InvalidOperationException("git could not start.");
+    string output = process.StandardOutput.ReadToEnd();
+    string error = process.StandardError.ReadToEnd();
+    process.WaitForExit();
+    if (process.ExitCode != 0)
+    {
+        throw new InvalidOperationException($"git {string.Join(' ', arguments)} failed: {error.Trim()}");
+    }
+
+    return output;
 }
 
 static void NormalizePackageLockFiles(string root)

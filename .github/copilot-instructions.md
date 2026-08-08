@@ -19,14 +19,21 @@ These rules apply to every repository change made by Codex or GitHub Copilot.
 - Source text is UTF-8 with BOM, CRLF, and space indentation. Shell scripts are the executable LF exception.
 - Package versions are centralized. Before adding a package, record provenance, maintenance, adoption, license, vulnerabilities, transitive dependencies, compatibility, and alternatives in the active plan.
 - Do not commit machine-specific paths, credentials, local smoke-test names/results, build outputs, histories, packages, binlogs, or temporary files.
+- Before concrete tracked work, read `.docs_agent/WORKFLOW.md` when present and create its required local task plan. Critical rules remain binding even when their source is Git-ignored.
+- Agents work only on `agent/<feature-or-change-name>` branches created from the current user-prepared `develop/v...` branch. Carry authorized dirty work to the agent branch immediately; never make agent commits directly on `main`, `master`, or `develop/*`, and never push unless explicitly requested.
+- Keep the repository pre-commit guard enabled with `./eng/install-git-hooks.ps1`. It rejects direct commits outside `agent/*`, permits the required merge commit into `develop/*`, and requires explicit override for an authorized main-branch merge.
+- Treat successful WPF compilation as insufficient runtime validation. GUI changes must retain the STA startup smoke test that creates, shows, lays out, and closes `MainWindow`.
+- WPF visual changes require rendered light- and dark-theme inspection of every affected tab and state. Compilation, source-string assertions, and a startup-only smoke test are not visual validation.
 - Keep `AGENTS.md`, `.github/copilot-instructions.md`, and this canonical file byte-for-byte identical.
 
 ## Required workflow
 
-1. Read repository instructions and inspect Git state before editing.
-2. Keep changes scoped and add regression coverage for behavior changes.
-3. Run `./eng/build.ps1 verify` on Windows or `./eng/build.sh verify` on macOS/Linux.
-4. Confirm `dotnet format --verify-no-changes` and repository guards pass.
-5. Review the full diff and Git status before committing with Conventional Commits.
+1. Read tracked and local repository instructions, create/update the required task plan, and inspect Git state before editing.
+2. Run `./eng/install-git-hooks.ps1`, then create or switch to the required `agent/*` branch from the intended `develop/v...` base before tracked edits; record the base branch and commit.
+3. Keep changes scoped and add regression coverage for behavior changes.
+4. For `Yaap.Gui` changes, run `Yaap.Gui.Tests` in Debug on Windows, confirm the `MainWindow` startup smoke, and inspect rendered light/dark output for every affected tab and state.
+5. Run `./eng/build.ps1 verify` on Windows or `./eng/build.sh verify` on macOS/Linux.
+6. Confirm `dotnet format --verify-no-changes` and repository guards pass. Windows verification must cover GUI startup on both target frameworks.
+7. Review the full diff and Git status before committing with Conventional Commits on the agent branch.
 
 Do not weaken tests, guards, lock-file behavior, warnings-as-errors, or platform coverage to make validation pass.

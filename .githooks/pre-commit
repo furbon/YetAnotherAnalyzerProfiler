@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+set -eu
+
+branch="$(git branch --show-current)"
+
+case "$branch" in
+    agent/*)
+        exit 0
+        ;;
+    develop/*)
+        if git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+            exit 0
+        fi
+        ;;
+    main|master)
+        if [ "${YAAP_ALLOW_MAIN_MERGE:-}" = "1" ] &&
+            git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+            exit 0
+        fi
+        ;;
+esac
+
+echo "Direct commits are allowed only on agent/* branches." >&2
+echo "Create an agent branch from the current develop/v... branch before committing." >&2
+exit 1
