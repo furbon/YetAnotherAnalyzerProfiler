@@ -15,6 +15,22 @@
         ExtendsContentIntoTitleBar="True"
         WindowBackdropType="None"
         WindowStartupLocation="CenterScreen">
+    <ui:FluentWindow.Resources>
+        <Style x:Key="NumericCellTextStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="TextAlignment" Value="Right" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+            <Setter Property="Typography.NumeralStyle" Value="Lining" />
+        </Style>
+        <Style x:Key="NumericColumnHeaderStyle"
+               BasedOn="{StaticResource {x:Type DataGridColumnHeader}}"
+               TargetType="{x:Type DataGridColumnHeader}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="HorizontalContentAlignment" Value="Right" />
+        </Style>
+    </ui:FluentWindow.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -46,7 +62,6 @@
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0"
                            Grid.Column="0"
@@ -70,8 +85,25 @@
                             Content="参照" />
                     <ToggleButton x:Name="RecentTargetsButton"
                                   Padding="10,4"
-                                  Content="最近使用 ▼"
-                                  ToolTip="最近選択した測定対象を選択" />
+                                  ToolTip="最近選択した測定対象を選択">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock VerticalAlignment="Center" Text="最近使用" />
+                            <ui:SymbolIcon Width="12"
+                                           Height="12"
+                                           Margin="6,0,0,0">
+                                <ui:SymbolIcon.Style>
+                                    <Style TargetType="{x:Type ui:SymbolIcon}">
+                                        <Setter Property="Symbol" Value="ChevronDown16" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RecentTargetsButton}" Value="True">
+                                                <Setter Property="Symbol" Value="ChevronUp16" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ui:SymbolIcon.Style>
+                            </ui:SymbolIcon>
+                        </StackPanel>
+                    </ToggleButton>
                     <Popup x:Name="RecentTargetsPopup"
                            AllowsTransparency="True"
                            IsOpen="{Binding IsChecked, ElementName=RecentTargetsButton, Mode=TwoWay}"
@@ -101,15 +133,24 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+                                <ScrollViewer MaxHeight="300"
+                                              HorizontalScrollBarVisibility="Disabled"
+                                              VerticalScrollBarVisibility="Auto">
                                     <ItemsControl x:Name="RecentTargetsItems"
+                                                  HorizontalContentAlignment="Stretch"
                                                   ItemsSource="{Binding RecentTargets}">
+                                        <ItemsControl.ItemContainerStyle>
+                                            <Style TargetType="{x:Type ContentPresenter}">
+                                                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                            </Style>
+                                        </ItemsControl.ItemContainerStyle>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <Button Margin="0,0,0,4"
                                                         Padding="10,6"
                                                         Background="{DynamicResource ControlFillColorDefaultBrush}"
                                                         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                        HorizontalAlignment="Stretch"
                                                         HorizontalContentAlignment="Stretch"
                                                         Click="OnRecentTargetClick">
                                                     <StackPanel>
@@ -125,6 +166,84 @@
                                     </ItemsControl>
                                 </ScrollViewer>
                             </Grid>
+                        </ui:Card>
+                    </Popup>
+                    <ToggleButton x:Name="AdvancedSettingsButton"
+                                  Width="34"
+                                  Height="32"
+                                  Margin="4,0,0,0"
+                                  Padding="6"
+                                  ToolTip="{Binding AdvancedSettingsSummary}">
+                        <ui:SymbolIcon Symbol="Options20" />
+                    </ToggleButton>
+                    <Popup x:Name="AdvancedSettingsPopup"
+                           AllowsTransparency="True"
+                           IsOpen="{Binding IsChecked, ElementName=AdvancedSettingsButton, Mode=TwoWay}"
+                           Placement="Bottom"
+                           PlacementTarget="{Binding ElementName=TargetCard}"
+                           PopupAnimation="Fade"
+                           StaysOpen="False">
+                        <ui:Card Width="740"
+                                 Margin="0,4,0,0"
+                                 Padding="12"
+                                 Background="{DynamicResource ApplicationBackgroundBrush}"
+                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                            <StackPanel>
+                                <TextBlock FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Text="詳細設定" />
+                                <TextBlock Margin="0,2,0,10"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Text="{Binding AdvancedSettingsSummary}" />
+                                <Border Padding="10"
+                                        Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                        BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="110" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="測定モード" />
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,8" Orientation="Horizontal">
+                                            <ComboBox Width="120" Margin="0,0,20,0" ItemsSource="{Binding Modes}" SelectedItem="{Binding SelectedMode}" />
+                                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="ウォームアップ回数" />
+                                            <TextBox Width="50" Margin="0,0,20,0" Text="{Binding WarmupCount}" />
+                                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="測定回数" />
+                                            <TextBox Width="50" Text="{Binding IterationCount}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="履歴場所" />
+                                        <ui:TextBox Grid.Row="1"
+                                                    Grid.Column="1"
+                                                    Margin="0,0,12,8"
+                                                    PlaceholderText="OS標準の履歴場所を使用"
+                                                    Text="{Binding HistoryPath, UpdateSourceTrigger=PropertyChanged}"
+                                                    ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,0,8,8" VerticalAlignment="Center" Text="保持件数" />
+                                        <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,0,8" Text="{Binding RetentionCount}" />
+                                        <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,12,8" Content="毎回 clean" IsChecked="{Binding CleanBeforeEach}" />
+                                        <CheckBox Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" Margin="0,0,0,8" Content="分離出力 (--artifacts-path)" IsChecked="{Binding Isolated}" />
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Text="分離出力先" />
+                                        <ui:TextBox Grid.Row="3"
+                                                    Grid.Column="1"
+                                                    Grid.ColumnSpan="3"
+                                                    IsEnabled="{Binding Isolated}"
+                                                    PlaceholderText="YAAP管理の一時領域を使用"
+                                                    Text="{Binding ArtifactsPath, UpdateSourceTrigger=PropertyChanged}"
+                                                    ToolTip="空欄ではYAAP管理の一時領域を使います。対象ディレクトリ外を指定してください。" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
                         </ui:Card>
                     </Popup>
                 </StackPanel>
@@ -144,67 +263,6 @@
                            ToolTip="{Binding MeasurementStateText}"
                            ToolTipService.ShowOnDisabled="True" />
 
-                <Expander Grid.Row="1"
-                          Grid.Column="1"
-                          Grid.ColumnSpan="4"
-                          Margin="0,6,0,0"
-                          HorizontalAlignment="Left"
-                          Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                          IsExpanded="False">
-                    <Expander.Header>
-                        <TextBlock FontSize="12"
-                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   Text="{Binding AdvancedSettingsSummary}" />
-                    </Expander.Header>
-                    <Border Margin="0,6,0,0"
-                            Padding="10"
-                            Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="4">
-                        <Grid Width="720">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="110" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="測定モード" />
-                        <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,8" Orientation="Horizontal">
-                            <ComboBox Width="120" Margin="0,0,20,0" ItemsSource="{Binding Modes}" SelectedItem="{Binding SelectedMode}" />
-                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="ウォームアップ回数" />
-                            <TextBox Width="50" Margin="0,0,20,0" Text="{Binding WarmupCount}" />
-                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="測定回数" />
-                            <TextBox Width="50" Text="{Binding IterationCount}" />
-                        </StackPanel>
-                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="履歴場所" />
-                        <ui:TextBox Grid.Row="1"
-                                    Grid.Column="1"
-                                    Margin="0,0,12,8"
-                                    PlaceholderText="OS標準の履歴場所を使用"
-                                    Text="{Binding HistoryPath, UpdateSourceTrigger=PropertyChanged}"
-                                    ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
-                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,0,8,8" VerticalAlignment="Center" Text="保持件数" />
-                        <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,0,8" Text="{Binding RetentionCount}" />
-                        <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,12,8" Content="毎回 clean" IsChecked="{Binding CleanBeforeEach}" />
-                        <CheckBox Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" Margin="0,0,0,8" Content="分離出力 (--artifacts-path)" IsChecked="{Binding Isolated}" />
-                        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Text="分離出力先" />
-                        <ui:TextBox Grid.Row="3"
-                                    Grid.Column="1"
-                                    Grid.ColumnSpan="3"
-                                    IsEnabled="{Binding Isolated}"
-                                    PlaceholderText="YAAP管理の一時領域を使用"
-                                    Text="{Binding ArtifactsPath, UpdateSourceTrigger=PropertyChanged}"
-                                    ToolTip="空欄ではYAAP管理の一時領域を使います。対象ディレクトリ外を指定してください。" />
-                        </Grid>
-                    </Border>
-                </Expander>
             </Grid>
         </ui:Card>
 
@@ -331,7 +389,8 @@
                                 Margin="8,0,8,8"
                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}">
                         <TabItem Header="表形式">
-                            <ui:DataGrid ItemsSource="{Binding Analyzers}"
+                            <ui:DataGrid x:Name="AnalyzerGrid"
+                                         ItemsSource="{Binding Analyzers}"
                                          AutoGenerateColumns="False"
                                          EnableRowVirtualization="True"
                                          EnableColumnVirtualization="True"
@@ -342,10 +401,10 @@
                                     <DataGridTextColumn Width="110" Binding="{Binding Kind}" Header="種別" />
                                     <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Analyzer／診断" />
                                     <DataGridTextColumn Width="220" Binding="{Binding Assembly}" Header="アセンブリ" />
-                                    <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" Header="平均 ms" />
-                                    <DataGridTextColumn Width="100" Binding="{Binding MinimumMilliseconds, StringFormat=N3}" Header="最小 ms" />
-                                    <DataGridTextColumn Width="100" Binding="{Binding MaximumMilliseconds, StringFormat=N3}" Header="最大 ms" />
-                                    <DataGridTextColumn Width="80" Binding="{Binding SampleCount}" Header="標本" />
+                                    <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="平均 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                    <DataGridTextColumn Width="100" Binding="{Binding MinimumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最小 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                    <DataGridTextColumn Width="100" Binding="{Binding MaximumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最大 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                    <DataGridTextColumn Width="80" Binding="{Binding SampleCount}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="標本" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                                 </DataGrid.Columns>
                             </ui:DataGrid>
                         </TabItem>
@@ -401,10 +460,10 @@
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Generator 型" />
                                         <DataGridTextColumn Width="220" Binding="{Binding Assembly}" Header="アセンブリ" />
-                                        <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" Header="平均 ms" />
-                                        <DataGridTextColumn Width="90" Binding="{Binding GeneratedFileCount}" Header="ファイル数" />
-                                        <DataGridTextColumn Width="100" Binding="{Binding GeneratedByteCount}" Header="バイト数" />
-                                        <DataGridTextColumn Width="90" Binding="{Binding GeneratedLineCount}" Header="行数" />
+                                        <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="平均 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                        <DataGridTextColumn Width="90" Binding="{Binding GeneratedFileCount}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="ファイル数" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                        <DataGridTextColumn Width="100" Binding="{Binding GeneratedByteCount}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="バイト数" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                        <DataGridTextColumn Width="90" Binding="{Binding GeneratedLineCount}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="行数" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                                     </DataGrid.Columns>
                                 </ui:DataGrid>
                                 <TextBlock Grid.Row="1"
@@ -420,8 +479,8 @@
                                              VirtualizingPanel.VirtualizationMode="Recycling">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Width="*" Binding="{Binding RelativePath}" Header="生成ファイル" />
-                                        <DataGridTextColumn Width="120" Binding="{Binding ByteCount}" Header="バイト数" />
-                                        <DataGridTextColumn Width="100" Binding="{Binding LineCount}" Header="行数" />
+                                        <DataGridTextColumn Width="120" Binding="{Binding ByteCount}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="バイト数" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                        <DataGridTextColumn Width="100" Binding="{Binding LineCount}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="行数" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                                     </DataGrid.Columns>
                                 </ui:DataGrid>
                             </Grid>
@@ -494,8 +553,8 @@
                             <DataGridTextColumn Width="100" Binding="{Binding Status}" Header="状態" />
                             <DataGridTextColumn Width="*" Binding="{Binding TargetName}" Header="対象" />
                             <DataGridTextColumn Width="120" Binding="{Binding Configuration}" Header="構成" />
-                            <DataGridTextColumn Width="120" Binding="{Binding AnalyzerMilliseconds, StringFormat=N3}" Header="Analyzer ms" />
-                            <DataGridTextColumn Width="120" Binding="{Binding GeneratorMilliseconds, StringFormat=N3}" Header="Generator ms" />
+                            <DataGridTextColumn Width="120" Binding="{Binding AnalyzerMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="Analyzer ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                            <DataGridTextColumn Width="120" Binding="{Binding GeneratorMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="Generator ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                             <DataGridTextColumn Width="260" Binding="{Binding Id}" Header="ID" />
                         </DataGrid.Columns>
                     </ui:DataGrid>
@@ -523,10 +582,10 @@
                         <DataGrid.Columns>
                             <DataGridTextColumn Width="110" Binding="{Binding Category}" Header="種別" />
                             <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="ID" />
-                            <DataGridTextColumn Width="120" Binding="{Binding BaselineMilliseconds, StringFormat=N3}" Header="基準 ms" />
-                            <DataGridTextColumn Width="120" Binding="{Binding CandidateMilliseconds, StringFormat=N3}" Header="候補 ms" />
-                            <DataGridTextColumn Width="120" Binding="{Binding DeltaMilliseconds, StringFormat=N3}" Header="差 ms" />
-                            <DataGridTextColumn Width="100" Binding="{Binding DeltaPercent, StringFormat=N2}" Header="差 %" />
+                            <DataGridTextColumn Width="120" Binding="{Binding BaselineMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="基準 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                            <DataGridTextColumn Width="120" Binding="{Binding CandidateMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="候補 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                            <DataGridTextColumn Width="120" Binding="{Binding DeltaMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="差 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                            <DataGridTextColumn Width="100" Binding="{Binding DeltaPercent, StringFormat=N2}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="差 %" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                             <DataGridCheckBoxColumn Width="70" Binding="{Binding Added}" Header="追加" />
                             <DataGridCheckBoxColumn Width="70" Binding="{Binding Removed}" Header="削除" />
                         </DataGrid.Columns>

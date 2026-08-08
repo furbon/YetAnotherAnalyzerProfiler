@@ -51,8 +51,14 @@ static async Task WindowStartupSmokeAsync()
         Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(historyPath);
     string recentTargetPath = System.IO.Path.Combine(historyPath, "RecentTarget.csproj");
+    string longerRecentTargetPath = System.IO.Path.Combine(
+        historyPath,
+        "RecentTargetWithALongerName.csproj");
     await File.WriteAllTextAsync(
         recentTargetPath,
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
+    await File.WriteAllTextAsync(
+        longerRecentTargetPath,
         "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
     TaskCompletionSource<Exception?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     Thread thread = new(() =>
@@ -84,12 +90,42 @@ static async Task WindowStartupSmokeAsync()
             ItemsControl recentTargetsItems = (ItemsControl)window.FindName("RecentTargetsItems");
             TextBlock recentTargetsEmptyMessage =
                 (TextBlock)window.FindName("RecentTargetsEmptyMessage");
+            ToggleButton advancedSettingsButton =
+                (ToggleButton)window.FindName("AdvancedSettingsButton");
+            Popup advancedSettingsPopup = (Popup)window.FindName("AdvancedSettingsPopup");
+            FrameworkElement advancedSettingsPopupContent =
+                advancedSettingsPopup.Child as FrameworkElement ??
+                throw new InvalidOperationException("The advanced-settings popup content was not created.");
+            Wpf.Ui.Controls.SymbolIcon recentTargetsChevron =
+                FindVisualDescendant<Wpf.Ui.Controls.SymbolIcon>(recentTargetsButton) ??
+                throw new InvalidOperationException("The recent-target chevron was not rendered.");
+            Wpf.Ui.Controls.SymbolIcon advancedSettingsIcon =
+                FindVisualDescendant<Wpf.Ui.Controls.SymbolIcon>(advancedSettingsButton) ??
+                throw new InvalidOperationException("The advanced-settings icon was not rendered.");
+            DataGrid analyzerGrid = (DataGrid)window.FindName("AnalyzerGrid");
             TextBlock compareBaselineLabel = (TextBlock)window.FindName("CompareBaselineLabel");
             TextBlock exportFormatLabel = (TextBlock)window.FindName("ExportFormatLabel");
             TextBlock settingsTitle = (TextBlock)window.FindName("SettingsTitle");
             Ensure(
                 ReferenceEquals(recentTargetsPopup.DataContext, viewModel),
                 "The recent-target popup must bind to the window view model.");
+            Ensure(
+                ReferenceEquals(advancedSettingsPopup.DataContext, viewModel),
+                "The advanced-settings popup must bind to the window view model.");
+            Ensure(targetCard.ActualHeight < 80, "Collapsed advanced settings must not reserve a second row.");
+            Ensure(
+                recentTargetsChevron.Symbol == Wpf.Ui.Controls.SymbolRegular.ChevronDown16,
+                "The recent-target button must use a Fluent down chevron.");
+            Ensure(
+                advancedSettingsIcon.Symbol == Wpf.Ui.Controls.SymbolRegular.Options20,
+                "Advanced settings must use a compact Fluent options icon.");
+            DataGridCell analyzerMeanCell = GetDataGridCell(analyzerGrid, 0, 3);
+            TextBlock analyzerMeanText = FindVisualDescendant<TextBlock>(analyzerMeanCell) ??
+                throw new InvalidOperationException("The analyzer mean cell text was not rendered.");
+            Ensure(analyzerMeanText.TextAlignment == TextAlignment.Right, "Timing values must be right-aligned.");
+            Ensure(
+                Typography.GetNumeralAlignment(analyzerMeanText) == FontNumeralAlignment.Tabular,
+                "Timing values must use tabular numerals.");
             recentTargetsButton.IsChecked = true;
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(recentTargetsPopup.IsOpen, "The empty recent-target popup should still open.");
@@ -108,6 +144,10 @@ static async Task WindowStartupSmokeAsync()
                 System.IO.Path.GetFileName(recentTargetPath),
                 recentTargetPath,
                 DateTimeOffset.UtcNow));
+            viewModel.RecentTargets.Add(new RecentTarget(
+                System.IO.Path.GetFileName(longerRecentTargetPath),
+                longerRecentTargetPath,
+                DateTimeOffset.UtcNow.AddSeconds(-1)));
 
             string? captureDirectory = Environment.GetEnvironmentVariable("YAAP_GUI_CAPTURE_DIR");
             foreach (AppThemeMode mode in new[] { AppThemeMode.Light, AppThemeMode.Dark })
@@ -152,6 +192,9 @@ static async Task WindowStartupSmokeAsync()
                 recentTargetsButton.IsChecked = true;
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                 Ensure(recentTargetsPopup.IsOpen, "The recent-target popup should open in each theme.");
+                Ensure(
+                    recentTargetsChevron.Symbol == Wpf.Ui.Controls.SymbolRegular.ChevronUp16,
+                    "The recent-target chevron should point up while open.");
                 recentTargetsItems.UpdateLayout();
                 ContentPresenter themedRecentTargetPresenter =
                     (ContentPresenter)recentTargetsItems.ItemContainerGenerator.ContainerFromIndex(0);
@@ -165,7 +208,24 @@ static async Task WindowStartupSmokeAsync()
                     recentTargetsPopupContent,
                     captureDirectory,
                     $"{mode.ToString().ToLowerInvariant()}-recent-targets");
+                ContentPresenter secondRecentTargetPresenter =
+                    (ContentPresenter)recentTargetsItems.ItemContainerGenerator.ContainerFromIndex(1);
+                Button secondRecentTargetItem = FindVisualDescendant<Button>(secondRecentTargetPresenter) ??
+                    throw new InvalidOperationException("The second recent-target item was not rendered.");
+                Ensure(
+                    Math.Abs(themedRecentTargetItem.ActualWidth - secondRecentTargetItem.ActualWidth) < 0.5,
+                    "Recent-target items must use equal widths.");
                 recentTargetsButton.IsChecked = false;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+
+                advancedSettingsButton.IsChecked = true;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Ensure(advancedSettingsPopup.IsOpen, "The advanced-settings popup should open in each theme.");
+                CaptureElement(
+                    advancedSettingsPopupContent,
+                    captureDirectory,
+                    $"{mode.ToString().ToLowerInvariant()}-advanced-settings");
+                advancedSettingsButton.IsChecked = false;
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
 
                 SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), true);
@@ -176,7 +236,7 @@ static async Task WindowStartupSmokeAsync()
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(recentTargetsButton.IsChecked == true, "The recent-target button should stay toggled while open.");
             Ensure(recentTargetsPopup.IsOpen, "The recent-target popup should be visible.");
-            Ensure(recentTargetsItems.Items.Count == 1, "The recent-target popup should render its item.");
+            Ensure(recentTargetsItems.Items.Count == 2, "The recent-target popup should render all items.");
             recentTargetsItems.UpdateLayout();
             ContentPresenter recentTargetPresenter =
                 (ContentPresenter)recentTargetsItems.ItemContainerGenerator.ContainerFromIndex(0);
@@ -305,6 +365,19 @@ static T? FindVisualDescendant<T>(DependencyObject root)
     return null;
 }
 
+static DataGridCell GetDataGridCell(DataGrid grid, int rowIndex, int columnIndex)
+{
+    grid.UpdateLayout();
+    DataGridRow row = grid.ItemContainerGenerator.ContainerFromIndex(rowIndex) as DataGridRow ??
+        throw new InvalidOperationException($"DataGrid row {rowIndex} was not rendered.");
+    grid.ScrollIntoView(row.Item, grid.Columns[columnIndex]);
+    row.UpdateLayout();
+    DataGridCellsPresenter presenter = FindVisualDescendant<DataGridCellsPresenter>(row) ??
+        throw new InvalidOperationException("The DataGrid cells presenter was not rendered.");
+    return presenter.ItemContainerGenerator.ContainerFromIndex(columnIndex) as DataGridCell ??
+        throw new InvalidOperationException($"DataGrid cell {rowIndex},{columnIndex} was not rendered.");
+}
+
 static void SetPrivateProperty<T>(object target, string propertyName, T value)
 {
     PropertyInfo property = target.GetType().GetProperty(propertyName) ??
@@ -346,6 +419,26 @@ static ProfileRun CreateVisualRun()
                 11,
                 14,
                 1.2,
+                3),
+            new StatisticalMetric(
+                "Sample.Analyzers.CompilationAnalyzer",
+                "Sample.Analyzers",
+                MetricKind.Analyzer,
+                null,
+                1986,
+                1831,
+                2138,
+                125.4,
+                3),
+            new StatisticalMetric(
+                "Sample.Analyzers.SyntaxAnalyzer",
+                "Sample.Analyzers",
+                MetricKind.Analyzer,
+                null,
+                422.333,
+                388,
+                484,
+                32.7,
                 3),
         },
         Generators = new[]
@@ -808,6 +901,15 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("TextOnAccentFillColorPrimaryBrush", StringComparison.Ordinal), "Selected tab text must contrast with the accent.");
     Ensure(xaml.Contains("x:Name=\"RecentTargetsButton\"", StringComparison.Ordinal), "Recent targets must use a compact button.");
     Ensure(xaml.Contains("x:Name=\"RecentTargetsPopup\"", StringComparison.Ordinal), "Recent targets must use a reliable popup.");
+    Ensure(!xaml.Contains("最近使用 ▼", StringComparison.Ordinal), "Recent targets must not use a text triangle.");
+    Ensure(xaml.Contains("ChevronDown16", StringComparison.Ordinal), "Recent targets must use a Fluent chevron.");
+    Ensure(xaml.Contains("HorizontalAlignment=\"Stretch\"", StringComparison.Ordinal), "Recent-target items must stretch to a uniform width.");
+    Ensure(xaml.Contains("x:Name=\"AdvancedSettingsPopup\"", StringComparison.Ordinal), "Advanced settings must use a compact popup.");
+    Ensure(xaml.Contains("Symbol=\"Options20\"", StringComparison.Ordinal), "Advanced settings must use a Fluent options icon.");
+    Ensure(!xaml.Contains("<Expander", StringComparison.Ordinal), "Advanced settings must not reserve an expander row.");
+    Ensure(xaml.Contains("NumericCellTextStyle", StringComparison.Ordinal), "Numeric cells must share an alignment style.");
+    Ensure(xaml.Contains("Typography.NumeralAlignment", StringComparison.Ordinal), "Numeric cells must use tabular numerals.");
+    Ensure(xaml.Contains("NumericColumnHeaderStyle", StringComparison.Ordinal), "Numeric headers must align with values.");
     Ensure(xaml.Contains("ui:ProgressRing", StringComparison.Ordinal), "Measurement progress must be visually prominent.");
     Ensure(xaml.Contains("x:Name=\"BusyCancelButton\"", StringComparison.Ordinal), "Cancel must remain available on the busy surface.");
     Ensure(xaml.Contains("AllowDrop=\"True\"", StringComparison.Ordinal), "File drop must be enabled.");
@@ -815,7 +917,7 @@ static async Task XamlContractAsync()
     Ensure(!xaml.Contains("DiscoverCommand", StringComparison.Ordinal), "Manual discovery should not remain in the GUI.");
     Ensure(xaml.Contains("SelectedItem=\"{Binding Configuration, Mode=TwoWay}\"", StringComparison.Ordinal), "Configuration selection must not use editable text binding.");
     Ensure(xaml.Contains("MeasurementStateText", StringComparison.Ordinal), "Measurement state must always be visible.");
-    Ensure(xaml.Contains("IsExpanded=\"False\"", StringComparison.Ordinal), "Advanced settings should be collapsed initially.");
+    Ensure(xaml.Contains("ElementName=AdvancedSettingsButton", StringComparison.Ordinal), "Advanced settings should be closed until its icon button is toggled.");
     Ensure(xaml.Contains("SelectedTheme", StringComparison.Ordinal), "The theme selector is required.");
     Ensure(xaml.Contains("ui:FluentWindow", StringComparison.Ordinal), "The window must use the WPF UI Fluent foundation.");
     Ensure(xaml.Contains("ui:TitleBar", StringComparison.Ordinal), "The Fluent window must retain visible window controls and a draggable title bar.");
