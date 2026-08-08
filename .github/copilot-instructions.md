@@ -16,7 +16,9 @@ These rules apply to every repository change made by Codex or GitHub Copilot.
 
 - `eng/Version.props` is the only version source. SemVer is used and the fourth assembly/file component remains zero.
 - Human documentation and GUI text are Japanese. Code identifiers and agent instructions are English.
-- Source text is UTF-8 with BOM, CRLF, and space indentation. Shell scripts are the executable LF exception.
+- Source text is UTF-8 with BOM, CRLF, and space indentation. Shell scripts and
+  open-agent skill files under `.agents/skills/` are portable UTF-8 without BOM and
+  LF exceptions.
 - Package versions are centralized. Before adding a package, record provenance, maintenance, adoption, license, vulnerabilities, transitive dependencies, compatibility, and alternatives in the active plan.
 - Do not commit machine-specific paths, credentials, local smoke-test names/results, build outputs, histories, packages, binlogs, or temporary files.
 - Before concrete tracked work, read `.docs_agent/WORKFLOW.md` when present and create its required local task plan. Critical rules remain binding even when their source is Git-ignored.
@@ -25,6 +27,21 @@ These rules apply to every repository change made by Codex or GitHub Copilot.
 - Treat successful WPF compilation as insufficient runtime validation. GUI changes must retain the STA startup smoke test that creates, shows, lays out, and closes `MainWindow`.
 - WPF visual changes require rendered light- and dark-theme inspection of every affected tab and state. Compilation, source-string assertions, and a startup-only smoke test are not visual validation.
 - Keep `AGENTS.md`, `.github/copilot-instructions.md`, and this canonical file byte-for-byte identical.
+
+## Explicit DeepReview workflow
+
+- DeepReview is the repository's expensive, highest-rigor adversarial review and
+  remediation workflow. Start it only when the user explicitly invokes
+  `$deep-review`, says `DeepReview`, or unmistakably requests this named workflow.
+- Never infer DeepReview from a generic code, design, change, PR, quality, or release
+  review request. Ordinary reviews remain ordinary unless the user explicitly opts in.
+- When explicitly invoked, read and follow `.agents/skills/deep-review/SKILL.md` and
+  its required reference. Adapt axes, independent reviewer personas, parallelism,
+  score threshold, and verification to the inspected risk; ask focused questions
+  only when a choice materially changes cost or coverage.
+- The default completion gate is at least 9.5/10 on every applicable axis, no
+  unresolved blocker or unmitigated critical/high finding, green canonical checks,
+  and independent re-review of the remediated tree. See `docs/deep-review.md`.
 
 ## Required workflow
 
