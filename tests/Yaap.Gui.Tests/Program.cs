@@ -104,6 +104,8 @@ static async Task WindowStartupSmokeAsync()
             SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualRun());
             viewModel.WaitForResultFilterAsync().GetAwaiter().GetResult();
             SetPrivateProperty(viewModel, nameof(MainViewModel.Comparison), CreateVisualComparison());
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
             app = new App();
             app.InitializeComponent();
             MainWindow window = new(viewModel);
@@ -149,6 +151,14 @@ static async Task WindowStartupSmokeAsync()
             DataGrid comparisonGrid = (DataGrid)window.FindName("ComparisonGrid");
             DatePicker historyFromDatePicker =
                 (DatePicker)window.FindName("HistoryFromDatePicker");
+            FrameworkElement historyPeriodPanel =
+                (FrameworkElement)window.FindName("HistoryPeriodPanel");
+            Button historyRefreshButton =
+                (Button)window.FindName("HistoryRefreshButton");
+            Button historyPeriodClearButton =
+                (Button)window.FindName("HistoryPeriodClearButton");
+            Wpf.Ui.Controls.TextBox historyLabelTextBox =
+                (Wpf.Ui.Controls.TextBox)window.FindName("HistoryLabelTextBox");
             TextBlock generatorOutputsTruncatedNotice =
                 (TextBlock)window.FindName("GeneratorOutputsTruncatedNotice");
             TextBlock compareBaselineLabel = (TextBlock)window.FindName("CompareBaselineLabel");
@@ -268,6 +278,7 @@ static async Task WindowStartupSmokeAsync()
             resultProjection.GetAwaiter().GetResult();
             mainTabs.SelectedIndex = 0;
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            EnsureAccessibleVerticalScrollBar(analyzerGrid, "Analyzer table after result reload");
             Ensure(startButton.FontWeight == FontWeights.SemiBold, "The primary measurement action must use emphasized text.");
             Ensure(busyCard.Visibility == Visibility.Collapsed, "The measurement progress surface must be hidden while idle.");
             Ensure(statusBar.Visibility == Visibility.Visible, "The persistent status bar must be visible while idle.");
@@ -344,15 +355,37 @@ static async Task WindowStartupSmokeAsync()
                     {
                         historyGrid.SelectedIndex = 0;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                        double labelEditorLeft = historyLabelTextBox
+                            .TransformToAncestor(window)
+                            .Transform(new Point()).X;
+                        double historyGridLeft = historyGrid
+                            .TransformToAncestor(window)
+                            .Transform(new Point()).X;
+                        Ensure(
+                            labelEditorLeft - historyGridLeft < 180,
+                            "The selected-history label editor must align with the left-side label column.");
+                        double periodRight = historyPeriodPanel
+                            .TransformToAncestor(window)
+                            .Transform(new Point(historyPeriodPanel.ActualWidth, 0)).X;
+                        double refreshLeft = historyRefreshButton
+                            .TransformToAncestor(window)
+                            .Transform(new Point()).X;
+                        Ensure(
+                            refreshLeft - periodRight >= 20,
+                            "History refresh must be visually separated from the period controls.");
                     }
-
-                    CaptureWindow(
-                        window,
-                        captureDirectory,
-                        $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
 
                     if (index == 0)
                     {
+                        EnsureAccessibleVerticalScrollBar(analyzerGrid, $"{mode} Analyzer table");
+                        ScrollBar analyzerBar = FindVisualDescendants<ScrollBar>(analyzerGrid)
+                            .Where(item => item.Orientation == Orientation.Vertical && item.IsVisible)
+                            .OrderByDescending(item => item.ActualHeight)
+                            .First();
+                        CaptureElement(
+                            analyzerBar.Track!.Thumb,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-scroll-thumb");
                         analyzerViewTabs.SelectedIndex = 1;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                         analyzerTreeView.UpdateLayout();
@@ -378,8 +411,27 @@ static async Task WindowStartupSmokeAsync()
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-tree");
                         analyzerViewTabs.SelectedIndex = 0;
                     }
+                    else if (index == 1)
+                    {
+                        EnsureAccessibleVerticalScrollBar(generatorGrid, $"{mode} Generator table");
+                    }
                     else if (index == 2 && historyGrid.ContextMenu is ContextMenu historyMenu)
                     {
+                        viewModel.HistoryFrom = DateTime.Today.AddDays(-2).ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture);
+                        viewModel.HistoryTo = DateTime.Today.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture);
+                        Task visualPeriodRefresh = viewModel.WaitForHistoryRefreshAsync();
+                        PumpUntil(window.Dispatcher, () => visualPeriodRefresh.IsCompleted, TimeSpan.FromSeconds(5));
+                        visualPeriodRefresh.GetAwaiter().GetResult();
+                        Ensure(historyPeriodClearButton.IsEnabled, "A populated history period must expose an enabled clear action.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-period-filled");
+                        viewModel.ClearHistoryPeriodCommand.Execute(null);
+                        Task visualPeriodClear = viewModel.WaitForHistoryRefreshAsync();
+                        PumpUntil(window.Dispatcher, () => visualPeriodClear.IsCompleted, TimeSpan.FromSeconds(5));
+                        visualPeriodClear.GetAwaiter().GetResult();
+
                         historyMenu.PlacementTarget = historyGrid;
                         historyMenu.IsOpen = true;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
@@ -400,27 +452,57 @@ static async Task WindowStartupSmokeAsync()
                         Ensure(
                             calendar.Background is SolidColorBrush { Color.A: byte.MaxValue },
                             "The history calendar background must be fully opaque.");
-                        foreach (TextBlock calendarText in
-                                 FindVisualDescendants<TextBlock>(calendarPopupContent)
-                                     .Where(item => item.IsVisible && !string.IsNullOrWhiteSpace(item.Text)))
+                        foreach ((CalendarMode displayMode, string suffix) in new[]
+                                 {
+                                     (CalendarMode.Month, "month"),
+                                     (CalendarMode.Year, "year"),
+                                     (CalendarMode.Decade, "decade"),
+                                 })
                         {
-                            EnsureContrast(
-                                calendarText.Foreground,
-                                calendar.Background,
-                                $"{mode} history calendar text '{calendarText.Text}'");
-                        }
+                            calendar.DisplayMode = displayMode;
+                            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                            foreach (TextBlock calendarText in
+                                     FindVisualDescendants<TextBlock>(calendarPopupContent)
+                                         .Where(item => item.IsVisible && !string.IsNullOrWhiteSpace(item.Text)))
+                            {
+                                EnsureContrast(
+                                    calendarText.Foreground,
+                                    calendar.Background,
+                                    $"{mode} history {suffix} calendar text '{calendarText.Text}'");
+                            }
 
-                        CaptureElement(
-                            calendarPopupContent,
-                            captureDirectory,
-                            $"{mode.ToString().ToLowerInvariant()}-history-calendar");
+                            CaptureElement(
+                                calendarPopupContent,
+                                captureDirectory,
+                                $"{mode.ToString().ToLowerInvariant()}-history-calendar-{suffix}");
+                        }
                         historyFromDatePicker.IsDropDownOpen = false;
+
+                        double normalWidth = window.Width;
+                        window.Width = window.MinWidth;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            historyRefreshButton.TransformToAncestor(window).Transform(new Point()).X >=
+                            historyPeriodPanel.TransformToAncestor(window).Transform(new Point(historyPeriodPanel.ActualWidth, 0)).X + 20,
+                            "History period and refresh controls must remain separated at minimum width.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-narrow");
+                        window.Width = normalWidth;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                     }
                     else if (index == 3)
                     {
                         Ensure(comparisonGrid.Items.Count == 336, "The visual comparison fixture must exercise a large list.");
                         EnsureAccessibleVerticalScrollBar(comparisonGrid, "Comparison table");
                     }
+
+                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                    CaptureWindow(
+                        window,
+                        captureDirectory,
+                        $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
                 }
 
                 recentTargetsButton.IsChecked = true;
@@ -502,7 +584,7 @@ static async Task WindowStartupSmokeAsync()
 
     try
     {
-        Exception? exception = await completion.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Exception? exception = await completion.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Ensure(exception is null, $"MainWindow failed during startup: {exception}");
         Ensure(thread.Join(TimeSpan.FromSeconds(5)), "The GUI startup smoke thread did not exit.");
     }
@@ -559,11 +641,17 @@ static void EnsureContrast(Brush foreground, Brush background, string name)
 {
     Ensure(foreground is SolidColorBrush, $"{name} foreground must be a solid brush.");
     Ensure(background is SolidColorBrush, $"{name} background must be a solid brush.");
-    double foregroundLuminance = RelativeLuminance(((SolidColorBrush)foreground).Color);
-    double backgroundLuminance = RelativeLuminance(((SolidColorBrush)background).Color);
+    Color foregroundColor = ((SolidColorBrush)foreground).Color;
+    Color backgroundColor = ((SolidColorBrush)background).Color;
+    double foregroundLuminance = RelativeLuminance(foregroundColor);
+    double backgroundLuminance = RelativeLuminance(backgroundColor);
     double ratio = (Math.Max(foregroundLuminance, backgroundLuminance) + 0.05) /
         (Math.Min(foregroundLuminance, backgroundLuminance) + 0.05);
-    Ensure(ratio >= 4.5, $"{name} contrast ratio {ratio:N2} is below 4.5:1.");
+    Ensure(
+        ratio >= 4.5,
+        $"{name} contrast ratio {ratio:N2} is below 4.5:1 " +
+        $"(foreground #{foregroundColor.R:X2}{foregroundColor.G:X2}{foregroundColor.B:X2}, " +
+        $"background #{backgroundColor.R:X2}{backgroundColor.G:X2}{backgroundColor.B:X2}).");
 }
 
 static double RelativeLuminance(Color color)
@@ -628,13 +716,13 @@ static void EnsureAccessibleVerticalScrollBar(DependencyObject root, string name
     scrollBar.ApplyTemplate();
     Thumb thumb = scrollBar.Track?.Thumb ??
         throw new InvalidOperationException($"{name} scrollbar thumb was not rendered.");
-    Border thumbVisual = FindVisualDescendant<Border>(thumb) ??
-        throw new InvalidOperationException($"{name} scrollbar thumb visual was not rendered.");
-    Ensure(scrollBar.ActualWidth >= 15, $"{name} scrollbar must provide a practical pointer target.");
-    Ensure(thumb.ActualWidth >= 11, $"{name} scrollbar thumb must provide a practical pointer target.");
-    Ensure(thumb.ActualHeight >= 31, $"{name} scrollbar thumb must remain easy to grab with many items.");
-    Ensure(thumbVisual.ActualWidth >= 7, $"{name} scrollbar thumb must be visibly wide enough to grab.");
-    Ensure(thumbVisual.ActualHeight >= 27, $"{name} scrollbar thumb must be visibly tall enough to grab.");
+    Border thumbVisual = thumb.Template.FindName("ThumbBody", thumb) as Border ??
+        throw new InvalidOperationException($"{name} scrollbar did not use the accessible thumb template.");
+    Ensure(scrollBar.ActualWidth >= 19, $"{name} scrollbar must provide a practical pointer target.");
+    Ensure(thumb.ActualWidth >= 15, $"{name} scrollbar thumb must provide a practical pointer target.");
+    Ensure(thumb.ActualHeight >= 51, $"{name} scrollbar thumb must remain easy to grab with many items.");
+    Ensure(thumbVisual.ActualWidth >= 11, $"{name} scrollbar thumb must be visibly wide enough to grab.");
+    Ensure(thumbVisual.ActualHeight >= 47, $"{name} scrollbar thumb must be visibly tall enough to grab.");
 }
 
 static void PumpUntil(Dispatcher dispatcher, Func<bool> condition, TimeSpan timeout)
@@ -647,7 +735,11 @@ static void PumpUntil(Dispatcher dispatcher, Func<bool> condition, TimeSpan time
             throw new TimeoutException("The GUI operation did not complete while pumping the dispatcher.");
         }
 
-        dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        DispatcherFrame frame = new();
+        dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame);
         Thread.Sleep(10);
     }
 }
@@ -1050,6 +1142,12 @@ static async Task FeatureParityAsync()
         viewModel.RefreshHistoryCommand.Execute(null);
         await WaitForOperationAsync(viewModel);
         Ensure(viewModel.History.Count == 2, "Common fuzzy date formats should be accepted.");
+        Ensure(viewModel.ClearHistoryPeriodCommand.CanExecute(null), "A populated history period should enable clearing.");
+        viewModel.ClearHistoryPeriodCommand.Execute(null);
+        Ensure(viewModel.HistoryFrom.Length == 0 && viewModel.HistoryTo.Length == 0, "History period clear must empty both fields atomically.");
+        Ensure(!viewModel.ClearHistoryPeriodCommand.CanExecute(null), "An empty history period should disable clearing.");
+        await viewModel.WaitForHistoryRefreshAsync();
+        Ensure(viewModel.History.Count == 2, "Clearing the history period should refresh the unbounded list.");
 
         viewModel.HistoryFrom = DateTimeOffset.UtcNow.AddHours(-1).ToString("O");
         viewModel.HistoryTo = string.Empty;
@@ -1380,6 +1478,8 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("CalendarStyle=\"{StaticResource OpaqueCalendarStyle}\"", StringComparison.Ordinal), "Both history date pickers must use the opaque calendar style.");
     Ensure(xaml.Contains("Text=\"{Binding HistoryFrom}\"", StringComparison.Ordinal), "GUI history must expose the start-date filter.");
     Ensure(xaml.Contains("Text=\"{Binding HistoryTo}\"", StringComparison.Ordinal), "GUI history must expose the end-date filter.");
+    Ensure(xaml.Contains("Command=\"{Binding ClearHistoryPeriodCommand}\"", StringComparison.Ordinal), "History period filters must provide one-step clearing.");
+    Ensure(xaml.Contains("x:Name=\"HistoryPeriodPanel\"", StringComparison.Ordinal) && xaml.Contains("x:Name=\"HistoryRefreshButton\"", StringComparison.Ordinal), "History period and refresh layout must remain testable.");
     Ensure(xaml.Contains("HistoryLimit, UpdateSourceTrigger=LostFocus", StringComparison.Ordinal), "The history display limit must live in Settings.");
     Ensure(xaml.Contains("Header=\"ラベル\"", StringComparison.Ordinal), "History labels must be visible.");
     Ensure(!xaml.Contains("Binding Id}\" Header=\"ID\"", StringComparison.Ordinal), "Internal history IDs must not be shown.");
@@ -1395,10 +1495,15 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("Header=\"出力\"", StringComparison.Ordinal) && xaml.Contains("Header=\"トラブルシュート\"", StringComparison.Ordinal), "Export and troubleshooting tabs are required.");
     Ensure(xaml.Contains("Command=\"{Binding BrowseExportCommand}\"", StringComparison.Ordinal), "Export must provide a save-file picker.");
     Ensure(!xaml.Contains("SelectedValue=\"{Binding ExportFormat}\"", StringComparison.Ordinal), "Export must not duplicate format in a separate selector.");
-    Ensure(xaml.Contains(".json／.csv／.md／.markdown", StringComparison.Ordinal), "Export path guidance must list every supported extension.");
+    Ensure(xaml.Contains("現在読み込んでいる測定結果を保存します。参照ダイアログでJSON、CSV、Markdownの形式を選択できます。", StringComparison.Ordinal), "Export guidance must list every supported format.");
+    Ensure(
+        xaml.Split("PlaceholderText=\"パスを入力、または参照\"", StringSplitOptions.None).Length - 1 == 2,
+        "Export and binlog inputs must accurately guide both typing and browsing.");
     Ensure(viewModel.Contains("GetExportFormat(ExportPath)", StringComparison.Ordinal), "GUI export must infer its format from the selected file.");
     Ensure(viewModel.Contains("IsBusySurfaceVisible", StringComparison.Ordinal), "Lightweight history loading must not disturb the tab layout.");
     Ensure(xaml.Contains("Handler=\"OnScrollableControlLoaded\"", StringComparison.Ordinal), "Large controls must enlarge scrollbar pointer targets at runtime.");
+    Ensure(xaml.Contains("Handler=\"OnAccessibleScrollBarLoaded\"", StringComparison.Ordinal), "Dynamically created scrollbars must receive accessible sizing.");
+    Ensure(xaml.Contains("Handler=\"OnAccessibleScrollBarUnloaded\"", StringComparison.Ordinal), "Scrollbar layout monitoring must detach cleanly on unload.");
     Ensure(xaml.Contains("Command=\"{Binding BrowseHistoryDirectoryCommand}\"", StringComparison.Ordinal), "History paths must provide a folder picker.");
     Ensure(xaml.Contains("Command=\"{Binding BrowseArtifactsDirectoryCommand}\"", StringComparison.Ordinal), "Artifact paths must provide a folder picker.");
     Ensure(xaml.Contains("Command=\"{Binding AnalyzeBinlogCommand}\"", StringComparison.Ordinal), "GUI must expose existing-binlog analysis.");
