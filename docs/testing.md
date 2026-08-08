@@ -3,8 +3,9 @@
 `tests/Yaap.Tests` は外部テストフレームワークに依存しない実行型ハーネスで、統計、履歴、検索、
 保持、削除、比較、出力、入力検出、isolated 出力、失敗、部分結果、キャンセル、CLI、10万件集計を
 検証します。`tests/Yaap.Gui.Tests` は WPF 初期化、D&D、自動構成検出の競合とキャンセル、構成の
-履歴／Release／Debug／アルファベット順選択、測定開始の可否説明、OS連動テーマと明示パレット、
-詳細設定、非同期コマンド、仮想化、表示上の Source Generator 制約を検証します。
+履歴／Release／Debug／アルファベット順選択、空欄・未知構成の開始拒否、実行中を含む状態説明、
+WPF UIテーマ辞書とFluentWindowの統合、詳細設定、非同期コマンド、仮想化、表示上の
+Source Generator 制約を検証します。
 
 `tests/assets` の Analyzer／Source Generator fixture を実際に restore／build し、binlog 解析、
 コンパイラレポート、生成ファイルを通した統合回帰を実行します。`tests/local-feed` はパッケージを

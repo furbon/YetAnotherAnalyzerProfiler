@@ -31,20 +31,22 @@
         "resolved": "10.0.4",
         "contentHash": "LmDnaYkcWkZSlZ07L7YcB6bH8sCiBZ7j28kPbYiXdF6f0iUiN7rxsRORlZGdj5saN/wZIqvF7lDBn/cpjU+e2g=="
       },
+      "WPF-UI.Abstractions": {
+        "type": "Transitive",
+        "resolved": "4.3.0",
+        "contentHash": "7Kj9DmCCo4SOCd1jAiw4+EcMFP2nR8rLLvitAYzVtzbWToTsodkbie24+8x9C4LDLxkopWEUGX62szqqNy7oeg=="
+      },
       "yaap-gui": {
         "type": "Project",
         "dependencies": {
+          "WPF-UI": "[4.3.0, )",
           "Yaap.Core": "[0.1.0, )"
         }
-      },
-      "yaap.buildlogger": {
-        "type": "Project"
       },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Build": "[18.8.2, )",
-          "Yaap.BuildLogger": "[0.1.0, )"
+          "Microsoft.Build": "[18.8.2, )"
         }
       },
       "Microsoft.Build": {
@@ -67,6 +69,15 @@
         "contentHash": "0rH2AaR+TyRhISTU3DEW1pskvOCrBa3QlHnItRqtBTExfCi14CxYNL3/COXxCfd+H40h2WB3XOYSYUlF5IFIwA==",
         "dependencies": {
           "Microsoft.NET.StringTools": "18.8.2"
+        }
+      },
+      "WPF-UI": {
+        "type": "CentralTransitive",
+        "requested": "[4.3.0, )",
+        "resolved": "4.3.0",
+        "contentHash": "SIHhc8lIrhEQ/1cLFZN6Dtf8cqsLm4myBULj9obnacd9TyDs2vizhKYzRzTlcPEcnzb3L4EstvPN3M6kcXbJCA==",
+        "dependencies": {
+          "WPF-UI.Abstractions": "4.3.0"
         }
       }
     },
@@ -100,20 +111,22 @@
         "resolved": "8.0.0",
         "contentHash": "+TUFINV2q2ifyXauQXRwy4CiBhqvDEDZeVJU7qfxya4aRYOKzVBpN+4acx25VcPB9ywUN6C0n8drWl110PhZEg=="
       },
+      "WPF-UI.Abstractions": {
+        "type": "Transitive",
+        "resolved": "4.3.0",
+        "contentHash": "7Kj9DmCCo4SOCd1jAiw4+EcMFP2nR8rLLvitAYzVtzbWToTsodkbie24+8x9C4LDLxkopWEUGX62szqqNy7oeg=="
+      },
       "yaap-gui": {
         "type": "Project",
         "dependencies": {
+          "WPF-UI": "[4.3.0, )",
           "Yaap.Core": "[0.1.0, )"
         }
-      },
-      "yaap.buildlogger": {
-        "type": "Project"
       },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Build": "[17.11.48, )",
-          "Yaap.BuildLogger": "[0.1.0, )"
+          "Microsoft.Build": "[17.11.48, )"
         }
       },
       "Microsoft.Build": {
@@ -133,6 +146,15 @@
         "requested": "[17.11.48, )",
         "resolved": "17.11.48",
         "contentHash": "C3WIMt2wBl4++NX3jSEpTq5KXBhvAV154R4JrYHkfy9JSBcXWiL0mkgpspk5xSdOj+fS/uz7zluIy6bMM1fkkQ=="
+      },
+      "WPF-UI": {
+        "type": "CentralTransitive",
+        "requested": "[4.3.0, )",
+        "resolved": "4.3.0",
+        "contentHash": "SIHhc8lIrhEQ/1cLFZN6Dtf8cqsLm4myBULj9obnacd9TyDs2vizhKYzRzTlcPEcnzb3L4EstvPN3M6kcXbJCA==",
+        "dependencies": {
+          "WPF-UI.Abstractions": "4.3.0"
+        }
       }
     }
   }

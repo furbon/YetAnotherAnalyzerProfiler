@@ -1,4 +1,5 @@
-﻿using Yaap.Core;
+﻿using Wpf.Ui.Appearance;
+using Yaap.Core;
 using Yaap.Gui;
 
 List<(string Name, Func<Task> Body)> tests = new()
@@ -8,7 +9,8 @@ List<(string Name, Func<Task> Body)> tests = new()
     ("gui.configuration-priority", ConfigurationPriorityAsync),
     ("gui.configuration-history", ConfigurationHistoryAsync),
     ("gui.discovery-discards-stale-results", DiscoveryDiscardsStaleResultsAsync),
-    ("gui.theme-palettes", ThemePalettesAsync),
+    ("gui.measurement-state", MeasurementStateAsync),
+    ("gui.theme-framework", ThemeFrameworkAsync),
     ("gui.async-command", AsyncCommandAsync),
     ("gui.virtualization-and-generator-disclaimer", XamlContractAsync),
 };
@@ -47,7 +49,7 @@ static async Task ViewModelInitializationAsync()
         Ensure(viewModel.RetentionCount == 50, "Default history retention should be available.");
         Ensure(viewModel.CancelCommand.CanExecute(null) == false, "Cancel should be disabled while idle.");
         Ensure(viewModel.SelectedTheme.Mode == AppThemeMode.Auto, "The system theme should be the default.");
-        Ensure(viewModel.StartAvailabilityText.Contains("測定対象", StringComparison.Ordinal), "The disabled-start reason should be visible.");
+        Ensure(viewModel.MeasurementStateText.Contains("測定対象", StringComparison.Ordinal), "The disabled-start reason should be visible.");
     }
     finally
     {
@@ -79,7 +81,14 @@ static async Task DropAndAutoDiscoveryAsync()
         Ensure(viewModel.Configurations.SequenceEqual(new[] { "Debug", "Profile", "Release" }), "Configurations were not discovered.");
         Ensure(viewModel.Configuration == "Release", "Release should be preferred when the previous configuration is invalid.");
         Ensure(viewModel.StartCommand.CanExecute(null), "Start should be enabled after discovery.");
-        Ensure(viewModel.StartAvailabilityText.Contains("測定可能", StringComparison.Ordinal), "The ready state should be visible.");
+        Ensure(viewModel.MeasurementStateText.Contains("測定可能", StringComparison.Ordinal), "The ready state should be visible.");
+        viewModel.Configuration = string.Empty;
+        Ensure(!viewModel.StartCommand.CanExecute(null), "A blank configuration must disable Start.");
+        Ensure(viewModel.MeasurementStateText.Contains("ビルド構成を選択", StringComparison.Ordinal), "A blank configuration should have actionable guidance.");
+        viewModel.Configuration = "Unknown";
+        Ensure(!viewModel.StartCommand.CanExecute(null), "A configuration absent from discovery must disable Start.");
+        viewModel.Configuration = "Release";
+        Ensure(viewModel.StartCommand.CanExecute(null), "A discovered configuration should re-enable Start.");
     }
     finally
     {
@@ -248,15 +257,63 @@ static async Task AsyncCommandAsync()
     Ensure(executed, "Async command did not execute.");
 }
 
-static Task ThemePalettesAsync()
+static Task MeasurementStateAsync()
 {
-    Ensure(ThemeManager.ResolveEffectiveMode(AppThemeMode.Auto, () => false) == AppThemeMode.Dark, "Auto should resolve to the system dark theme.");
-    Ensure(ThemeManager.ResolveEffectiveMode(AppThemeMode.Auto, () => true) == AppThemeMode.Light, "Auto should resolve to the system light theme.");
-    Ensure(ThemeManager.ResolveEffectiveMode(AppThemeMode.Dark, () => true) == AppThemeMode.Dark, "An explicit dark override should win.");
-    ThemePalette light = ThemeManager.GetPalette(AppThemeMode.Light);
-    ThemePalette dark = ThemeManager.GetPalette(AppThemeMode.Dark);
-    Ensure(light.WindowBackground != dark.WindowBackground, "Light and dark palettes should differ.");
-    Ensure(light.Foreground != dark.Foreground, "Theme foreground colors should differ.");
+    string[] configurations = new[] { "Debug", "Release" };
+    MeasurementStatePresentation running = MeasurementStatePresentation.Create(
+        isRunning: true,
+        isDiscovering: false,
+        hasValidTarget: true,
+        "sample.csproj",
+        "Release",
+        configurations);
+    Ensure(!running.CanStart, "Start must be disabled while a measurement runs.");
+    Ensure(running.Text == "測定中: Release 構成", "Running text should describe progress without an error-like prefix.");
+    Ensure(!running.Text.Contains("開始できません", StringComparison.Ordinal), "Running text must not claim that measurement could not start.");
+
+    MeasurementStatePresentation discovering = MeasurementStatePresentation.Create(
+        isRunning: false,
+        isDiscovering: true,
+        hasValidTarget: false,
+        "sample.csproj",
+        string.Empty,
+        configurations);
+    Ensure(discovering.Text.Contains("確認中", StringComparison.Ordinal), "Discovery should be presented as progress.");
+
+    MeasurementStatePresentation missing = MeasurementStatePresentation.Create(
+        false,
+        false,
+        true,
+        "sample.csproj",
+        string.Empty,
+        configurations);
+    Ensure(!missing.CanStart && missing.Text.Contains("ビルド構成を選択", StringComparison.Ordinal), "Blank selection should be blocked.");
+
+    MeasurementStatePresentation unknown = MeasurementStatePresentation.Create(
+        false,
+        false,
+        true,
+        "sample.csproj",
+        "Profile",
+        configurations);
+    Ensure(!unknown.CanStart && unknown.Text.Contains("ビルド構成を選択", StringComparison.Ordinal), "Unknown selection should be blocked.");
+
+    MeasurementStatePresentation ready = MeasurementStatePresentation.Create(
+        false,
+        false,
+        true,
+        "sample.csproj",
+        "Release",
+        configurations);
+    Ensure(ready.CanStart && ready.Text == "測定可能: Release 構成", "A discovered selection should be ready.");
+    return Task.CompletedTask;
+}
+
+static Task ThemeFrameworkAsync()
+{
+    Ensure(ThemeManager.ToApplicationTheme(AppThemeMode.Auto) == ApplicationTheme.Unknown, "Auto should delegate to the system theme watcher.");
+    Ensure(ThemeManager.ToApplicationTheme(AppThemeMode.Light) == ApplicationTheme.Light, "Light should map to WPF UI light.");
+    Ensure(ThemeManager.ToApplicationTheme(AppThemeMode.Dark) == ApplicationTheme.Dark, "Dark should map to WPF UI dark.");
     return Task.CompletedTask;
 }
 
@@ -265,6 +322,7 @@ static async Task XamlContractAsync()
     string root = FindRepositoryRoot();
     string xaml = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "src", "Yaap.Gui", "MainWindow.xaml"));
     string appXaml = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "src", "Yaap.Gui", "App.xaml"));
+    string notices = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "THIRD-PARTY-NOTICES.txt"));
     Ensure(xaml.Contains("VirtualizationMode=\"Recycling\"", StringComparison.Ordinal), "Virtualization is required.");
     Ensure(xaml.Contains("生成ファイル単位の実行時間", StringComparison.Ordinal), "Generator timing disclaimer is required.");
     Ensure(xaml.Contains("キャンセル", StringComparison.Ordinal), "Cancellation UI is required.");
@@ -273,11 +331,19 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("PreviewDrop=\"OnPreviewDrop\"", StringComparison.Ordinal), "File drop must be handled.");
     Ensure(!xaml.Contains("DiscoverCommand", StringComparison.Ordinal), "Manual discovery should not remain in the GUI.");
     Ensure(xaml.Contains("SelectedItem=\"{Binding Configuration, Mode=TwoWay}\"", StringComparison.Ordinal), "Configuration selection must not use editable text binding.");
-    Ensure(xaml.Contains("StartAvailabilityText", StringComparison.Ordinal), "Start readiness must always be visible.");
+    Ensure(xaml.Contains("MeasurementStateText", StringComparison.Ordinal), "Measurement state must always be visible.");
     Ensure(xaml.Contains("IsExpanded=\"False\"", StringComparison.Ordinal), "Advanced settings should be collapsed initially.");
     Ensure(xaml.Contains("SelectedTheme", StringComparison.Ordinal), "The theme selector is required.");
-    Ensure(appXaml.Contains("WindowBackgroundBrush", StringComparison.Ordinal), "Theme resources are required.");
-    Ensure(appXaml.Contains("PrimaryButtonStyle", StringComparison.Ordinal), "The modern primary action style is required.");
+    Ensure(xaml.Contains("ui:FluentWindow", StringComparison.Ordinal), "The window must use the WPF UI Fluent foundation.");
+    Ensure(xaml.Contains("ui:TitleBar", StringComparison.Ordinal), "The Fluent window must retain visible window controls and a draggable title bar.");
+    Ensure(xaml.Contains("ui:InfoBar", StringComparison.Ordinal), "Measurement status should use a coherent themed component.");
+    Ensure(xaml.Contains("ui:DataGrid", StringComparison.Ordinal), "Result grids must use the theme-aware WPF UI control.");
+    Ensure(xaml.Contains("x:Name=\"ConfigurationSelector\"", StringComparison.Ordinal), "The configuration selector contract is required.");
+    Ensure(appXaml.Contains("ui:ThemesDictionary", StringComparison.Ordinal), "WPF UI theme resources are required.");
+    Ensure(appXaml.Contains("ui:ControlsDictionary", StringComparison.Ordinal), "WPF UI control resources are required.");
+    Ensure(!appXaml.Contains("WindowBackgroundBrush", StringComparison.Ordinal), "The removed hand-authored palette must not return.");
+    Ensure(!appXaml.Contains("ControlTemplate", StringComparison.Ordinal), "Base control templates must come from the UI framework.");
+    Ensure(notices.Contains("WPF UI LICENSE", StringComparison.Ordinal), "The WPF UI license must accompany distributions.");
 }
 
 static string FindRepositoryRoot()

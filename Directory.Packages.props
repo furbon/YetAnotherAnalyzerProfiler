@@ -17,5 +17,6 @@
   <ItemGroup>
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
     <PackageVersion Include="Local.Package" Version="1.0.0" />
+    <PackageVersion Include="WPF-UI" Version="4.3.0" />
   </ItemGroup>
 </Project>

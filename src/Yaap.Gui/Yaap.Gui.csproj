@@ -15,4 +15,13 @@
   <ItemGroup>
     <ProjectReference Include="../Yaap.Core/Yaap.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="WPF-UI" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../THIRD-PARTY-NOTICES.txt"
+             Link="THIRD-PARTY-NOTICES.txt"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+  </ItemGroup>
 </Project>

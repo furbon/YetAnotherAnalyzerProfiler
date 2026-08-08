@@ -105,7 +105,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _configuration;
         set
         {
-            if (Set(ref _configuration, value))
+            if (Set(ref _configuration, value ?? string.Empty))
             {
                 RaiseCommandStates();
             }
@@ -328,9 +328,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ? string.Empty
         : $"生成ファイル数差: {Comparison.GeneratedFileCountDelta:+#;-#;0}、バイト数差: {Comparison.GeneratedByteCountDelta:+#;-#;0}";
 
-    public string StartAvailabilityText => GetStartBlocker() is { } blocker
-        ? $"測定開始できません: {blocker}"
-        : $"測定可能: {Configuration} 構成";
+    public string MeasurementStateText => CurrentMeasurementState.Text;
 
     public string AdvancedSettingsSummary => Isolated
         ? "詳細設定（分離出力: 有効）"
@@ -492,11 +490,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 Configurations.Add(configuration);
             }
 
-            Configuration = SelectPreferredConfiguration(path, discovered);
             _hasValidTarget = discovered.Length > 0;
+            Configuration = SelectPreferredConfiguration(path, discovered);
             StatusText = _hasValidTarget
                 ? $"構成を {Configurations.Count} 件検出し、{Configuration} を選択しました。"
                 : "利用できるビルド構成を検出できませんでした。";
+            RaiseCommandStates();
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -506,6 +505,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (IsCurrentDiscovery(path, generation))
             {
                 _hasValidTarget = false;
+                Configurations.Clear();
+                Configuration = string.Empty;
                 SetError(exception);
             }
         }
@@ -530,38 +531,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private bool CanStart()
     {
-        return GetStartBlocker() is null;
+        return CurrentMeasurementState.CanStart;
     }
 
-    private string? GetStartBlocker()
-    {
-        if (IsRunning)
-        {
-            return "測定を実行中です。";
-        }
-
-        if (string.IsNullOrWhiteSpace(TargetPath))
-        {
-            return "測定対象を指定してください。";
-        }
-
-        if (IsDiscoveringTarget)
-        {
-            return "対象とビルド構成を確認しています。";
-        }
-
-        if (!_hasValidTarget)
-        {
-            return "対象を検証できませんでした。上の状態メッセージを確認してください。";
-        }
-
-        if (string.IsNullOrWhiteSpace(Configuration))
-        {
-            return "ビルド構成が選択されていません。";
-        }
-
-        return null;
-    }
+    private MeasurementStatePresentation CurrentMeasurementState =>
+        MeasurementStatePresentation.Create(
+            IsRunning,
+            IsDiscoveringTarget,
+            _hasValidTarget,
+            TargetPath,
+            Configuration,
+            Configurations);
 
     private void Browse()
     {
@@ -715,7 +695,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void RaiseCommandStates()
     {
-        OnPropertyChanged(nameof(StartAvailabilityText));
+        OnPropertyChanged(nameof(MeasurementStateText));
         foreach (ICommand command in new[]
                  {
                      StartCommand,
