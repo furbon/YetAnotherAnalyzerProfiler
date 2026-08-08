@@ -47,9 +47,10 @@ try
                 EnsureSdkVersion(root, framework);
                 CheckRepository(root);
                 await EnsurePackageLockRestoreDeterminismAsync(root, expectedPackageLocks);
+                await EnsurePackageLockDebugRebuildDeterminismAsync(root, expectedPackageLocks);
                 await RestoreAsync(root, framework);
                 NormalizePackageLockFiles(root);
-                EnsurePackageLockHashes(root, expectedPackageLocks);
+                EnsurePackageLockHashes(root, expectedPackageLocks, "Locked restore");
                 await FormatAsync(root);
                 await BuildAsync(root, framework);
                 await TestAsync(root, framework);
@@ -58,7 +59,7 @@ try
                     await PackAsync(root);
                 }
                 NormalizePackageLockFiles(root);
-                EnsurePackageLockHashes(root, expectedPackageLocks);
+                EnsurePackageLockHashes(root, expectedPackageLocks, "Build, test, or pack");
                 CheckRepository(root);
                 break;
             }
@@ -128,7 +129,48 @@ static async Task EnsurePackageLockRestoreDeterminismAsync(
         "-p:RestoreLockedMode=false",
     });
     NormalizePackageLockFiles(root);
-    EnsurePackageLockHashes(root, expectedHashes);
+    EnsurePackageLockHashes(root, expectedHashes, "Forced solution restore");
+}
+
+static async Task EnsurePackageLockDebugRebuildDeterminismAsync(
+    string root,
+    IReadOnlyDictionary<string, string> expectedHashes)
+{
+    string artifactsPath = Path.Combine(
+        Path.GetTempPath(),
+        $"yaap-debug-rebuild-{Guid.NewGuid():N}");
+    try
+    {
+        await RunAsync(root, "dotnet", new[]
+        {
+            "build",
+            Path.Combine(root, "tests", "Yaap.Tests", "Yaap.Tests.csproj"),
+            "--configuration",
+            "Debug",
+            "--no-incremental",
+            "--force",
+            "--artifacts-path",
+            artifactsPath,
+        });
+        NormalizePackageLockFiles(root);
+        EnsurePackageLockHashes(root, expectedHashes, "Debug rebuild with implicit restore");
+    }
+    finally
+    {
+        string resolvedArtifactsPath = Path.GetFullPath(artifactsPath);
+        string tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) +
+            Path.DirectorySeparatorChar;
+        if (!resolvedArtifactsPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Refusing to delete Debug rebuild path outside the temp directory: {resolvedArtifactsPath}");
+        }
+
+        if (Directory.Exists(resolvedArtifactsPath))
+        {
+            Directory.Delete(resolvedArtifactsPath, recursive: true);
+        }
+    }
 }
 
 static async Task BuildAsync(string root, string framework)
@@ -358,14 +400,14 @@ static async Task PackAsync(string root)
                      "README.md",
                      "THIRD-PARTY-NOTICES.txt",
                      "tools/net8.0/any/DotnetToolSettings.xml",
-                     "tools/net8.0/any/yaap.deps.json",
-                     "tools/net8.0/any/yaap.dll",
-                     "tools/net8.0/any/yaap.runtimeconfig.json",
+                     "tools/net8.0/any/YetAnotherAnalyzerProfiler.Tool.deps.json",
+                     "tools/net8.0/any/YetAnotherAnalyzerProfiler.Tool.dll",
+                     "tools/net8.0/any/YetAnotherAnalyzerProfiler.Tool.runtimeconfig.json",
                      "tools/net8.0/any/Yaap.BuildLogger.dll",
                      "tools/net10.0/any/DotnetToolSettings.xml",
-                     "tools/net10.0/any/yaap.deps.json",
-                     "tools/net10.0/any/yaap.dll",
-                     "tools/net10.0/any/yaap.runtimeconfig.json",
+                     "tools/net10.0/any/YetAnotherAnalyzerProfiler.Tool.deps.json",
+                     "tools/net10.0/any/YetAnotherAnalyzerProfiler.Tool.dll",
+                     "tools/net10.0/any/YetAnotherAnalyzerProfiler.Tool.runtimeconfig.json",
                      "tools/net10.0/any/Yaap.BuildLogger.dll",
                  })
         {
@@ -382,13 +424,6 @@ static async Task PackAsync(string root)
                 "NuGet tool package must not leak build logger assemblies as project content.");
         }
 
-        if (entries.Any(entry =>
-                entry.EndsWith("/YetAnotherAnalyzerProfiler.Tool.deps.json", StringComparison.OrdinalIgnoreCase) ||
-                entry.EndsWith("/YetAnotherAnalyzerProfiler.Tool.runtimeconfig.json", StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new InvalidOperationException(
-                "NuGet tool runtime metadata must use the yaap command name.");
-        }
     }
 
     string smokeRoot = Path.Combine(
@@ -1086,9 +1121,6 @@ static void EnsureCliRestoreIdentity(string root)
              {
                  "<AssemblyName>YetAnotherAnalyzerProfiler.Tool</AssemblyName>",
                  "<PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>",
-                 "<TargetName>yaap</TargetName>",
-                 "<ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>",
-                 "<ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>",
                  "<ToolCommandName>yaap</ToolCommandName>",
              })
     {
@@ -1096,6 +1128,20 @@ static void EnsureCliRestoreIdentity(string root)
         {
             throw new InvalidOperationException(
                 $"CLI restore/package/output identities must remain deterministic: {contract}");
+        }
+    }
+
+    foreach (string forbiddenOverride in new[]
+             {
+                 "<TargetName>",
+                 "<ProjectDepsFileName>",
+                 "<ProjectRuntimeConfigFileName>",
+             })
+    {
+        if (project.Contains(forbiddenOverride, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"CLI output identity must derive from AssemblyName: {forbiddenOverride}");
         }
     }
 }
@@ -1452,7 +1498,8 @@ static Dictionary<string, string> CapturePackageLockHashes(string root)
 
 static void EnsurePackageLockHashes(
     string root,
-    IReadOnlyDictionary<string, string> expectedHashes)
+    IReadOnlyDictionary<string, string> expectedHashes,
+    string operation)
 {
     Dictionary<string, string> actualHashes = CapturePackageLockHashes(root);
     string[] changed = expectedHashes.Keys
@@ -1466,7 +1513,7 @@ static void EnsurePackageLockHashes(
     if (changed.Length > 0)
     {
         throw new InvalidOperationException(
-            "Ordinary restore changed tracked NuGet lock files: " + string.Join(", ", changed));
+            $"{operation} changed tracked NuGet lock files: " + string.Join(", ", changed));
     }
 }
 
