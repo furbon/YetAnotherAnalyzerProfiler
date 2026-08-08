@@ -79,8 +79,15 @@ static async Task WindowStartupSmokeAsync()
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
 
             TabControl mainTabs = (TabControl)window.FindName("MainTabs");
+            TabControl analyzerViewTabs = (TabControl)window.FindName("AnalyzerViewTabs");
+            TreeView analyzerTreeView = (TreeView)window.FindName("AnalyzerTreeView");
             FrameworkElement targetCard = (FrameworkElement)window.FindName("TargetCard");
             FrameworkElement busyCard = (FrameworkElement)window.FindName("BusyCard");
+            Wpf.Ui.Controls.InfoBar statusBar =
+                (Wpf.Ui.Controls.InfoBar)window.FindName("StatusBar");
+            Button startButton = (Button)window.FindName("StartButton");
+            TextBlock busyTitle = (TextBlock)window.FindName("BusyTitle");
+            TextBlock busyMessage = (TextBlock)window.FindName("BusyMessage");
             Button cancelButton = (Button)window.FindName("BusyCancelButton");
             ToggleButton recentTargetsButton =
                 (ToggleButton)window.FindName("RecentTargetsButton");
@@ -126,6 +133,13 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 Typography.GetNumeralAlignment(analyzerMeanText) == FontNumeralAlignment.Tabular,
                 "Timing values must use tabular numerals.");
+            Ensure(analyzerGrid.Columns.Count == 6, "The Analyzer table must omit the low-value sample-count column.");
+            Ensure(
+                analyzerGrid.Columns.All(column => !string.Equals(column.Header?.ToString(), "標本", StringComparison.Ordinal)),
+                "The Analyzer table must not present sample count as 標本.");
+            Ensure(startButton.FontWeight == FontWeights.SemiBold, "The primary measurement action must use emphasized text.");
+            Ensure(busyCard.Visibility == Visibility.Collapsed, "The measurement progress surface must be hidden while idle.");
+            Ensure(statusBar.Visibility == Visibility.Visible, "The persistent status bar must be visible while idle.");
             recentTargetsButton.IsChecked = true;
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(recentTargetsPopup.IsOpen, "The empty recent-target popup should still open.");
@@ -134,11 +148,17 @@ static async Task WindowStartupSmokeAsync()
                 "The empty recent-target popup should explain that there are no items.");
             recentTargetsButton.IsChecked = false;
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            SetPrivateProperty(viewModel, nameof(MainViewModel.StatusText), "コンパイラー情報 1/3 を逐次解析しています。");
             SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), true);
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(!targetCard.IsEnabled, "The target controls must be disabled while measuring.");
             Ensure(!mainTabs.IsEnabled, "Result and history tabs must be disabled while measuring.");
             Ensure(busyCard.Visibility == Visibility.Visible, "The measurement progress surface must be visible.");
+            Ensure(statusBar.Visibility == Visibility.Collapsed, "The persistent status bar must not duplicate running progress.");
+            Ensure(
+                busyTitle.Text == viewModel.MeasurementStateText,
+                "The busy heading must use the canonical measurement state text.");
+            Ensure(busyMessage.Text == viewModel.StatusText, "The busy surface must show the current progress message.");
             Ensure(cancelButton.IsEnabled, "Cancel must remain enabled while measuring.");
             viewModel.RecentTargets.Add(new RecentTarget(
                 System.IO.Path.GetFileName(recentTargetPath),
@@ -153,11 +173,13 @@ static async Task WindowStartupSmokeAsync()
             foreach (AppThemeMode mode in new[] { AppThemeMode.Light, AppThemeMode.Dark })
             {
                 viewModel.SelectedTheme = MainViewModel.ThemeOptions.Single(option => option.Mode == mode);
+                mainTabs.SelectedIndex = 0;
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                 EnsureReadableForeground(mainTabs.Foreground, mode, "MainTabs");
                 CaptureWindow(window, captureDirectory, $"{mode.ToString().ToLowerInvariant()}-busy");
 
                 SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), false);
+                SetPrivateProperty(viewModel, nameof(MainViewModel.StatusText), "直近の測定結果を表示しています。");
                 for (int index = 0; index < mainTabs.Items.Count; index++)
                 {
                     mainTabs.SelectedIndex = index;
@@ -187,6 +209,23 @@ static async Task WindowStartupSmokeAsync()
                         window,
                         captureDirectory,
                         $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
+
+                    if (index == 0)
+                    {
+                        analyzerViewTabs.SelectedIndex = 1;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        analyzerTreeView.UpdateLayout();
+                        TreeViewItem analyzerAssembly =
+                            analyzerTreeView.ItemContainerGenerator.ContainerFromIndex(0) as TreeViewItem ??
+                            throw new InvalidOperationException("The Analyzer tree root was not rendered.");
+                        analyzerAssembly.IsExpanded = true;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-tree");
+                        analyzerViewTabs.SelectedIndex = 0;
+                    }
                 }
 
                 recentTargetsButton.IsChecked = true;
@@ -228,6 +267,7 @@ static async Task WindowStartupSmokeAsync()
                 advancedSettingsButton.IsChecked = false;
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
 
+                SetPrivateProperty(viewModel, nameof(MainViewModel.StatusText), "コンパイラー情報 1/3 を逐次解析しています。");
                 SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), true);
             }
 
@@ -708,6 +748,7 @@ static Task ResultTreeFilteringAsync()
     Ensure(analyzerTree.Count == 1, "The analyzer tree should retain the matching assembly branch.");
     Ensure(analyzerTree[0].Children.Count == 1, "The analyzer tree should filter nonmatching metrics.");
     Ensure(analyzerTree[0].Children[0].Name.Contains("YAAP001", StringComparison.Ordinal), "Diagnostic IDs should be visible in the tree.");
+    Ensure(!analyzerTree[0].Children[0].Detail.Contains("標本", StringComparison.Ordinal), "Analyzer tree details must omit sample count.");
 
     GeneratorMetric generator = new(
         "SampleGenerator",
@@ -912,6 +953,11 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("NumericColumnHeaderStyle", StringComparison.Ordinal), "Numeric headers must align with values.");
     Ensure(xaml.Contains("ui:ProgressRing", StringComparison.Ordinal), "Measurement progress must be visually prominent.");
     Ensure(xaml.Contains("x:Name=\"BusyCancelButton\"", StringComparison.Ordinal), "Cancel must remain available on the busy surface.");
+    Ensure(xaml.Contains("x:Name=\"StatusBar\"", StringComparison.Ordinal), "The idle status surface must have a testable identity.");
+    Ensure(xaml.Contains("Text=\"{Binding MeasurementStateText}\"", StringComparison.Ordinal), "The busy surface must use the canonical measurement state.");
+    Ensure(!xaml.Contains("Text=\"測定を実行しています\"", StringComparison.Ordinal), "The busy surface must not duplicate measurement-state wording.");
+    Ensure(!xaml.Contains("Header=\"標本\"", StringComparison.Ordinal), "The Analyzer table must not expose sample count.");
+    Ensure(xaml.Contains("x:Name=\"StartButton\"", StringComparison.Ordinal), "The primary measurement action must be testable.");
     Ensure(xaml.Contains("AllowDrop=\"True\"", StringComparison.Ordinal), "File drop must be enabled.");
     Ensure(xaml.Contains("PreviewDrop=\"OnPreviewDrop\"", StringComparison.Ordinal), "File drop must be handled.");
     Ensure(!xaml.Contains("DiscoverCommand", StringComparison.Ordinal), "Manual discovery should not remain in the GUI.");

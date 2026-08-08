@@ -997,7 +997,7 @@ public static class ResultTreeBuilder
                         item.DiagnosticId is null
                             ? item.Identity
                             : $"{item.DiagnosticId}: {item.Identity}",
-                        $"{item.Kind}、平均 {item.MeanMilliseconds:N3} ms、標本 {item.SampleCount}",
+                        $"{item.Kind}、平均 {item.MeanMilliseconds:N3} ms",
                         Array.Empty<ResultTreeNode>()))
                     .ToArray()))
             .ToArray();
