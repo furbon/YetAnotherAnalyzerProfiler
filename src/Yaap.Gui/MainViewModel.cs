@@ -20,6 +20,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly ProfileRunner _profileRunner;
     private readonly Func<string, CancellationToken, Task<TargetInfo>> _targetDiscoverer;
     private readonly Func<string, CancellationToken, Task<BinlogAnalysis>> _binlogAnalyzer;
+    private readonly Func<Guid, CancellationToken, Task<ProfileRun>> _historyLoader;
     private readonly Func<RunSummary, bool> _confirmDelete;
     private readonly Func<bool> _confirmDeleteAll;
     private readonly TimeSpan _targetDiscoveryDelay;
@@ -51,13 +52,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _selectedHistoryLabel = string.Empty;
     private string _committedHistoryLabel = string.Empty;
     private string _exportPath = string.Empty;
-    private string _exportFormat = "json";
     private string _binlogPath = string.Empty;
     private bool _isolated = true;
     private bool _restore = true;
     private bool _cleanBeforeEach = true;
     private bool _isRunning;
     private bool _isOperationRunning;
+    private bool _showOperationBusySurface;
     private bool _isDiscoveringTarget;
     private bool _hasValidTarget;
     private bool _historyInitialized;
@@ -87,12 +88,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         TimeSpan? targetDiscoveryDelay = null,
         Func<RunSummary, bool>? confirmDelete = null,
         Func<bool>? confirmDeleteAll = null,
-        Func<string, CancellationToken, Task<BinlogAnalysis>>? binlogAnalyzer = null)
+        Func<string, CancellationToken, Task<BinlogAnalysis>>? binlogAnalyzer = null,
+        Func<Guid, CancellationToken, Task<ProfileRun>>? historyLoader = null)
     {
         _profileRunner = profileRunner ?? new ProfileRunner();
         _targetDiscoverer = targetDiscoverer ?? TargetDiscovery.DiscoverAsync;
         _binlogAnalyzer = binlogAnalyzer ?? ((path, cancellationToken) =>
             new BinlogAnalyzer().AnalyzeAsync(path, cancellationToken));
+        _historyLoader = historyLoader ?? ((id, cancellationToken) =>
+            Store().LoadAsync(id, cancellationToken));
         _confirmDelete = confirmDelete ?? ConfirmDelete;
         _confirmDeleteAll = confirmDeleteAll ?? ConfirmDeleteAll;
         _targetDiscoveryDelay = targetDiscoveryDelay ?? TimeSpan.FromMilliseconds(350);
@@ -106,9 +110,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         StartCommand = new AsyncRelayCommand(StartAsync, CanStart, SetError);
         RefreshHistoryCommand = CreateOperationCommand("履歴を更新しています。", RefreshHistoryAsync);
         LoadSelectedCommand = CreateOperationCommand(
-            "履歴の詳細を読み込んでいます。",
+            "選択した測定結果を読み込んでいます。",
             LoadSelectedAsync,
-            () => SelectedHistory is not null);
+            () => SelectedHistory is not null,
+            showBusySurface: false);
         DeleteSelectedCommand = CreateOperationCommand(
             "履歴を削除しています。",
             DeleteSelectedAsync,
@@ -356,12 +361,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set => Set(ref _exportPath, value);
     }
 
-    public string ExportFormat
-    {
-        get => _exportFormat;
-        set => Set(ref _exportFormat, value);
-    }
-
     public string BinlogPath
     {
         get => _binlogPath;
@@ -470,6 +469,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (Set(ref _isRunning, value))
             {
                 OnPropertyChanged(nameof(IsBusy));
+                OnPropertyChanged(nameof(IsBusySurfaceVisible));
                 OnPropertyChanged(nameof(BusyTitleText));
                 RaiseCommandStates();
             }
@@ -484,6 +484,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (Set(ref _isOperationRunning, value))
             {
                 OnPropertyChanged(nameof(IsBusy));
+                OnPropertyChanged(nameof(IsBusySurfaceVisible));
                 OnPropertyChanged(nameof(BusyTitleText));
                 RaiseCommandStates();
             }
@@ -491,6 +492,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public bool IsBusy => IsRunning || IsOperationRunning;
+
+    public bool IsBusySurfaceVisible => IsRunning ||
+        (IsOperationRunning && _showOperationBusySurface);
 
     public bool IsDiscoveringTarget
     {
@@ -523,16 +527,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ProfileRun? SelectedRun
     {
         get => _selectedRun;
-        private set
-        {
-            if (Set(ref _selectedRun, value))
-            {
-                ApplyResultProjection(ResultProjection.Empty);
-                QueueResultFilter(TimeSpan.Zero);
-                OnPropertyChanged(nameof(Diagnostics));
-                RaiseCommandStates();
-            }
-        }
+        private set => SetSelectedRun(value);
     }
 
     public ComparisonResult? Comparison
@@ -842,27 +837,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void BrowseExport()
     {
-        string extension = ExportFormat.ToLowerInvariant() switch
-        {
-            "csv" => ".csv",
-            "md" or "markdown" => ".md",
-            _ => ".json",
-        };
+        string? selectedExtension = GetSupportedExportExtension(ExportPath);
         string targetName = Path.GetFileNameWithoutExtension(SelectedRun?.TargetName ?? "yaap-result");
+        string suggestedName = string.IsNullOrWhiteSpace(ExportPath)
+            ? $"{targetName}-{DateTime.Now:yyyyMMdd-HHmmss}"
+            : selectedExtension is null
+                ? Path.GetFileNameWithoutExtension(ExportPath)
+                : Path.GetFileName(ExportPath);
         Microsoft.Win32.SaveFileDialog dialog = new()
         {
             AddExtension = true,
-            DefaultExt = extension,
-            FileName = $"{targetName}-{DateTime.Now:yyyyMMdd-HHmmss}{extension}",
-            Filter = ExportFormat.ToLowerInvariant() switch
+            FileName = suggestedName,
+            Filter = "JSONファイル (*.json)|*.json|CSVファイル (*.csv)|*.csv|Markdownファイル (*.md;*.markdown)|*.md;*.markdown",
+            FilterIndex = selectedExtension?.ToLowerInvariant() switch
             {
-                "csv" => "CSVファイル (*.csv)|*.csv|すべてのファイル (*.*)|*.*",
-                "md" or "markdown" => "Markdownファイル (*.md)|*.md|すべてのファイル (*.*)|*.*",
-                _ => "JSONファイル (*.json)|*.json|すべてのファイル (*.*)|*.*",
+                ".csv" => 2,
+                ".md" or ".markdown" => 3,
+                _ => 1,
             },
             OverwritePrompt = true,
-            Title = "測定結果の保存先を選択",
+            Title = "測定結果の形式と保存先を選択",
         };
+        string? currentDirectory = Path.GetDirectoryName(ExportPath);
+        if (!string.IsNullOrWhiteSpace(currentDirectory) && Directory.Exists(currentDirectory))
+        {
+            dialog.InitialDirectory = Path.GetFullPath(currentDirectory);
+        }
+
         if (dialog.ShowDialog() == true)
         {
             ExportPath = dialog.FileName;
@@ -1058,9 +1059,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        SelectedRun = await Store().LoadAsync(SelectedHistory.Id, cancellationToken);
-        SelectedBaseline = ComparisonChoices.FirstOrDefault(item => item.Id == SelectedRun.Id);
-        StatusText = $"測定結果を読み込みました: {SelectedRun.TargetName}";
+        ProfileRun run = await _historyLoader(SelectedHistory.Id, cancellationToken);
+        string filter = ResultFilter;
+        ResultProjection projection = await Task.Run(
+            () => BuildResultProjection(run, filter, cancellationToken),
+            cancellationToken);
+        SetSelectedRun(run, projection, filter);
+        SelectedBaseline = ComparisonChoices.FirstOrDefault(item => item.Id == run.Id);
+        StatusText = $"測定結果を読み込みました: {run.TargetName}";
     }
 
     private async Task DeleteSelectedAsync(CancellationToken cancellationToken)
@@ -1124,15 +1130,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (SelectedRun is null || string.IsNullOrWhiteSpace(ExportPath))
         {
-            throw new YaapException(YaapErrors.InvalidInput("Export path is empty."));
+            throw new YaapException(YaapErrors.InvalidInput("保存ファイルを選択してください。"));
         }
 
-        Yaap.Core.ExportFormat format = ExportFormat.ToLowerInvariant() switch
-        {
-            "csv" => Yaap.Core.ExportFormat.Csv,
-            "md" or "markdown" => Yaap.Core.ExportFormat.Markdown,
-            _ => Yaap.Core.ExportFormat.Json,
-        };
+        Yaap.Core.ExportFormat format = GetExportFormat(ExportPath);
         HistoryStore history = Store();
         if (Directory.Exists(history.GetRunDirectory(SelectedRun.Id)))
         {
@@ -1423,15 +1424,74 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(GeneratorTree));
     }
 
+    private void SetSelectedRun(
+        ProfileRun? value,
+        ResultProjection? preparedProjection = null,
+        string? preparedFilter = null)
+    {
+        if (!Set(ref _selectedRun, value))
+        {
+            return;
+        }
+
+        CancellationTokenSource? previous = Interlocked.Exchange(
+            ref _resultFilterCancellation,
+            null);
+        previous?.Cancel();
+        if (preparedProjection is not null &&
+            string.Equals(preparedFilter, ResultFilter, StringComparison.Ordinal))
+        {
+            ApplyResultProjection(preparedProjection);
+        }
+        else
+        {
+            ApplyResultProjection(ResultProjection.Empty);
+            QueueResultFilter(TimeSpan.Zero);
+        }
+
+        OnPropertyChanged(nameof(Diagnostics));
+        RaiseCommandStates();
+    }
+
+    public static Yaap.Core.ExportFormat GetExportFormat(string path) =>
+        GetSupportedExportExtension(path)?.ToLowerInvariant() switch
+        {
+            ".json" => Yaap.Core.ExportFormat.Json,
+            ".csv" => Yaap.Core.ExportFormat.Csv,
+            ".md" or ".markdown" => Yaap.Core.ExportFormat.Markdown,
+            _ => throw new YaapException(YaapErrors.InvalidInput(
+                "保存ファイルの拡張子は .json、.csv、.md、.markdown のいずれかを指定してください。")),
+        };
+
+    private static string? GetSupportedExportExtension(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        string extension = Path.GetExtension(path);
+        return extension.ToLowerInvariant() switch
+        {
+            ".json" or ".csv" or ".md" or ".markdown" => extension,
+            _ => null,
+        };
+    }
+
     private HistoryStore Store() => new(EmptyToNull(HistoryPath));
 
     private AsyncRelayCommand CreateOperationCommand(
         string status,
         Func<CancellationToken, Task> operation,
-        Func<bool>? canExecute = null)
+        Func<bool>? canExecute = null,
+        bool showBusySurface = true)
     {
         return new AsyncRelayCommand(
-            cancellationToken => RunOperationAsync(status, operation, cancellationToken),
+            cancellationToken => RunOperationAsync(
+                status,
+                operation,
+                showBusySurface,
+                cancellationToken),
             () => !IsBusy && (canExecute?.Invoke() ?? true),
             SetError);
     }
@@ -1439,6 +1499,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task RunOperationAsync(
         string status,
         Func<CancellationToken, Task> operation,
+        bool showBusySurface,
         CancellationToken cancellationToken)
     {
         if (_disposed)
@@ -1455,6 +1516,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             throw new InvalidOperationException("Another GUI operation is already running.");
         }
 
+        _showOperationBusySurface = showBusySurface;
         IsOperationRunning = true;
         StatusText = status;
         try
@@ -1475,6 +1537,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!_disposed)
             {
                 IsOperationRunning = false;
+                _showOperationBusySurface = false;
             }
         }
     }

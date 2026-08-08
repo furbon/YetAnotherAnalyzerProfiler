@@ -42,6 +42,7 @@
             <Setter Property="VirtualizingPanel.IsVirtualizingWhenGrouping" Value="True" />
             <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel" />
             <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <EventSetter Event="Loaded" Handler="OnScrollableControlLoaded" />
             <EventSetter Event="SelectionChanged" Handler="OnScrollableSelectionChanged" />
         </Style>
         <Style x:Key="VirtualizedTreeViewStyle" TargetType="{x:Type TreeView}">
@@ -52,12 +53,54 @@
             <Setter Property="VirtualizingPanel.IsVirtualizingWhenGrouping" Value="True" />
             <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel" />
             <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <EventSetter Event="Loaded" Handler="OnScrollableControlLoaded" />
+        </Style>
+        <ControlTemplate x:Key="AccessibleScrollThumbTemplate" TargetType="{x:Type Thumb}">
+            <Border Margin="2"
+                    Background="{DynamicResource TextFillColorSecondaryBrush}"
+                    CornerRadius="6" />
+        </ControlTemplate>
+        <Style x:Key="OpaqueCalendarStyle"
+               BasedOn="{StaticResource {x:Type Calendar}}"
+               TargetType="{x:Type Calendar}">
+            <Setter Property="Background" Value="{DynamicResource ApplicationBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="Opacity" Value="1" />
+            <Setter Property="CalendarButtonStyle">
+                <Setter.Value>
+                    <Style BasedOn="{StaticResource {x:Type CalendarButton}}"
+                           TargetType="{x:Type CalendarButton}">
+                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="CalendarDayButtonStyle">
+                <Setter.Value>
+                    <Style BasedOn="{StaticResource {x:Type CalendarDayButton}}"
+                           TargetType="{x:Type CalendarDayButton}">
+                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                        <Style.Triggers>
+                            <Trigger Property="IsInactive" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="CalendarItemStyle">
+                <Setter.Value>
+                    <Style BasedOn="{StaticResource {x:Type CalendarItem}}"
+                           TargetType="{x:Type CalendarItem}">
+                        <Setter Property="Background" Value="{DynamicResource ApplicationBackgroundBrush}" />
+                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                        <Setter Property="Opacity" Value="1" />
+                    </Style>
+                </Setter.Value>
+            </Setter>
         </Style>
     </ui:FluentWindow.Resources>
-    <ui:FluentWindow.InputBindings>
-        <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoLabelCommand}" />
-        <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoLabelCommand}" />
-    </ui:FluentWindow.InputBindings>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -337,7 +380,7 @@
                 <Style BasedOn="{StaticResource {x:Type ui:Card}}" TargetType="{x:Type ui:Card}">
                     <Setter Property="Visibility" Value="Collapsed" />
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                        <DataTrigger Binding="{Binding IsBusySurfaceVisible}" Value="True">
                             <Setter Property="Visibility" Value="Visible" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -384,7 +427,7 @@
                 <Style BasedOn="{StaticResource {x:Type ui:InfoBar}}" TargetType="{x:Type ui:InfoBar}">
                     <Setter Property="Visibility" Value="Visible" />
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                        <DataTrigger Binding="{Binding IsBusySurfaceVisible}" Value="True">
                             <Setter Property="Visibility" Value="Collapsed" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -402,7 +445,7 @@
             <TabControl.Style>
                 <Style BasedOn="{StaticResource {x:Type TabControl}}" TargetType="{x:Type TabControl}">
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                        <DataTrigger Binding="{Binding IsBusySurfaceVisible}" Value="True">
                             <Setter Property="IsEnabled" Value="False" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -648,6 +691,37 @@
                                   AutomationProperties.Name="履歴の状態"
                                   ItemsSource="{Binding HistoryStatuses}"
                                   SelectedItem="{Binding HistoryStatus}" />
+                        <Grid Grid.Column="3" Margin="16,0" HorizontalAlignment="Right">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="150" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="HistoryFromLabel"
+                                       Margin="0,0,8,0"
+                                       VerticalAlignment="Center"
+                                       Text="期間" />
+                            <DatePicker x:Name="HistoryFromDatePicker"
+                                        Grid.Column="1"
+                                        CalendarStyle="{StaticResource OpaqueCalendarStyle}"
+                                        CalendarOpened="OnHistoryCalendarOpened"
+                                        AutomationProperties.LabeledBy="{Binding ElementName=HistoryFromLabel}"
+                                        DateValidationError="OnHistoryDateValidationError"
+                                        SelectedDateFormat="Short"
+                                        Text="{Binding HistoryFrom}"
+                                        ToolTip="開始日。例: 2026/01/31、2026-01-31、31/Jan/2026" />
+                            <TextBlock Grid.Column="2" Margin="10,0" VerticalAlignment="Center" Text="～" />
+                            <DatePicker x:Name="HistoryToDatePicker"
+                                        Grid.Column="3"
+                                        CalendarStyle="{StaticResource OpaqueCalendarStyle}"
+                                        CalendarOpened="OnHistoryCalendarOpened"
+                                        AutomationProperties.Name="終了日"
+                                        DateValidationError="OnHistoryDateValidationError"
+                                        SelectedDateFormat="Short"
+                                        Text="{Binding HistoryTo}"
+                                        ToolTip="終了日。この日を含みます。" />
+                        </Grid>
                         <Button Grid.Column="4"
                                 Width="34"
                                 Height="32"
@@ -660,69 +734,25 @@
                     </Grid>
                     <Grid Grid.Row="1" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="150" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="150" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="260" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="360" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="HistoryFromLabel"
-                                   Margin="0,0,6,0"
-                                   VerticalAlignment="Center"
-                                   Text="期間" />
-                        <DatePicker Grid.Column="1"
-                                    AutomationProperties.LabeledBy="{Binding ElementName=HistoryFromLabel}"
-                                    DateValidationError="OnHistoryDateValidationError"
-                                    SelectedDateFormat="Short"
-                                    Text="{Binding HistoryFrom}"
-                                    ToolTip="開始日。例: 2026/01/31、2026-01-31、31/Jan/2026" />
-                        <TextBlock Grid.Column="2" Margin="8,0" VerticalAlignment="Center" Text="～" />
-                        <DatePicker Grid.Column="3"
-                                    AutomationProperties.Name="終了日"
-                                    DateValidationError="OnHistoryDateValidationError"
-                                    SelectedDateFormat="Short"
-                                    Text="{Binding HistoryTo}"
-                                    ToolTip="終了日。この日を含みます。" />
-                        <TextBlock Grid.Column="5"
-                                   Margin="16,0,6,0"
+                        <TextBlock Grid.Column="1"
+                                   Margin="0,0,8,0"
                                    VerticalAlignment="Center"
                                    Text="選択中のラベル" />
-                        <ui:TextBox Grid.Column="6"
-                                    Margin="0,0,6,0"
+                        <ui:TextBox x:Name="HistoryLabelTextBox"
+                                    Grid.Column="2"
                                     IsEnabled="{Binding SelectedHistory}"
                                     MaxLength="120"
                                     PlaceholderText="例: 最適化前（自動保存）"
-                                    Text="{Binding SelectedHistoryLabel, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Grid.Column="7"
-                                Width="32"
-                                Height="32"
-                                Margin="0,0,4,0"
-                                Padding="5"
-                                AutomationProperties.Name="ラベルを元に戻す"
-                                Command="{Binding UndoLabelCommand}"
-                                ToolTip="元に戻す (Ctrl+Z)">
-                            <ui:SymbolIcon Symbol="ArrowUndo20" />
-                        </Button>
-                        <Button Grid.Column="8"
-                                Width="32"
-                                Height="32"
-                                Margin="0,0,8,0"
-                                Padding="5"
-                                AutomationProperties.Name="ラベルをやり直す"
-                                Command="{Binding RedoLabelCommand}"
-                                ToolTip="やり直す (Ctrl+Y)">
-                            <ui:SymbolIcon Symbol="ArrowRedo20" />
-                        </Button>
-                        <Button Grid.Column="9"
-                                Padding="12,4"
-                                Command="{Binding LoadSelectedCommand}"
-                                Content="読み込み"
-                                ToolTip="選択した測定結果を Analyzer / Source Generator タブに読み込みます。" />
+                                    Text="{Binding SelectedHistoryLabel, UpdateSourceTrigger=PropertyChanged}">
+                            <ui:TextBox.InputBindings>
+                                <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoLabelCommand}" />
+                                <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoLabelCommand}" />
+                            </ui:TextBox.InputBindings>
+                        </ui:TextBox>
                     </Grid>
                     <ui:DataGrid x:Name="HistoryGrid"
                                  Grid.Row="2"
@@ -735,6 +765,9 @@
                                  PreviewMouseRightButtonDown="OnHistoryPreviewMouseRightButtonDown">
                         <ui:DataGrid.ContextMenu>
                             <ContextMenu>
+                                <MenuItem Command="{Binding PlacementTarget.DataContext.LoadSelectedCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                          Header="読み込み" />
+                                <Separator />
                                 <MenuItem Command="{Binding PlacementTarget.DataContext.DeleteSelectedCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                                           Header="削除" />
                             </ContextMenu>
@@ -812,7 +845,8 @@
                                   SelectedItem="{Binding SelectedCandidate}" />
                         <Button Grid.Column="4" Padding="16,4" Command="{Binding CompareCommand}" Content="比較" />
                     </Grid>
-                    <ui:DataGrid Grid.Row="2"
+                    <ui:DataGrid x:Name="ComparisonGrid"
+                                 Grid.Row="2"
                                  Style="{StaticResource ScrollableDataGridStyle}"
                                  ItemsSource="{Binding Comparison.Metrics}"
                                  AutoGenerateColumns="False"
@@ -844,8 +878,6 @@
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="120" />
-                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
@@ -854,37 +886,26 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <TextBlock Grid.ColumnSpan="6"
+                            <TextBlock Grid.ColumnSpan="4"
                                        Margin="0,0,0,12"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       Text="現在読み込んでいる測定結果を、指定した1つのファイルへ保存します。" />
-                            <TextBlock x:Name="ExportFormatLabel" Grid.Row="1" Margin="0,0,6,0" VerticalAlignment="Center" Text="形式" />
-                            <ComboBox Grid.Row="1"
-                                      Grid.Column="1"
-                                      Margin="0,0,16,0"
-                                      AutomationProperties.LabeledBy="{Binding ElementName=ExportFormatLabel}"
-                                      SelectedValue="{Binding ExportFormat}"
-                                      SelectedValuePath="Content">
-                                <ComboBoxItem Content="json" />
-                                <ComboBoxItem Content="csv" />
-                                <ComboBoxItem Content="markdown" />
-                            </ComboBox>
-                            <TextBlock x:Name="ExportPathLabel" Grid.Row="1" Grid.Column="2" Margin="0,0,6,0" VerticalAlignment="Center" Text="保存ファイル" />
+                                       Text="現在読み込んでいる測定結果を保存します。参照ダイアログでJSON、CSV、Markdownの形式を選択できます。" />
+                            <TextBlock x:Name="ExportPathLabel" Grid.Row="1" Margin="0,0,8,0" VerticalAlignment="Center" Text="保存ファイル" />
                             <ui:TextBox Grid.Row="1"
-                                        Grid.Column="3"
+                                        Grid.Column="1"
                                         Margin="0,0,8,0"
                                         AutomationProperties.LabeledBy="{Binding ElementName=ExportPathLabel}"
-                                        PlaceholderText="例: C:\Reports\sample-20260808.json"
+                                        PlaceholderText=".json／.csv／.md／.markdown の保存ファイルを選択"
                                         Text="{Binding ExportPath, UpdateSourceTrigger=PropertyChanged}"
-                                        ToolTip="ディレクトリではなく、拡張子を含む保存ファイル名を指定します。" />
+                                        ToolTip="拡張子から出力形式を判定します。未対応または拡張子なしのファイルは出力できません。" />
                             <Button Grid.Row="1"
-                                    Grid.Column="4"
+                                    Grid.Column="2"
                                     Margin="0,0,8,0"
                                     Padding="12,4"
                                     Command="{Binding BrowseExportCommand}"
                                     Content="参照" />
                             <Button Grid.Row="1"
-                                    Grid.Column="5"
+                                    Grid.Column="3"
                                     Padding="16,4"
                                     Command="{Binding ExportCommand}"
                                     Content="出力" />

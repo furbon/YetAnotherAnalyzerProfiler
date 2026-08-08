@@ -75,19 +75,35 @@ static async Task WindowStartupSmokeAsync()
     optimizationAfter.Label = "最適化後";
     await visualHistory.SaveAsync(optimizationBefore);
     await visualHistory.SaveAsync(optimizationAfter);
+    for (int index = 0; index < 46; index++)
+    {
+        ProfileRun run = CreateHistoricalRun(
+            recentTargetPath,
+            index % 2 == 0 ? "Release" : "Debug",
+            DateTimeOffset.UtcNow.AddHours(-index - 2));
+        run.Label = index % 8 == 0 ? $"確認用 {index + 1}" : null;
+        await visualHistory.SaveAsync(run);
+    }
     TaskCompletionSource<Exception?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     Thread thread = new(() =>
     {
         App? app = null;
         try
         {
-            using MainViewModel viewModel = new(targetDiscoveryDelay: TimeSpan.Zero)
+            using MainViewModel viewModel = new(
+                targetDiscoveryDelay: TimeSpan.Zero,
+                historyLoader: async (id, cancellationToken) =>
+                {
+                    await Task.Delay(80, cancellationToken);
+                    return await visualHistory.LoadAsync(id, cancellationToken);
+                })
             {
                 HistoryPath = historyPath,
             };
             viewModel.InitializeAsync().GetAwaiter().GetResult();
             SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualRun());
             viewModel.WaitForResultFilterAsync().GetAwaiter().GetResult();
+            SetPrivateProperty(viewModel, nameof(MainViewModel.Comparison), CreateVisualComparison());
             app = new App();
             app.InitializeComponent();
             MainWindow window = new(viewModel);
@@ -130,10 +146,13 @@ static async Task WindowStartupSmokeAsync()
             DataGrid analyzerGrid = (DataGrid)window.FindName("AnalyzerGrid");
             DataGrid generatorGrid = (DataGrid)window.FindName("GeneratorGrid");
             DataGrid historyGrid = (DataGrid)window.FindName("HistoryGrid");
+            DataGrid comparisonGrid = (DataGrid)window.FindName("ComparisonGrid");
+            DatePicker historyFromDatePicker =
+                (DatePicker)window.FindName("HistoryFromDatePicker");
             TextBlock generatorOutputsTruncatedNotice =
                 (TextBlock)window.FindName("GeneratorOutputsTruncatedNotice");
             TextBlock compareBaselineLabel = (TextBlock)window.FindName("CompareBaselineLabel");
-            TextBlock exportFormatLabel = (TextBlock)window.FindName("ExportFormatLabel");
+            TextBlock exportPathLabel = (TextBlock)window.FindName("ExportPathLabel");
             TextBlock settingsTitle = (TextBlock)window.FindName("SettingsTitle");
             Ensure(
                 ReferenceEquals(recentTargetsPopup.DataContext, viewModel),
@@ -173,6 +192,7 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 analyzerScroll.ComputedVerticalScrollBarVisibility == Visibility.Visible,
                 "A large Analyzer table must show its vertical scrollbar.");
+            EnsureAccessibleVerticalScrollBar(analyzerGrid, "Analyzer table");
             int realizedAnalyzerRows = FindVisualDescendants<DataGridRow>(analyzerGrid).Count();
             Ensure(
                 realizedAnalyzerRows < analyzerGrid.Items.Count / 2,
@@ -205,6 +225,47 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 FindVisualDescendants<DataGridRow>(generatorGrid).Count() < generatorGrid.Items.Count / 2,
                 "The Generator table must virtualize rows.");
+            mainTabs.SelectedIndex = 0;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            mainTabs.SelectedIndex = 2;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            Ensure(viewModel.History.Count == 48, "The visual history fixture must exercise a large list.");
+            ScrollViewer historyScroll = FindVisualDescendants<ScrollViewer>(historyGrid)
+                .OrderByDescending(viewer => viewer.ScrollableHeight)
+                .FirstOrDefault() ??
+                throw new InvalidOperationException("The History table scroll host was not rendered.");
+            Ensure(historyScroll.ScrollableHeight > 0, "A large History table must have a vertical scroll range.");
+            EnsureAccessibleVerticalScrollBar(historyGrid, "History table");
+            historyGrid.SelectedIndex = 24;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            historyScroll.ScrollToVerticalOffset(Math.Min(320, historyScroll.ScrollableHeight));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            double historyHeightBeforeLoad = historyGrid.ActualHeight;
+            double historyOffsetBeforeLoad = historyScroll.VerticalOffset;
+            object historySelectionBeforeLoad = historyGrid.SelectedItem;
+            int historyCountBeforeLoad = historyGrid.Items.Count;
+            historyGrid.RaiseEvent(new MouseButtonEventArgs(
+                Mouse.PrimaryDevice,
+                Environment.TickCount,
+                MouseButton.Left)
+            {
+                RoutedEvent = Control.MouseDoubleClickEvent,
+            });
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            Ensure(viewModel.IsOperationRunning, "History loading must remain an observable asynchronous operation.");
+            Ensure(!viewModel.IsBusySurfaceVisible, "History loading must not replace the list with the global busy surface.");
+            Ensure(mainTabs.IsEnabled, "History loading must not disable or fade the tab content.");
+            Ensure(busyCard.Visibility == Visibility.Collapsed, "History loading must not insert the global busy card.");
+            Ensure(Math.Abs(historyGrid.ActualHeight - historyHeightBeforeLoad) < 0.5, "History loading must not resize the list.");
+            Ensure(Math.Abs(historyScroll.VerticalOffset - historyOffsetBeforeLoad) < 0.5, "History loading must not move the list.");
+            PumpUntil(window.Dispatcher, () => !viewModel.IsOperationRunning, TimeSpan.FromSeconds(5));
+            Ensure(historyGrid.Items.Count == historyCountBeforeLoad, "History loading must not rebuild the history collection.");
+            Ensure(ReferenceEquals(historyGrid.SelectedItem, historySelectionBeforeLoad), "History loading must preserve selection.");
+            Ensure(Math.Abs(historyScroll.VerticalOffset - historyOffsetBeforeLoad) < 0.5, "History loading must preserve scroll position.");
+            SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualRun());
+            Task resultProjection = viewModel.WaitForResultFilterAsync();
+            PumpUntil(window.Dispatcher, () => resultProjection.IsCompleted, TimeSpan.FromSeconds(5));
+            resultProjection.GetAwaiter().GetResult();
             mainTabs.SelectedIndex = 0;
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
             Ensure(startButton.FontWeight == FontWeights.SemiBold, "The primary measurement action must use emphasized text.");
@@ -264,7 +325,7 @@ static async Task WindowStartupSmokeAsync()
                     }
                     else if (index == 4)
                     {
-                        EnsureReadableForeground(exportFormatLabel.Foreground, mode, "ExportFormatLabel");
+                        EnsureReadableForeground(exportPathLabel.Foreground, mode, "ExportPathLabel");
                     }
                     else if (index == 6)
                     {
@@ -327,6 +388,38 @@ static async Task WindowStartupSmokeAsync()
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-history-context-menu");
                         historyMenu.IsOpen = false;
+                        historyFromDatePicker.IsDropDownOpen = true;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Popup calendarPopup =
+                            (Popup)historyFromDatePicker.Template.FindName("PART_Popup", historyFromDatePicker);
+                        FrameworkElement calendarPopupContent = calendarPopup.Child as FrameworkElement ??
+                            throw new InvalidOperationException("The history calendar popup content was not created.");
+                        Calendar calendar = calendarPopupContent as Calendar ??
+                            FindVisualDescendant<Calendar>(calendarPopupContent) ??
+                            throw new InvalidOperationException("The history calendar was not rendered.");
+                        Ensure(
+                            calendar.Background is SolidColorBrush { Color.A: byte.MaxValue },
+                            "The history calendar background must be fully opaque.");
+                        foreach (TextBlock calendarText in
+                                 FindVisualDescendants<TextBlock>(calendarPopupContent)
+                                     .Where(item => item.IsVisible && !string.IsNullOrWhiteSpace(item.Text)))
+                        {
+                            EnsureContrast(
+                                calendarText.Foreground,
+                                calendar.Background,
+                                $"{mode} history calendar text '{calendarText.Text}'");
+                        }
+
+                        CaptureElement(
+                            calendarPopupContent,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-calendar");
+                        historyFromDatePicker.IsDropDownOpen = false;
+                    }
+                    else if (index == 3)
+                    {
+                        Ensure(comparisonGrid.Items.Count == 336, "The visual comparison fixture must exercise a large list.");
+                        EnsureAccessibleVerticalScrollBar(comparisonGrid, "Comparison table");
                     }
                 }
 
@@ -525,6 +618,40 @@ static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
     }
 }
 
+static void EnsureAccessibleVerticalScrollBar(DependencyObject root, string name)
+{
+    ScrollBar scrollBar = FindVisualDescendants<ScrollBar>(root)
+        .Where(item => item.Orientation == Orientation.Vertical && item.IsVisible)
+        .OrderByDescending(item => item.ActualHeight)
+        .FirstOrDefault() ??
+        throw new InvalidOperationException($"{name} vertical scrollbar was not rendered.");
+    scrollBar.ApplyTemplate();
+    Thumb thumb = scrollBar.Track?.Thumb ??
+        throw new InvalidOperationException($"{name} scrollbar thumb was not rendered.");
+    Border thumbVisual = FindVisualDescendant<Border>(thumb) ??
+        throw new InvalidOperationException($"{name} scrollbar thumb visual was not rendered.");
+    Ensure(scrollBar.ActualWidth >= 15, $"{name} scrollbar must provide a practical pointer target.");
+    Ensure(thumb.ActualWidth >= 11, $"{name} scrollbar thumb must provide a practical pointer target.");
+    Ensure(thumb.ActualHeight >= 31, $"{name} scrollbar thumb must remain easy to grab with many items.");
+    Ensure(thumbVisual.ActualWidth >= 7, $"{name} scrollbar thumb must be visibly wide enough to grab.");
+    Ensure(thumbVisual.ActualHeight >= 27, $"{name} scrollbar thumb must be visibly tall enough to grab.");
+}
+
+static void PumpUntil(Dispatcher dispatcher, Func<bool> condition, TimeSpan timeout)
+{
+    DateTime deadline = DateTime.UtcNow + timeout;
+    while (!condition())
+    {
+        if (DateTime.UtcNow >= deadline)
+        {
+            throw new TimeoutException("The GUI operation did not complete while pumping the dispatcher.");
+        }
+
+        dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        Thread.Sleep(10);
+    }
+}
+
 static DataGridCell GetDataGridCell(DataGrid grid, int rowIndex, int columnIndex)
 {
     grid.UpdateLayout();
@@ -616,6 +743,22 @@ static ProfileRun CreateVisualRun()
     };
 }
 
+static ComparisonResult CreateVisualComparison()
+{
+    MetricDelta[] metrics = Enumerable.Range(0, 336)
+        .Select(index => new MetricDelta(
+            $"Sample.Analyzers.PerformanceAnalyzer{index:D4}",
+            index % 7 == 0 ? "generator" : "analyzer",
+            10 + index,
+            11.5 + index,
+            1.5,
+            15,
+            Added: false,
+            Removed: false))
+        .ToArray();
+    return new ComparisonResult(Guid.NewGuid(), Guid.NewGuid(), metrics, 0, 0, Array.Empty<string>());
+}
+
 static async Task ViewModelInitializationAsync()
 {
     string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "yaap-gui-tests", Guid.NewGuid().ToString("N"));
@@ -639,6 +782,22 @@ static async Task ViewModelInitializationAsync()
         Ensure(MainViewModel.TryParseHistoryDateText("2026/01/31", out _), "Slash-separated dates should be accepted.");
         Ensure(MainViewModel.TryParseHistoryDateText("2026-01-31", out _), "ISO dates should be accepted.");
         Ensure(MainViewModel.TryParseHistoryDateText("31/Jan/2026", out _), "Invariant month-name dates should be accepted.");
+        Ensure(MainViewModel.GetExportFormat("result.json") == ExportFormat.Json, "JSON should be inferred from its extension.");
+        Ensure(MainViewModel.GetExportFormat("result.CSV") == ExportFormat.Csv, "Export extensions should be case-insensitive.");
+        Ensure(MainViewModel.GetExportFormat("result.md") == ExportFormat.Markdown, "Markdown .md should be supported.");
+        Ensure(MainViewModel.GetExportFormat("result.markdown") == ExportFormat.Markdown, "Markdown .markdown should be supported.");
+        foreach (string invalidPath in new[] { "result", "result.txt" })
+        {
+            try
+            {
+                _ = MainViewModel.GetExportFormat(invalidPath);
+                throw new InvalidOperationException($"Unsupported export path was accepted: {invalidPath}");
+            }
+            catch (YaapException exception)
+            {
+                Ensure(exception.Diagnostic.Code == "YAAP1001", "Invalid export extensions must use the stable input error code.");
+            }
+        }
     }
     finally
     {
@@ -908,6 +1067,18 @@ static async Task FeatureParityAsync()
         Ensure(viewModel.SelectedRun?.Analyzers.Single().Identity == "ParityAnalyzer", "Analyzer results were not projected from the binlog.");
         Ensure(viewModel.SelectedRun?.Generators.Single().Identity == "ParityGenerator", "Generator results were not projected from the binlog.");
         Ensure(viewModel.StatusText.Contains("42", StringComparison.Ordinal), "Binlog event count should be visible.");
+
+        viewModel.ExportPath = System.IO.Path.Combine(path, "result.txt");
+        viewModel.ExportCommand.Execute(null);
+        await WaitForOperationAsync(viewModel);
+        Ensure(
+            viewModel.StatusText.Contains("YAAP1001", StringComparison.Ordinal) &&
+            viewModel.StatusText.Contains(".json", StringComparison.Ordinal),
+            "GUI export must reject unsupported extensions with an actionable stable error.");
+        viewModel.ExportPath = System.IO.Path.Combine(path, "result.markdown");
+        viewModel.ExportCommand.Execute(null);
+        await WaitForOperationAsync(viewModel);
+        Ensure(File.Exists(viewModel.ExportPath), "GUI export must derive Markdown from the selected file extension.");
     }
     finally
     {
@@ -1205,6 +1376,8 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("IsChecked=\"{Binding Restore}\"", StringComparison.Ordinal), "The restore control must bind to the view model.");
     Ensure(viewModel.Contains("Restore = Restore", StringComparison.Ordinal), "The GUI restore setting must reach ProfileOptions.");
     Ensure(xaml.Contains("<DatePicker", StringComparison.Ordinal), "History date filters must provide calendar pickers.");
+    Ensure(xaml.Contains("x:Key=\"OpaqueCalendarStyle\"", StringComparison.Ordinal), "History calendars must use an opaque theme-aware style.");
+    Ensure(xaml.Contains("CalendarStyle=\"{StaticResource OpaqueCalendarStyle}\"", StringComparison.Ordinal), "Both history date pickers must use the opaque calendar style.");
     Ensure(xaml.Contains("Text=\"{Binding HistoryFrom}\"", StringComparison.Ordinal), "GUI history must expose the start-date filter.");
     Ensure(xaml.Contains("Text=\"{Binding HistoryTo}\"", StringComparison.Ordinal), "GUI history must expose the end-date filter.");
     Ensure(xaml.Contains("HistoryLimit, UpdateSourceTrigger=LostFocus", StringComparison.Ordinal), "The history display limit must live in Settings.");
@@ -1213,10 +1386,19 @@ static async Task XamlContractAsync()
     Ensure(!xaml.Contains("詳細を遅延読込", StringComparison.Ordinal), "Implementation-oriented history wording must not be shown.");
     Ensure(!xaml.Contains("選択履歴を削除", StringComparison.Ordinal), "History delete must not occupy a primary toolbar button.");
     Ensure(xaml.Contains("<ContextMenu>", StringComparison.Ordinal) && xaml.Contains("Header=\"削除\"", StringComparison.Ordinal), "History delete must be available from a context menu.");
+    Ensure(xaml.Contains("Header=\"読み込み\"", StringComparison.Ordinal), "History load must be available from the context menu.");
+    Ensure(!xaml.Contains("Content=\"読み込み\"", StringComparison.Ordinal), "History load must not occupy a toolbar button.");
+    Ensure(!xaml.Contains("Symbol=\"ArrowUndo20\"", StringComparison.Ordinal) && !xaml.Contains("Symbol=\"ArrowRedo20\"", StringComparison.Ordinal), "History label Undo/Redo must not use misleading visible buttons.");
+    Ensure(xaml.Contains("<ui:TextBox.InputBindings>", StringComparison.Ordinal) && xaml.Contains("Modifiers=\"Control\"", StringComparison.Ordinal), "History label Undo/Redo must remain available from focused keyboard shortcuts.");
     Ensure(xaml.Contains("DisplayMemberPath=\"DisplayText\"", StringComparison.Ordinal), "Comparison must use readable history selectors.");
     Ensure(!xaml.Contains("Header=\"出力・トラブルシュート\"", StringComparison.Ordinal), "Export and troubleshooting must be separate tabs.");
     Ensure(xaml.Contains("Header=\"出力\"", StringComparison.Ordinal) && xaml.Contains("Header=\"トラブルシュート\"", StringComparison.Ordinal), "Export and troubleshooting tabs are required.");
     Ensure(xaml.Contains("Command=\"{Binding BrowseExportCommand}\"", StringComparison.Ordinal), "Export must provide a save-file picker.");
+    Ensure(!xaml.Contains("SelectedValue=\"{Binding ExportFormat}\"", StringComparison.Ordinal), "Export must not duplicate format in a separate selector.");
+    Ensure(xaml.Contains(".json／.csv／.md／.markdown", StringComparison.Ordinal), "Export path guidance must list every supported extension.");
+    Ensure(viewModel.Contains("GetExportFormat(ExportPath)", StringComparison.Ordinal), "GUI export must infer its format from the selected file.");
+    Ensure(viewModel.Contains("IsBusySurfaceVisible", StringComparison.Ordinal), "Lightweight history loading must not disturb the tab layout.");
+    Ensure(xaml.Contains("Handler=\"OnScrollableControlLoaded\"", StringComparison.Ordinal), "Large controls must enlarge scrollbar pointer targets at runtime.");
     Ensure(xaml.Contains("Command=\"{Binding BrowseHistoryDirectoryCommand}\"", StringComparison.Ordinal), "History paths must provide a folder picker.");
     Ensure(xaml.Contains("Command=\"{Binding BrowseArtifactsDirectoryCommand}\"", StringComparison.Ordinal), "Artifact paths must provide a folder picker.");
     Ensure(xaml.Contains("Command=\"{Binding AnalyzeBinlogCommand}\"", StringComparison.Ordinal), "GUI must expose existing-binlog analysis.");

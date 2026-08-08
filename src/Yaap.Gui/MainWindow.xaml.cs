@@ -1,7 +1,10 @@
 ﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
 
@@ -99,6 +102,76 @@ public partial class MainWindow : FluentWindow
         }
     }
 
+    private void OnScrollableControlLoaded(object sender, RoutedEventArgs eventArgs)
+    {
+        if (sender is not DependencyObject root)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(
+            () => ConfigureAccessibleScrollBars(root),
+            DispatcherPriority.Loaded);
+    }
+
+    private void ConfigureAccessibleScrollBars(DependencyObject root)
+    {
+        ControlTemplate? thumbTemplate =
+            TryFindResource("AccessibleScrollThumbTemplate") as ControlTemplate;
+        foreach (ScrollBar scrollBar in FindVisualDescendants<ScrollBar>(root))
+        {
+            scrollBar.ApplyTemplate();
+            Track? track = scrollBar.Track ??
+                scrollBar.Template.FindName("PART_Track", scrollBar) as Track;
+            if (scrollBar.Orientation == Orientation.Vertical)
+            {
+                scrollBar.MinWidth = 16;
+                if (track?.Thumb is Thumb verticalThumb)
+                {
+                    if (thumbTemplate is not null)
+                    {
+                        verticalThumb.Template = thumbTemplate;
+                    }
+
+                    verticalThumb.MinWidth = 12;
+                    verticalThumb.MinHeight = 32;
+                }
+            }
+            else
+            {
+                scrollBar.MinHeight = 16;
+                if (track?.Thumb is Thumb horizontalThumb)
+                {
+                    if (thumbTemplate is not null)
+                    {
+                        horizontalThumb.Template = thumbTemplate;
+                    }
+
+                    horizontalThumb.MinWidth = 32;
+                    horizontalThumb.MinHeight = 12;
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (T descendant in FindVisualDescendants<T>(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
     private void OnHistoryDateValidationError(
         object sender,
         DatePickerDateValidationErrorEventArgs eventArgs)
@@ -108,6 +181,34 @@ public partial class MainWindow : FluentWindow
             MainViewModel.TryParseHistoryDateText(eventArgs.Text, out DateTime date))
         {
             picker.SelectedDate = date.Date;
+        }
+    }
+
+    private void OnHistoryCalendarOpened(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (sender is not DatePicker picker)
+        {
+            return;
+        }
+
+        picker.Dispatcher.BeginInvoke(
+            () => ApplyCalendarForeground(picker),
+            DispatcherPriority.Loaded);
+    }
+
+    private static void ApplyCalendarForeground(DatePicker picker)
+    {
+        if (picker.Template.FindName("PART_Popup", picker) is not Popup { Child: DependencyObject popup })
+        {
+            return;
+        }
+
+        foreach (System.Windows.Controls.TextBlock text in
+                 FindVisualDescendants<System.Windows.Controls.TextBlock>(popup))
+        {
+            text.SetResourceReference(
+                System.Windows.Controls.TextBlock.ForegroundProperty,
+                "TextFillColorPrimaryBrush");
         }
     }
 
