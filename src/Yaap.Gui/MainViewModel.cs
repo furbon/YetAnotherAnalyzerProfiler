@@ -17,7 +17,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private const int ConfigurationHistoryLimit = 1000;
     private const int DefaultHistoryLimit = 500;
 
-    private readonly ProfileRunner _profileRunner;
+    private readonly IProfileRunner _profileRunner;
     private readonly Func<string, CancellationToken, Task<TargetInfo>> _targetDiscoverer;
     private readonly Func<string, CancellationToken, Task<BinlogAnalysis>> _binlogAnalyzer;
     private readonly Func<Guid, CancellationToken, Task<ProfileRun>> _historyLoader;
@@ -70,6 +70,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private ThemeOption _selectedTheme;
     private RecentTarget? _selectedRecentTarget;
     private RunSummary? _selectedHistory;
+    private RunDiagnostic? _selectedDiagnostic;
     private HistoryChoice? _selectedBaseline;
     private HistoryChoice? _selectedCandidate;
     private ProfileRun? _selectedRun;
@@ -83,7 +84,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _isApplyingLabelHistory;
 
     public MainViewModel(
-        ProfileRunner? profileRunner = null,
+        IProfileRunner? profileRunner = null,
         Func<string, CancellationToken, Task<TargetInfo>>? targetDiscoverer = null,
         TimeSpan? targetDiscoveryDelay = null,
         Func<RunSummary, bool>? confirmDelete = null,
@@ -555,6 +556,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set => SetSelectedRun(value);
     }
 
+    public RunDiagnostic? SelectedDiagnostic
+    {
+        get => _selectedDiagnostic;
+        set => Set(ref _selectedDiagnostic, value);
+    }
+
     public ComparisonResult? Comparison
     {
         get => _comparison;
@@ -572,6 +579,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         : $"生成ファイル数差: {Comparison.GeneratedFileCountDelta:+#;-#;0}、バイト数差: {Comparison.GeneratedByteCountDelta:+#;-#;0}";
 
     public string MeasurementStateText => CurrentMeasurementState.Text;
+
+    public string StatusTitleText => SelectedRun?.Status switch
+    {
+        RunStatus.Failed => "測定失敗",
+        RunStatus.Partial => "部分結果",
+        RunStatus.Canceled => "測定キャンセル",
+        RunStatus.Succeeded => "測定完了",
+        _ => MeasurementStateText,
+    };
+
+    public Wpf.Ui.Controls.InfoBarSeverity StatusSeverity => SelectedRun?.Status switch
+    {
+        RunStatus.Succeeded => Wpf.Ui.Controls.InfoBarSeverity.Success,
+        RunStatus.Partial or RunStatus.Canceled => Wpf.Ui.Controls.InfoBarSeverity.Warning,
+        RunStatus.Failed => Wpf.Ui.Controls.InfoBarSeverity.Error,
+        _ => Wpf.Ui.Controls.InfoBarSeverity.Informational,
+    };
 
     public string BusyTitleText => IsRunning ? MeasurementStateText : "処理中";
 
@@ -980,7 +1004,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 },
                 progress,
                 _profileCancellation.Token);
-            StatusText = $"測定が完了しました: {SelectedRun.TargetName}（{SelectedRun.Status}）";
+            StatusText = FormatRunOutcome(SelectedRun);
             if (!_disposed)
             {
                 await RefreshHistoryAsync(_lifetimeCancellation.Token);
@@ -1497,6 +1521,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         OnPropertyChanged(nameof(Diagnostics));
+        _selectedDiagnostic = value?.Diagnostics.FirstOrDefault();
+        OnPropertyChanged(nameof(SelectedDiagnostic));
+        OnPropertyChanged(nameof(StatusTitleText));
+        OnPropertyChanged(nameof(StatusSeverity));
         RaiseCommandStates();
     }
 
@@ -1601,6 +1629,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private static string FormatRunOutcome(ProfileRun run)
+    {
+        string prefix = run.Status switch
+        {
+            RunStatus.Succeeded => "測定が完了しました",
+            RunStatus.Partial => "測定は一部のみ完了しました",
+            RunStatus.Failed => "測定に失敗しました",
+            RunStatus.Canceled => "測定をキャンセルしました",
+            _ => "測定結果を更新しました",
+        };
+        RunDiagnostic? primary = run.Diagnostics.FirstOrDefault();
+        if (primary is null || run.Status == RunStatus.Succeeded)
+        {
+            return $"{prefix}: {run.TargetName}";
+        }
+
+        return $"{prefix}: {run.TargetName}。{primary.Code}: {primary.Message} " +
+            "原因ログと対処は「トラブルシュート」タブで確認できます。";
+    }
+
     private void SetError(Exception exception)
     {
         if (_disposed || exception is OperationCanceledException)
@@ -1616,6 +1664,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void RaiseCommandStates()
     {
         OnPropertyChanged(nameof(MeasurementStateText));
+        OnPropertyChanged(nameof(StatusTitleText));
         foreach (ICommand command in new[]
                  {
                      StartCommand,

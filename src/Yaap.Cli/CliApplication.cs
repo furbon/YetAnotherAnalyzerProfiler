@@ -18,7 +18,8 @@ public static class CliApplication
         IReadOnlyList<string> arguments,
         TextWriter output,
         TextWriter error,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProfileRunner? profileRunner = null)
     {
         try
         {
@@ -30,7 +31,11 @@ public static class CliApplication
 
             return arguments[0].ToLowerInvariant() switch
             {
-                "profile" => await ProfileAsync(arguments.Skip(1).ToArray(), output, cancellationToken).ConfigureAwait(false),
+                "profile" => await ProfileAsync(
+                    arguments.Skip(1).ToArray(),
+                    output,
+                    profileRunner,
+                    cancellationToken).ConfigureAwait(false),
                 "configurations" => await ConfigurationsAsync(arguments.Skip(1).ToArray(), output, cancellationToken).ConfigureAwait(false),
                 "history" => await HistoryAsync(arguments.Skip(1).ToArray(), output, cancellationToken).ConfigureAwait(false),
                 "compare" => await CompareAsync(arguments.Skip(1).ToArray(), output, cancellationToken).ConfigureAwait(false),
@@ -66,6 +71,7 @@ public static class CliApplication
     private static async Task<int> ProfileAsync(
         IReadOnlyList<string> arguments,
         TextWriter output,
+        IProfileRunner? profileRunner,
         CancellationToken cancellationToken)
     {
         ParsedArguments parsed = ParsedArguments.Parse(arguments);
@@ -102,7 +108,7 @@ public static class CliApplication
             ? null
             : new InlineProgress<ProfileProgress>(item =>
                 output.WriteLine($"[{item.Stage}] {item.Message}"));
-        ProfileRun run = await new ProfileRunner().RunAsync(
+        ProfileRun run = await (profileRunner ?? new ProfileRunner()).RunAsync(
             options,
             progress,
             cancellationToken).ConfigureAwait(false);
@@ -293,14 +299,16 @@ public static class CliApplication
         await output.WriteLineAsync($"Generator metrics: {run.Generators.Count}").ConfigureAwait(false);
         foreach (RunDiagnostic diagnostic in run.Diagnostics)
         {
-            await output.WriteLineAsync($"{diagnostic.Code}: {diagnostic.Message}").ConfigureAwait(false);
+            await WriteDiagnosticAsync(output, diagnostic).ConfigureAwait(false);
         }
     }
 
     private static Task WriteDiagnosticAsync(TextWriter writer, RunDiagnostic diagnostic)
     {
         return writer.WriteLineAsync(
-            $"{diagnostic.Code}: {diagnostic.Message}{Environment.NewLine}{diagnostic.Detail}{Environment.NewLine}{diagnostic.SuggestedAction}");
+            $"{diagnostic.Code}: {diagnostic.Message}{Environment.NewLine}" +
+            $"詳細:{Environment.NewLine}{diagnostic.Detail}{Environment.NewLine}" +
+            $"対処:{Environment.NewLine}{diagnostic.SuggestedAction}");
     }
 
     private static async Task WriteJsonAsync<T>(

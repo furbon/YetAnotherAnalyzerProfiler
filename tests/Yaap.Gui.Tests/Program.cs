@@ -27,6 +27,7 @@ List<(string Name, Func<Task> Body)> tests = new()
     ("gui.result-tree-filtering", ResultTreeFilteringAsync),
     ("gui.discovery-discards-stale-results", DiscoveryDiscardsStaleResultsAsync),
     ("gui.measurement-state", MeasurementStateAsync),
+    ("gui.failure-observability", FailureObservabilityAsync),
     ("gui.theme-framework", ThemeFrameworkAsync),
     ("gui.async-command", AsyncCommandAsync),
     ("gui.virtualization-and-generator-disclaimer", XamlContractAsync),
@@ -153,6 +154,9 @@ static async Task WindowStartupSmokeAsync()
             DataGrid generatorGrid = (DataGrid)window.FindName("GeneratorGrid");
             DataGrid historyGrid = (DataGrid)window.FindName("HistoryGrid");
             DataGrid comparisonGrid = (DataGrid)window.FindName("ComparisonGrid");
+            DataGrid diagnosticsGrid = (DataGrid)window.FindName("DiagnosticsGrid");
+            TextBlock diagnosticActionText = (TextBlock)window.FindName("DiagnosticActionText");
+            TextBox diagnosticDetailText = (TextBox)window.FindName("DiagnosticDetailText");
             DatePicker historyFromDatePicker =
                 (DatePicker)window.FindName("HistoryFromDatePicker");
             DatePicker historyToDatePicker =
@@ -323,7 +327,19 @@ static async Task WindowStartupSmokeAsync()
                 CaptureWindow(window, captureDirectory, $"{mode.ToString().ToLowerInvariant()}-busy");
 
                 SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), false);
-                SetPrivateProperty(viewModel, nameof(MainViewModel.StatusText), "直近の測定結果を表示しています。");
+                SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualFailureRun(RunStatus.Failed));
+                Task failedProjection = viewModel.WaitForResultFilterAsync();
+                PumpUntil(window.Dispatcher, () => failedProjection.IsCompleted, TimeSpan.FromSeconds(5));
+                failedProjection.GetAwaiter().GetResult();
+                SetPrivateProperty(
+                    viewModel,
+                    nameof(MainViewModel.StatusText),
+                    "測定に失敗しました: sample.csproj。YAAP2001: 測定前の dotnet clean に失敗しました。原因ログと対処は「トラブルシュート」タブで確認できます。");
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                Ensure(viewModel.StatusTitleText == "測定失敗", "The rendered failure heading must be Japanese.");
+                Ensure(
+                    statusBar.Severity == Wpf.Ui.Controls.InfoBarSeverity.Error,
+                    "A failed measurement must render an error status surface.");
                 for (int index = 0; index < mainTabs.Items.Count; index++)
                 {
                     mainTabs.SelectedIndex = index;
@@ -747,6 +763,19 @@ static async Task WindowStartupSmokeAsync()
                         Ensure(comparisonGrid.Items.Count == 336, "The visual comparison fixture must exercise a large list.");
                         EnsureAccessibleVerticalScrollBar(comparisonGrid, "Comparison table");
                     }
+                    else if (index == 5)
+                    {
+                        Ensure(diagnosticsGrid.Items.Count == 1, "The failed run diagnostic must render in troubleshooting.");
+                        Ensure(diagnosticsGrid.Columns.Count == 2, "Troubleshooting must provide a concise selectable diagnostic list.");
+                        Ensure(
+                            diagnosticActionText.Text.Equals(viewModel.SelectedDiagnostic?.SuggestedAction, StringComparison.Ordinal),
+                            "The complete selected recovery guidance must render below the diagnostic list.");
+                        Ensure(diagnosticActionText.TextWrapping == TextWrapping.Wrap, "Recovery guidance must wrap instead of clipping.");
+                        Ensure(
+                            diagnosticDetailText.Text.Contains("完全ログ:", StringComparison.Ordinal),
+                            "The selected diagnostic detail must render its persistent log path.");
+                        Ensure(diagnosticDetailText.IsReadOnly, "Diagnostic details must be copyable without being editable.");
+                    }
 
                     window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                     CaptureWindow(
@@ -754,6 +783,24 @@ static async Task WindowStartupSmokeAsync()
                         captureDirectory,
                         $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
                 }
+
+                SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualFailureRun(RunStatus.Partial));
+                Task partialProjection = viewModel.WaitForResultFilterAsync();
+                PumpUntil(window.Dispatcher, () => partialProjection.IsCompleted, TimeSpan.FromSeconds(5));
+                partialProjection.GetAwaiter().GetResult();
+                SetPrivateProperty(
+                    viewModel,
+                    nameof(MainViewModel.StatusText),
+                    "測定は一部のみ完了しました: sample.csproj。YAAP2001: 測定用 dotnet build に失敗しました。原因ログと対処は「トラブルシュート」タブで確認できます。");
+                mainTabs.SelectedIndex = 5;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Ensure(
+                    statusBar.Severity == Wpf.Ui.Controls.InfoBarSeverity.Warning,
+                    "A partial measurement must render a warning status surface.");
+                CaptureWindow(
+                    window,
+                    captureDirectory,
+                    $"{mode.ToString().ToLowerInvariant()}-partial-troubleshooting");
 
                 recentTargetsButton.IsChecked = true;
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
@@ -1194,6 +1241,24 @@ static ProfileRun CreateVisualRun()
             .ToArray(),
         Isolated = true,
     };
+}
+
+static ProfileRun CreateVisualFailureRun(RunStatus status)
+{
+    ProfileRun run = CreateVisualRun();
+    run.Status = status;
+    ProcessOperation operation = status == RunStatus.Partial
+        ? ProcessOperation.MeasuredBuild
+        : ProcessOperation.Clean;
+    string command = status == RunStatus.Partial ? "build" : "clean";
+    run.Diagnostics = new[]
+    {
+        YaapErrors.ProcessFailed(
+            operation,
+            17,
+            $"実行コマンド: dotnet {command} sample.csproj\n作業ディレクトリ: fixture\n完全ログ: history/runs/sample/logs/{command}-001.log\n標準出力末尾（前方の行は完全ログにのみ記録）:\n  Build started.\n標準エラー出力末尾:\n  ファイルが別のプロセスで使用されています。"),
+    };
+    return run;
 }
 
 static ComparisonResult CreateVisualComparison()
@@ -1790,6 +1855,72 @@ static Task MeasurementStateAsync()
     return Task.CompletedTask;
 }
 
+static async Task FailureObservabilityAsync()
+{
+    string path = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(),
+        "yaap-gui-tests",
+        Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(path);
+    try
+    {
+        string project = System.IO.Path.Combine(path, "Failure.csproj");
+        await File.WriteAllTextAsync(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        ProfileRun failedRun = CreateHistoricalRun(project, "Release", DateTimeOffset.UtcNow);
+        failedRun.Status = RunStatus.Failed;
+        failedRun.Diagnostics = new[]
+        {
+            YaapErrors.ProcessFailed(
+                ProcessOperation.Clean,
+                17,
+                $"実行コマンド: dotnet clean {project}\n作業ディレクトリ: {path}\n完全ログ: {path}/logs/clean-001.log"),
+        };
+        StubGuiProfileRunner runner = new((_, _, _) => Task.FromResult(failedRun));
+        using MainViewModel viewModel = new(
+            runner,
+            targetDiscoverer: (target, _) => Task.FromResult(new TargetInfo(
+                System.IO.Path.GetFullPath(target),
+                ".csproj",
+                new[] { "Release" },
+                new[] { "net8.0" })),
+            targetDiscoveryDelay: TimeSpan.Zero)
+        {
+            HistoryPath = System.IO.Path.Combine(path, "history"),
+        };
+        viewModel.TargetPath = project;
+        await viewModel.WaitForTargetDiscoveryAsync();
+        Ensure(viewModel.StartCommand.CanExecute(null), "The failure fixture must be ready to measure.");
+        viewModel.StartCommand.Execute(null);
+        AsyncRelayCommand start = (AsyncRelayCommand)viewModel.StartCommand;
+        for (int attempt = 0; attempt < 200 && start.IsExecuting; attempt++)
+        {
+            await Task.Delay(10);
+        }
+
+        Ensure(!start.IsExecuting, "The failed measurement command did not complete.");
+        Ensure(ReferenceEquals(failedRun, viewModel.SelectedRun), "The failed run must remain selected.");
+        Ensure(viewModel.StatusTitleText == "測定失敗", "A failed run must have a Japanese failure heading.");
+        Ensure(viewModel.StatusText.Contains("YAAP2001", StringComparison.Ordinal), "The failure code must be immediately visible.");
+        Ensure(viewModel.StatusText.Contains("dotnet clean", StringComparison.Ordinal), "The failed operation must be immediately visible.");
+        Ensure(viewModel.StatusText.Contains("トラブルシュート", StringComparison.Ordinal), "The GUI must direct users to detailed diagnostics.");
+        Ensure(!viewModel.StatusText.Contains("Failed", StringComparison.Ordinal), "The GUI must not expose an English enum as the failure explanation.");
+        RunDiagnostic visible = viewModel.Diagnostics.Single();
+        Ensure(ReferenceEquals(visible, viewModel.SelectedDiagnostic), "The primary failure diagnostic must be selected automatically.");
+        Ensure(visible.Detail.Contains("完全ログ", StringComparison.Ordinal), "The retained log path must be available in the GUI diagnostics.");
+        Ensure(visible.SuggestedAction.Contains("Clean target", StringComparison.Ordinal), "The GUI diagnostics must expose clean-specific recovery guidance.");
+
+        ProfileRun partialRun = CreateHistoricalRun(project, "Release", DateTimeOffset.UtcNow);
+        partialRun.Status = RunStatus.Partial;
+        partialRun.Diagnostics = failedRun.Diagnostics;
+        SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), partialRun);
+        Ensure(viewModel.StatusTitleText == "部分結果", "A partial run must have a Japanese warning heading.");
+    }
+    finally
+    {
+        Directory.Delete(path, recursive: true);
+    }
+}
+
 static Task ThemeFrameworkAsync()
 {
     Ensure(ThemeManager.ToApplicationTheme(AppThemeMode.Auto) == ApplicationTheme.Unknown, "Auto should delegate to the system theme watcher.");
@@ -1875,6 +2006,10 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("Command=\"{Binding BrowseHistoryDirectoryCommand}\"", StringComparison.Ordinal), "History paths must provide a folder picker.");
     Ensure(xaml.Contains("Command=\"{Binding BrowseArtifactsDirectoryCommand}\"", StringComparison.Ordinal), "Artifact paths must provide a folder picker.");
     Ensure(xaml.Contains("Command=\"{Binding AnalyzeBinlogCommand}\"", StringComparison.Ordinal), "GUI must expose existing-binlog analysis.");
+    Ensure(xaml.Contains("SelectedItem=\"{Binding SelectedDiagnostic}\"", StringComparison.Ordinal), "Troubleshooting must select a diagnostic for detailed inspection.");
+    Ensure(xaml.Contains("x:Name=\"DiagnosticActionText\"", StringComparison.Ordinal), "Troubleshooting must expose complete recovery guidance.");
+    Ensure(xaml.Contains("x:Name=\"DiagnosticDetailText\"", StringComparison.Ordinal), "Troubleshooting must expose a copyable detail and log surface.");
+    Ensure(xaml.Contains("TextWrapping=\"NoWrap\"", StringComparison.Ordinal) && xaml.Contains("HorizontalScrollBarVisibility=\"Auto\"", StringComparison.Ordinal), "Long process logs must remain scrollable without reflow.");
     Ensure(xaml.Contains("Symbol=\"Options20\"", StringComparison.Ordinal), "Advanced settings must use a Fluent options icon.");
     Ensure(!xaml.Contains("<Expander", StringComparison.Ordinal), "Advanced settings must not reserve an expander row.");
     Ensure(xaml.Contains("NumericCellTextStyle", StringComparison.Ordinal), "Numeric cells must share an alignment style.");
@@ -1883,6 +2018,8 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("ui:ProgressRing", StringComparison.Ordinal), "Measurement progress must be visually prominent.");
     Ensure(xaml.Contains("x:Name=\"BusyCancelButton\"", StringComparison.Ordinal), "Cancel must remain available on the busy surface.");
     Ensure(xaml.Contains("x:Name=\"StatusBar\"", StringComparison.Ordinal), "The idle status surface must have a testable identity.");
+    Ensure(xaml.Contains("Severity=\"{Binding StatusSeverity}\"", StringComparison.Ordinal), "Failed and partial measurements must expose status severity.");
+    Ensure(xaml.Contains("Title=\"{Binding StatusTitleText}\"", StringComparison.Ordinal), "Measurement outcomes must expose a localized status heading.");
     Ensure(xaml.Contains("Text=\"{Binding BusyTitleText}\"", StringComparison.Ordinal), "The busy surface must describe measurement and secondary operations.");
     Ensure(xaml.Contains("AutomationProperties.LiveSetting=\"Polite\"", StringComparison.Ordinal), "Busy and status changes must be announced to assistive technology.");
     Ensure(!xaml.Contains("Text=\"測定を実行しています\"", StringComparison.Ordinal), "The busy surface must not duplicate measurement-state wording.");
@@ -1929,4 +2066,20 @@ static void Ensure(bool value, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+internal sealed class StubGuiProfileRunner : IProfileRunner
+{
+    private readonly Func<ProfileOptions, IProgress<ProfileProgress>?, CancellationToken, Task<ProfileRun>> _run;
+
+    public StubGuiProfileRunner(
+        Func<ProfileOptions, IProgress<ProfileProgress>?, CancellationToken, Task<ProfileRun>> run)
+    {
+        _run = run;
+    }
+
+    public Task<ProfileRun> RunAsync(
+        ProfileOptions options,
+        IProgress<ProfileProgress>? progress = null,
+        CancellationToken cancellationToken = default) => _run(options, progress, cancellationToken);
 }

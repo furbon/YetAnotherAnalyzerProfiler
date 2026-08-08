@@ -657,7 +657,8 @@
                     IsClosable="False"
                     IsOpen="True"
                     Message="{Binding StatusText}"
-                    Title="{Binding MeasurementStateText}">
+                    Severity="{Binding StatusSeverity}"
+                    Title="{Binding StatusTitleText}">
             <ui:InfoBar.Style>
                 <Style BasedOn="{StaticResource {x:Type ui:InfoBar}}" TargetType="{x:Type ui:InfoBar}">
                     <Setter Property="Visibility" Value="Visible" />
@@ -1207,18 +1208,52 @@
                         <Button Grid.Column="2" Margin="0,0,8,0" Padding="12,4" Command="{Binding BrowseBinlogCommand}" Content="参照" />
                         <Button Grid.Column="3" Padding="12,4" Command="{Binding AnalyzeBinlogCommand}" Content="解析して結果に表示" />
                     </Grid>
-                    <ui:DataGrid Grid.Row="2"
-                                 Style="{StaticResource ScrollableDataGridStyle}"
-                                 ItemsSource="{Binding Diagnostics}"
-                                 AutoGenerateColumns="False"
-                                 IsReadOnly="True">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Width="100" Binding="{Binding Code}" Header="コード" />
-                            <DataGridTextColumn Width="220" Binding="{Binding Message}" Header="概要" />
-                            <DataGridTextColumn Width="*" Binding="{Binding Detail}" Header="詳細" />
-                            <DataGridTextColumn Width="320" Binding="{Binding SuggestedAction}" Header="対処" />
-                        </DataGrid.Columns>
-                    </ui:DataGrid>
+                    <Grid Grid.Row="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="150" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <ui:DataGrid x:Name="DiagnosticsGrid"
+                                     Style="{StaticResource ScrollableDataGridStyle}"
+                                     ItemsSource="{Binding Diagnostics}"
+                                     SelectedItem="{Binding SelectedDiagnostic}"
+                                     AutoGenerateColumns="False"
+                                     IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Width="110" Binding="{Binding Code}" Header="コード" />
+                                <DataGridTextColumn Width="*" Binding="{Binding Message}" Header="概要" />
+                            </DataGrid.Columns>
+                        </ui:DataGrid>
+                        <ui:Card Grid.Row="1" Margin="0,8,0,8" Padding="12">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="推奨する対処" />
+                                <TextBlock x:Name="DiagnosticActionText"
+                                           Margin="0,4,0,0"
+                                           Text="{Binding SelectedDiagnostic.SuggestedAction}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </ui:Card>
+                        <Grid Grid.Row="2">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Margin="0,0,0,4"
+                                       FontWeight="SemiBold"
+                                       Text="詳細・ログ（選択してコピーできます）" />
+                            <TextBox x:Name="DiagnosticDetailText"
+                                     Grid.Row="1"
+                                     AcceptsReturn="True"
+                                     AutomationProperties.Name="診断の詳細とログ"
+                                     FontFamily="Consolas"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     IsReadOnly="True"
+                                     Text="{Binding SelectedDiagnostic.Detail}"
+                                     TextWrapping="NoWrap"
+                                     VerticalScrollBarVisibility="Auto" />
+                        </Grid>
+                    </Grid>
                 </Grid>
             </TabItem>
             <TabItem Header="設定">

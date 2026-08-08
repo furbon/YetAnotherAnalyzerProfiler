@@ -1,6 +1,14 @@
 ﻿namespace Yaap.Core;
 
-public sealed class ProfileRunner
+public interface IProfileRunner
+{
+    Task<ProfileRun> RunAsync(
+        ProfileOptions options,
+        IProgress<ProfileProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class ProfileRunner : IProfileRunner
 {
     private readonly IProcessRunner _processRunner;
     private readonly IBinlogAnalyzer _binlogAnalyzer;
@@ -51,6 +59,7 @@ public sealed class ProfileRunner
         string runDirectory = history.GetRunDirectory(run.Id);
         using IDisposable runLease = history.AcquireRunLease(run.Id, cancellationToken);
         string workDirectory = Path.Combine(runDirectory, "work");
+        string logDirectory = Path.Combine(runDirectory, "logs");
         string buildLoggerPath = string.Empty;
         string artifactsPath = ResolveArtifactsPath(options, targetDirectory, workDirectory);
         if (options.Isolated)
@@ -78,9 +87,10 @@ public sealed class ProfileRunner
             {
                 progress?.Report(new ProfileProgress(ProfileStage.Restoring, "NuGet を復元しています。", 0, 1));
                 await RunRequiredAsync(
-                    "restore",
+                    ProcessOperation.Restore,
                     CreateRestoreArguments(effectiveTarget, options, artifactsPath),
                     targetDirectory,
+                    Path.Combine(logDirectory, "restore.log"),
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -92,9 +102,10 @@ public sealed class ProfileRunner
                     index,
                     options.WarmupCount));
                 await RunRequiredAsync(
-                    "warm-up build",
+                    ProcessOperation.WarmupBuild,
                     CreateWarmupArguments(effectiveTarget, options, artifactsPath),
                     targetDirectory,
+                    Path.Combine(logDirectory, $"warm-up-{index + 1:D3}.log"),
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -109,9 +120,10 @@ public sealed class ProfileRunner
                         index - 1,
                         options.IterationCount));
                     await RunRequiredAsync(
-                        "clean",
+                        ProcessOperation.Clean,
                         CreateCleanArguments(effectiveTarget, options, artifactsPath),
                         targetDirectory,
+                        Path.Combine(logDirectory, $"clean-{index:D3}.log"),
                         cancellationToken).ConfigureAwait(false);
                 }
 
@@ -126,8 +138,7 @@ public sealed class ProfileRunner
                     index - 1,
                     options.IterationCount));
                 DateTimeOffset startedAt = DateTimeOffset.UtcNow;
-                ProcessResult build = await _processRunner.RunAsync(
-                    new ProcessInvocation(
+                ProcessInvocation buildInvocation = new(
                         "dotnet",
                         CreateMeasuredBuildArguments(
                             effectiveTarget,
@@ -140,8 +151,15 @@ public sealed class ProfileRunner
                         new Dictionary<string, string?>
                         {
                             [CompilerInvocationCapture.EnvironmentVariable] = compilerCapturePath,
-                        }),
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                        });
+                string buildLogPath = Path.Combine(logDirectory, $"build-{index:D3}.log");
+                LoggedProcessResult buildExecution = await RunLoggedAsync(
+                    ProcessOperation.MeasuredBuild,
+                    buildInvocation,
+                    buildLogPath,
+                    onLine: null,
+                    cancellationToken).ConfigureAwait(false);
+                ProcessResult build = buildExecution.Result;
 
                 List<RunDiagnostic> measurementDiagnostics = new();
                 IReadOnlyList<AnalyzerSample> analyzers = Array.Empty<AnalyzerSample>();
@@ -230,10 +248,20 @@ public sealed class ProfileRunner
                                     .Append($"@{responseFile}")
                                     .ToArray();
 
-                                ProcessResult compiler = await _processRunner.RunAsync(
-                                    new ProcessInvocation(command.FileName, compilerArguments, invocation.WorkingDirectory),
+                                ProcessInvocation compilerInvocation = new(
+                                    command.FileName,
+                                    compilerArguments,
+                                    invocation.WorkingDirectory);
+                                string compilerLogPath = Path.Combine(
+                                    logDirectory,
+                                    $"compiler-replay-{index:D3}-{compilerIndex + 1:D3}.log");
+                                LoggedProcessResult compilerExecution = await RunLoggedAsync(
+                                    ProcessOperation.CompilerReplay,
+                                    compilerInvocation,
+                                    compilerLogPath,
                                     reports.Accept,
                                     cancellationToken).ConfigureAwait(false);
+                                ProcessResult compiler = compilerExecution.Result;
                                 BinlogAnalysis report = reports.Complete();
                                 AddAnalyzerSamples(analyzerTotals, report.Analyzers);
                                 AddGeneratorSamples(generatorTotals, report.Generators);
@@ -241,10 +269,14 @@ public sealed class ProfileRunner
                                 if (compiler.ExitCode != 0)
                                 {
                                     profilingSucceeded = false;
-                                    measurementDiagnostics.Add(YaapErrors.ProcessFailed(
-                                        "compiler profiling replay",
-                                        compiler.ExitCode,
-                                        compiler.CombinedTail));
+                                    measurementDiagnostics.Add(CreateProcessFailureDiagnostic(
+                                        ProcessOperation.CompilerReplay,
+                                        compilerInvocation,
+                                        compilerExecution));
+                                }
+                                else
+                                {
+                                    TryDeleteFile(compilerLogPath);
                                 }
                             }
                             finally
@@ -288,10 +320,14 @@ public sealed class ProfileRunner
                 bool succeeded = build.ExitCode == 0 && profilingSucceeded;
                 if (build.ExitCode != 0)
                 {
-                    measurementDiagnostics.Add(YaapErrors.ProcessFailed(
-                        "build",
-                        build.ExitCode,
-                        build.CombinedTail));
+                    measurementDiagnostics.Add(CreateProcessFailureDiagnostic(
+                        ProcessOperation.MeasuredBuild,
+                        buildInvocation,
+                        buildExecution));
+                }
+                else
+                {
+                    TryDeleteFile(buildLogPath);
                 }
 
                 measurements.Add(new MeasurementResult(
@@ -339,7 +375,10 @@ public sealed class ProfileRunner
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             run.Status = measurements.Count > 0 ? RunStatus.Partial : RunStatus.Failed;
-            runDiagnostics.Add(YaapErrors.ProcessFailed("profile", -1, exception.Message));
+            runDiagnostics.Add(YaapErrors.ProcessFailed(
+                ProcessOperation.Profile,
+                -1,
+                $"例外: {exception.Message}"));
         }
 
         run.Measurements = measurements.ToArray();
@@ -387,18 +426,191 @@ public sealed class ProfileRunner
     }
 
     private async Task RunRequiredAsync(
-        string phase,
+        ProcessOperation operation,
         IReadOnlyList<string> arguments,
         string workingDirectory,
+        string logPath,
         CancellationToken cancellationToken)
     {
-        ProcessResult result = await _processRunner.RunAsync(
-            new ProcessInvocation("dotnet", arguments, workingDirectory),
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (result.ExitCode != 0)
+        ProcessInvocation invocation = new("dotnet", arguments, workingDirectory);
+        LoggedProcessResult execution = await RunLoggedAsync(
+            operation,
+            invocation,
+            logPath,
+            onLine: null,
+            cancellationToken).ConfigureAwait(false);
+        if (execution.Result.ExitCode != 0)
         {
-            throw new YaapException(YaapErrors.ProcessFailed(phase, result.ExitCode, result.CombinedTail));
+            throw new YaapException(CreateProcessFailureDiagnostic(operation, invocation, execution));
         }
+
+        TryDeleteFile(logPath);
+    }
+
+    private async Task<LoggedProcessResult> RunLoggedAsync(
+        ProcessOperation operation,
+        ProcessInvocation invocation,
+        string logPath,
+        Action<string, bool>? onLine,
+        CancellationToken cancellationToken)
+    {
+        ProcessLogWriter? logWriter = null;
+        string? logError = null;
+        try
+        {
+            logWriter = new ProcessLogWriter(logPath, invocation);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logError = exception.Message;
+        }
+
+        Action<string, bool>? capture = logWriter is null
+            ? onLine
+            : (line, isError) =>
+            {
+                logWriter.Accept(line, isError);
+                onLine?.Invoke(line, isError);
+            };
+
+        try
+        {
+            ProcessResult result = await _processRunner.RunAsync(
+                invocation,
+                capture,
+                cancellationToken).ConfigureAwait(false);
+            logWriter?.Dispose();
+            logError = CombineLogErrors(logError, logWriter?.Error);
+            return new LoggedProcessResult(result, logPath, logError, null);
+        }
+        catch (OperationCanceledException)
+        {
+            logWriter?.Dispose();
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+            System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            logWriter?.Dispose();
+            logError = CombineLogErrors(logError, logWriter?.Error);
+            LoggedProcessResult execution = new(
+                new ProcessResult(-1, TimeSpan.Zero, Array.Empty<string>(), Array.Empty<string>()),
+                logPath,
+                logError,
+                exception.Message);
+            throw new YaapException(CreateProcessFailureDiagnostic(operation, invocation, execution), exception);
+        }
+    }
+
+    private static RunDiagnostic CreateProcessFailureDiagnostic(
+        ProcessOperation operation,
+        ProcessInvocation invocation,
+        LoggedProcessResult execution)
+    {
+        System.Text.StringBuilder detail = new();
+        detail.Append("実行コマンド: ").AppendLine(FormatCommand(invocation));
+        detail.Append("作業ディレクトリ: ").AppendLine(invocation.WorkingDirectory);
+        detail.Append("完全ログ: ").AppendLine(execution.LogPath);
+        if (!string.IsNullOrWhiteSpace(execution.LogError))
+        {
+            detail.Append("ログ記録エラー: ").AppendLine(execution.LogError);
+        }
+
+        if (!string.IsNullOrWhiteSpace(execution.ExecutionError))
+        {
+            detail.Append("プロセス起動エラー: ").AppendLine(execution.ExecutionError);
+        }
+
+        AppendOutputTail(
+            detail,
+            "標準出力",
+            execution.Result.StandardOutputTail,
+            execution.Result.StandardOutputTruncated);
+        AppendOutputTail(
+            detail,
+            "標準エラー出力",
+            execution.Result.StandardErrorTail,
+            execution.Result.StandardErrorTruncated);
+        return YaapErrors.ProcessFailed(operation, execution.Result.ExitCode, detail.ToString().TrimEnd());
+    }
+
+    private static void AppendOutputTail(
+        System.Text.StringBuilder detail,
+        string label,
+        IReadOnlyList<string> lines,
+        bool truncated)
+    {
+        detail.Append(label).Append("末尾");
+        if (truncated)
+        {
+            detail.Append("（前方の行は完全ログにのみ記録）");
+        }
+
+        detail.AppendLine(":");
+        if (lines.Count == 0)
+        {
+            detail.AppendLine("  （出力なし）");
+            return;
+        }
+
+        foreach (string line in lines)
+        {
+            detail.Append("  ").AppendLine(line);
+        }
+    }
+
+    private static string FormatCommand(ProcessInvocation invocation) => string.Join(
+        " ",
+        invocation.Arguments.Prepend(invocation.FileName).Select(QuoteCommandArgument));
+
+    private static string QuoteCommandArgument(string argument)
+    {
+        if (argument.Length > 0 && argument.All(character =>
+                char.IsLetterOrDigit(character) || "-._/:\\=+@".Contains(character)))
+        {
+            return argument;
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return $"'{argument.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
+        }
+
+        System.Text.StringBuilder quoted = new(argument.Length + 2);
+        quoted.Append('"');
+        int backslashes = 0;
+        foreach (char character in argument)
+        {
+            if (character == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+
+            if (character == '"')
+            {
+                quoted.Append('\\', (backslashes * 2) + 1).Append('"');
+                backslashes = 0;
+                continue;
+            }
+
+            quoted.Append('\\', backslashes).Append(character);
+            backslashes = 0;
+        }
+
+        quoted.Append('\\', backslashes * 2).Append('"');
+        return quoted.ToString();
+    }
+
+    private static string? CombineLogErrors(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first))
+        {
+            return string.IsNullOrWhiteSpace(second) ? null : second;
+        }
+
+        return string.IsNullOrWhiteSpace(second) ? first : $"{first} / {second}";
     }
 
     private static IReadOnlyList<string> CreateRestoreArguments(
@@ -589,7 +801,7 @@ public sealed class ProfileRunner
         }
 
         throw new YaapException(YaapErrors.ProcessFailed(
-            "profile logger",
+            ProcessOperation.Profile,
             -1,
             $"Required file was not found beside YAAP: {fileName}"));
     }
@@ -706,6 +918,101 @@ public sealed class ProfileRunner
         }
         catch (UnauthorizedAccessException)
         {
+        }
+    }
+
+    private sealed record LoggedProcessResult(
+        ProcessResult Result,
+        string LogPath,
+        string? LogError,
+        string? ExecutionError);
+
+    private sealed class ProcessLogWriter : IDisposable
+    {
+        private readonly object _sync = new();
+        private readonly StreamWriter _writer;
+        private string? _error;
+        private bool _disposed;
+
+        public ProcessLogWriter(string path, ProcessInvocation invocation)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            _writer = new StreamWriter(
+                new FileStream(
+                    path,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.Read,
+                    64 * 1024,
+                    FileOptions.SequentialScan),
+                new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                64 * 1024);
+            try
+            {
+                _writer.Write("実行コマンド: ");
+                _writer.WriteLine(FormatCommand(invocation));
+                _writer.Write("作業ディレクトリ: ");
+                _writer.WriteLine(invocation.WorkingDirectory);
+                _writer.WriteLine();
+            }
+            catch
+            {
+                _writer.Dispose();
+                throw;
+            }
+        }
+
+        public string? Error
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _error;
+                }
+            }
+        }
+
+        public void Accept(string line, bool isError)
+        {
+            lock (_sync)
+            {
+                if (_disposed || _error is not null)
+                {
+                    return;
+                }
+
+                try
+                {
+                    _writer.Write(isError ? "[stderr] " : "[stdout] ");
+                    _writer.WriteLine(line);
+                }
+                catch (Exception exception) when (exception is IOException or ObjectDisposedException)
+                {
+                    _error = exception.Message;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                try
+                {
+                    _writer.Dispose();
+                }
+                catch (IOException exception)
+                {
+                    _error = CombineLogErrors(_error, exception.Message);
+                }
+            }
         }
     }
 

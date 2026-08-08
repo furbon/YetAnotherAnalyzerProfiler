@@ -65,6 +65,7 @@ YAAPの履歴はローカルに保存され、YAAP自身から送信しません
 - Git commit、branch、dirty状態
 - OS、CPU数、SDK、対象フレームワーク
 - コンパイラー引数、MSBuild情報、診断、対象由来のログ
+- 失敗またはキャンセルしたrestore／clean／buildなどの完全な標準出力／標準エラー出力ログ
 - private feed名、ユーザー名、環境情報などが含まれ得るbinlog
 
 履歴ディレクトリ、binlog、JSON／CSV／Markdown exportを共有する前に内容を確認し、秘密情報と
