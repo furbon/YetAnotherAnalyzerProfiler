@@ -21,6 +21,13 @@ YAAP は、C# ビルドに含まれる Roslyn Analyzer と Source Generator の�
 
 ## クイックスタート
 
+NuGetで公開されたCLIは、.NETグローバルツールとしてインストールできます。
+
+```powershell
+dotnet tool install --global YetAnotherAnalyzerProfiler.Tool
+yaap version
+```
+
 リポジトリから CLI を実行する例です。
 
 ```powershell
@@ -55,6 +62,14 @@ restore、build、Analyzer、Source Generatorは、対象の構成や実装に�
 `Yaap.BuildLogger.dll` は測定に必要なため、実行ファイルと同じディレクトリに保持してください。
 正式なリリース用アーカイブには、利用対象の実行ファイルに加えて `LICENSE`、
 `THIRD-PARTY-NOTICES.txt`、README、CHANGELOGを含めます。
+
+CLIのNuGetパッケージをローカルで作成・インストール検証する場合は、次を実行します。
+
+```powershell
+./eng/build.ps1 pack --framework net10.0
+```
+
+検証済みパッケージは `artifacts/packages/YetAnotherAnalyzerProfiler.Tool.<version>.nupkg` に作成されます。
 
 配布アーカイブを展開した後は、SDKプロジェクトを開かずに実行できます。WindowsのCLIとGUIは
 次のように起動します。

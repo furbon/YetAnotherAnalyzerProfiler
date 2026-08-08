@@ -4,9 +4,11 @@
 保持、削除、比較、出力、入力検出、isolated 出力、失敗、部分結果、キャンセル、CLI、10万件集計を
 検証します。`tests/Yaap.Gui.Tests` は WPF 初期化、D&D、自動構成検出の競合とキャンセル、構成の
 履歴／Release／Debug／アルファベット順選択、空欄・未知構成の開始拒否、実行中を含む状態説明、
-WPF UIテーマ辞書とFluentWindowの統合、restoreを含む詳細設定、履歴日時／件数フィルター、既存binlog
-解析、非同期コマンド、仮想化、表示上のSource Generator制約、生成出力プレビューを切り詰めた場合の
-全件export案内を検証します。
+WPF UIテーマ辞書とFluentWindowの統合、restoreを含む詳細設定、履歴の自動検索、ファジー日付、ラベルの
+自動保存とUndo／Redo、人間可読な比較選択、既存binlog解析、非同期コマンド、表示上のSource Generator制約、
+生成出力プレビューを切り詰めた場合の全件export案内を検証します。600件のAnalyzerと240件のGeneratorを
+実ウィンドウへ描画し、拘束されたビューポート、スクロール範囲、表示バー、マウスホイール、選択追従、
+全件より十分少ない実体化行・ツリーノードまで確認します。
 
 生成出力manifestの回帰試験では、各Generatorの決定的な先頭100件、全件の集計値、
 `OutputsTruncated`、NDJSONの全件ストリーム、読込みキャンセル、CSV／JSON／Markdownへの全件exportを
@@ -27,3 +29,6 @@ WindowsではGUIテストをDebugで両TFMに対して実行し、STAで `MainWi
 終了します。GUIを変更した場合は `YAAP_GUI_CAPTURE_DIR` に出力したライト／ダーク両テーマの全タブと
 影響状態を目視確認します。publish検証は成果物の厳密な許可リスト、同梱文書、CLIのversion／help、
 Windows GUIの起動と終了まで確認します。
+NuGet tool packは両TFMの実行物、BuildLogger、README、第三者通知を検査し、ローカルfeedから実際に
+インストールして `version`／`help` を確認します。release workflowはタグと `eng/Version.props` の不一致を
+公開前に拒否します。

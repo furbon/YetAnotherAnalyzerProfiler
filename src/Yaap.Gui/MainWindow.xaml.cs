@@ -1,5 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
 
@@ -76,6 +78,56 @@ public partial class MainWindow : FluentWindow
             viewModel.SelectedRecentTarget = recentTarget;
             RecentTargetsButton.IsChecked = false;
             RecentTargetsPopup.IsOpen = false;
+        }
+    }
+
+    private void OnHistoryDoubleClick(object sender, MouseButtonEventArgs eventArgs)
+    {
+        if (DataContext is MainViewModel viewModel &&
+            viewModel.LoadSelectedCommand.CanExecute(null))
+        {
+            viewModel.LoadSelectedCommand.Execute(null);
+            eventArgs.Handled = true;
+        }
+    }
+
+    private void OnScrollableSelectionChanged(object sender, SelectionChangedEventArgs eventArgs)
+    {
+        if (sender is System.Windows.Controls.DataGrid { SelectedItem: not null } grid)
+        {
+            grid.Dispatcher.BeginInvoke(() => grid.ScrollIntoView(grid.SelectedItem));
+        }
+    }
+
+    private void OnHistoryDateValidationError(
+        object sender,
+        DatePickerDateValidationErrorEventArgs eventArgs)
+    {
+        eventArgs.ThrowException = false;
+        if (sender is DatePicker picker &&
+            MainViewModel.TryParseHistoryDateText(eventArgs.Text, out DateTime date))
+        {
+            picker.SelectedDate = date.Date;
+        }
+    }
+
+    private void OnHistoryPreviewMouseRightButtonDown(
+        object sender,
+        MouseButtonEventArgs eventArgs)
+    {
+        if (sender is not System.Windows.Controls.DataGrid grid)
+        {
+            return;
+        }
+
+        DependencyObject? source = eventArgs.OriginalSource as DependencyObject;
+        DataGridRow? row = source is null
+            ? null
+            : ItemsControl.ContainerFromElement(grid, source) as DataGridRow;
+        if (row is not null)
+        {
+            grid.SelectedItem = row.Item;
+            row.Focus();
         }
     }
 

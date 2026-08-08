@@ -8,6 +8,7 @@
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest"
              ExcludeFromSingleFile="true"
+             Pack="false"
              Visible="false" />
   </ItemGroup>
 </Project>

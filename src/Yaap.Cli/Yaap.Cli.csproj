@@ -5,6 +5,14 @@
     <AssemblyName>yaap</AssemblyName>
     <RootNamespace>Yaap.Cli</RootNamespace>
     <Description>Cross-platform non-interactive CLI for YAAP.</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>yaap</ToolCommandName>
+    <PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>
+    <PackageTags>dotnet-tool;roslyn;analyzer;source-generator;profiler</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <Title>YetAnotherAnalyzerProfiler CLI</Title>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
@@ -12,5 +20,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Yaap.Core/Yaap.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

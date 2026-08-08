@@ -14,17 +14,22 @@ GUI は `net8.0-windows;net10.0-windows` を対象にします。バージョン
 
 ```powershell
 ./eng/build.ps1 verify
+./eng/build.ps1 pack --framework net10.0
 ./eng/build.ps1 publish --runtime win-x64 --framework net10.0
 ```
 
 ```sh
 ./eng/build.sh verify
+./eng/build.sh pack --framework net10.0
 ./eng/build.sh publish --runtime linux-x64 --framework net10.0
 ```
 
 `verify` はリポジトリガード、locked restore、format、警告をエラーにした build、Core／CLI／
 GUIテスト、実 Analyzer／Generator 統合テスト、ローカルNuGet feed／lock file試験を実行します。
 GUIテストは Windows だけでDebug、両対象フレームワークに対して実行され、STA起動スモークを含みます。
+`pack` はCLIを `YetAnotherAnalyzerProfiler.Tool` という.NETツールにし、パッケージ内容を許可リストで
+検査した後、一時tool-pathへインストールして `version` と `help` を実行します。`net10.0` の `verify`
+にもこの検証が含まれます。
 `publish` はRID専用の一時lock fileで復元した後にlocked publishを行い、成果物の許可リスト、同梱する
 ライセンス／通知、CLIの起動を検証します。Windows向けGUIは実際にウィンドウを開いて終了まで確認します。
 
@@ -32,6 +37,19 @@ GUIテストは Windows だけでDebug、両対象フレームワークに対し
 推移依存、対象フレームワーク、代替案を作業計画に記録してください。製品依存は最小限にします。
 production lock fileに現れる全パッケージと版は `THIRD-PARTY-NOTICES.txt` に記載し、共通ガードで
 同期を検証します。
+
+## GitHubリリース
+
+Pull RequestではGitHub Actionsの全OS／両TFM検証が完了しない限り、branch protectionでマージを許可しない
+運用を前提にします。同じブランチやPRへ追加pushした場合は古い実行をキャンセルし、各jobにはタイムアウトを
+設定しています。
+
+正式リリースは、まず `eng/Version.props` を更新して通常のPR検証を完了し、そのコミットへ同じ版の
+`vX.Y.Z` タグを付けます。`.github/workflows/release.yml` はタグと唯一の版情報が一致することを全jobで確認し、
+.NET 8／10、Windows／Linux／macOSを再検証してからNuGetツールと4 RIDの自己完結型アーカイブを作成します。
+公開jobはGitHub Environment `release` に置き、Environmentへ `NUGET_API_KEY` secretと必要な承認者を設定します。
+成果物の検証が完了するまでNuGet pushとGitHub Release公開は行われません。再実行時は同一版のNuGetを
+skip-duplicateで扱い、draft releaseへ成果物を再添付してから公開します。
 
 ## ファイルと品質
 

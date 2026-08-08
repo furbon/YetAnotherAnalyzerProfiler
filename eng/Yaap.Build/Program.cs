@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -36,6 +37,10 @@ try
             await PublishAsync(root, framework, runtime ?? throw new InvalidOperationException(
                 "publish requires --runtime <RID>."));
             break;
+        case "pack":
+            EnsureSdkVersion(root, framework);
+            await PackAsync(root);
+            break;
         case "verify":
             EnsureSdkVersion(root, framework);
             CheckRepository(root);
@@ -44,12 +49,16 @@ try
             await FormatAsync(root);
             await BuildAsync(root, framework);
             await TestAsync(root, framework);
+            if (framework.Equals("net10.0", StringComparison.OrdinalIgnoreCase))
+            {
+                await PackAsync(root);
+            }
             NormalizePackageLockFiles(root);
             CheckRepository(root);
             break;
         default:
             throw new InvalidOperationException(
-                "Task must be check, restore, format, build, test, publish, or verify.");
+                "Task must be check, restore, format, build, test, pack, publish, or verify.");
     }
 
     Console.WriteLine($"YAAP '{task}' completed for {framework}.");
@@ -274,6 +283,129 @@ static async Task TestLocalFeedAsync(string root)
         "Release",
         "--no-restore",
     });
+}
+
+static async Task PackAsync(string root)
+{
+    string versionProps = File.ReadAllText(Path.Combine(root, "eng", "Version.props"));
+    Match versionMatch = Regex.Match(
+        versionProps,
+        "<VersionPrefix>(?<version>[^<]+)</VersionPrefix>",
+        RegexOptions.CultureInvariant);
+    if (!versionMatch.Success)
+    {
+        throw new InvalidOperationException("eng/Version.props does not contain VersionPrefix.");
+    }
+
+    string version = versionMatch.Groups["version"].Value;
+    string output = Path.Combine(root, "artifacts", "packages");
+    Directory.CreateDirectory(output);
+    foreach (string existing in Directory.EnumerateFiles(
+                 output,
+                 "YetAnotherAnalyzerProfiler.Tool.*.nupkg",
+                 SearchOption.TopDirectoryOnly))
+    {
+        File.Delete(existing);
+    }
+
+    await RunAsync(root, "dotnet", new[]
+    {
+        "pack",
+        Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"),
+        "--configuration",
+        "Release",
+        "--no-restore",
+        "--output",
+        output,
+    });
+
+    string package = Path.Combine(
+        output,
+        $"YetAnotherAnalyzerProfiler.Tool.{version}.nupkg");
+    if (!File.Exists(package))
+    {
+        throw new InvalidOperationException($"NuGet tool package was not produced: {package}");
+    }
+
+    using (ZipArchive archive = ZipFile.OpenRead(package))
+    {
+        HashSet<string> entries = archive.Entries
+            .Select(entry => entry.FullName.Replace('\\', '/'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (string required in new[]
+                 {
+                     "README.md",
+                     "THIRD-PARTY-NOTICES.txt",
+                     "tools/net8.0/any/DotnetToolSettings.xml",
+                     "tools/net8.0/any/yaap.dll",
+                     "tools/net8.0/any/Yaap.BuildLogger.dll",
+                     "tools/net10.0/any/DotnetToolSettings.xml",
+                     "tools/net10.0/any/yaap.dll",
+                     "tools/net10.0/any/Yaap.BuildLogger.dll",
+                 })
+        {
+            if (!entries.Contains(required))
+            {
+                throw new InvalidOperationException($"NuGet tool package is missing {required}.");
+            }
+        }
+
+        if (entries.Any(entry => entry.StartsWith("content/", StringComparison.OrdinalIgnoreCase) ||
+            entry.StartsWith("contentFiles/", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "NuGet tool package must not leak build logger assemblies as project content.");
+        }
+    }
+
+    string smokeRoot = Path.Combine(
+        root,
+        "artifacts",
+        "tool-smoke",
+        Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(smokeRoot);
+    try
+    {
+        string nugetConfig = Path.Combine(smokeRoot, "NuGet.Config");
+        string escapedOutput = System.Security.SecurityElement.Escape(output) ?? output;
+        File.WriteAllText(
+            nugetConfig,
+            $"<configuration><packageSources><clear /><add key=\"local\" value=\"{escapedOutput}\" /></packageSources></configuration>",
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        await RunAsync(root, "dotnet", new[]
+        {
+            "tool",
+            "install",
+            "--tool-path",
+            smokeRoot,
+            "--configfile",
+            nugetConfig,
+            "YetAnotherAnalyzerProfiler.Tool",
+            "--version",
+            version,
+        });
+        string executable = Path.Combine(
+            smokeRoot,
+            OperatingSystem.IsWindows() ? "yaap.exe" : "yaap");
+        await RunAsync(root, executable, new[] { "--version" });
+        await RunAsync(root, executable, new[] { "--help" });
+    }
+    finally
+    {
+        string artifactsRoot = Path.GetFullPath(Path.Combine(root, "artifacts")) +
+            Path.DirectorySeparatorChar;
+        string resolvedSmokeRoot = Path.GetFullPath(smokeRoot);
+        if (!resolvedSmokeRoot.StartsWith(artifactsRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Refusing to delete tool smoke path outside artifacts: {resolvedSmokeRoot}");
+        }
+
+        if (Directory.Exists(resolvedSmokeRoot))
+        {
+            Directory.Delete(resolvedSmokeRoot, recursive: true);
+        }
+    }
 }
 
 static async Task PublishAsync(string root, string framework, string runtime)
@@ -805,6 +937,7 @@ static void CheckRepository(string root)
     EnsureAgentBranchPolicy(root);
     EnsureAgentBranchGuardrailFiles(root);
     EnsureToolchainManifest(root);
+    EnsureReleaseWorkflow(root);
 
     string canonical = File.ReadAllText(Path.Combine(root, "eng", "agent-instructions.md"));
     foreach (string path in new[]
@@ -1388,6 +1521,7 @@ static void EnsureToolchainManifest(string root)
     }
 
     string github = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
+    string release = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
     string gitlab = File.ReadAllText(Path.Combine(root, ".gitlab-ci.yml"));
     foreach (string required in new[] { sdk8, sdk10, image8, image10 })
     {
@@ -1396,6 +1530,68 @@ static void EnsureToolchainManifest(string root)
         {
             throw new InvalidOperationException($"CI toolchains are out of sync with eng/toolchain.json: {required}");
         }
+    }
+
+    foreach (string required in new[] { sdk8, sdk10 })
+    {
+        if (!release.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Release toolchains are out of sync with eng/toolchain.json: {required}");
+        }
+    }
+}
+
+static void EnsureReleaseWorkflow(string root)
+{
+    string ci = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
+    foreach (string required in new[]
+             {
+                 "pull_request:",
+                 "concurrency:",
+                 "cancel-in-progress: true",
+                 "timeout-minutes:",
+             })
+    {
+        if (!ci.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GitHub PR verification is missing: {required}");
+        }
+    }
+
+    string release = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
+    foreach (string required in new[]
+             {
+                 "tags: [\"v*.*.*\"]",
+                 "cancel-in-progress: false",
+                 "./eng/validate-release.ps1",
+                 "./eng/build.ps1 verify",
+                 "./eng/build.ps1 publish",
+                 "environment: release",
+                 "secrets.NUGET_API_KEY",
+                 "dotnet nuget push",
+                 "--skip-duplicate",
+                 "gh release create",
+                 "gh release edit",
+             })
+    {
+        if (!release.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GitHub release workflow is missing: {required}");
+        }
+    }
+
+    if (release.Contains("pull_request:", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException("The release workflow must never publish from pull requests.");
+    }
+
+    string validator = File.ReadAllText(Path.Combine(root, "eng", "validate-release.ps1"));
+    if (!validator.Contains("eng/Version.props", StringComparison.Ordinal) ||
+        !validator.Contains("expectedTag", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "Release validation must compare the tag with eng/Version.props.");
     }
 }
 

@@ -156,8 +156,16 @@ static async Task HistoryAsync()
     ProfileRun second = Run(target: "beta.csproj", startedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
     await history.SaveAsync(first);
     await history.SaveAsync(second);
+    await history.UpdateLabelAsync(first.Id, " 最適化前 ");
     ProfileRun loaded = await history.LoadAsync(first.Id);
     Assert.Equal(first.Id, loaded.Id);
+    Assert.Equal("最適化前", loaded.Label);
+    RunSummary labeled = Assert.Single(await history.ListAsync(new HistoryQuery(Search: "最適化前")));
+    Assert.Equal(first.Id, labeled.Id);
+    Assert.Equal("最適化前", labeled.Label);
+    YaapException longLabel = await Assert.ThrowsAsync<YaapException>(() =>
+        history.UpdateLabelAsync(first.Id, new string('x', HistoryStore.MaximumLabelLength + 1)));
+    Assert.Equal("YAAP1001", longLabel.Diagnostic.Code);
     Assert.Equal(1, (await history.ListAsync(new HistoryQuery(Search: "beta"))).Count);
     Assert.Equal(second.Id, Assert.Single(await history.ListAsync(new HistoryQuery(Limit: 1))).Id);
     await Assert.ThrowsAsync<YaapException>(() => history.ListAsync(new HistoryQuery(Limit: 0)));
@@ -173,8 +181,9 @@ static async Task HistoryAsync()
     IReadOnlyList<RunSummary> retained = await history.ListAsync();
     Assert.Equal(1, retained.Count);
     Assert.Equal(second.Id, retained[0].Id);
-    await history.DeleteAsync(second.Id);
+    Assert.Equal(2, await history.DeleteAllAsync());
     Assert.Equal(0, (await history.ListAsync()).Count);
+    Assert.Equal(0, await history.DeleteAllAsync());
 }
 
 static async Task ConcurrentRetentionAsync()
@@ -216,6 +225,13 @@ static async Task ConcurrentRetentionAsync()
     YaapException activeDelete = await Assert.ThrowsAsync<YaapException>(
         () => history.DeleteAsync(active.Id));
     Assert.Equal("YAAP4001", activeDelete.Diagnostic.Code);
+    YaapException activeLabel = await Assert.ThrowsAsync<YaapException>(
+        () => history.UpdateLabelAsync(active.Id, "実行中"));
+    Assert.Equal("YAAP4001", activeLabel.Diagnostic.Code);
+    YaapException activeDeleteAll = await Assert.ThrowsAsync<YaapException>(
+        () => history.DeleteAllAsync());
+    Assert.Equal("YAAP4001", activeDeleteAll.Diagnostic.Code);
+    Assert.Equal(active.Id, Assert.Single(await history.ListAsync()).Id);
 
     RecordingProcessRunner secondProcess = new((invocation, _) =>
     {

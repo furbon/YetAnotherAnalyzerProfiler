@@ -215,6 +215,8 @@ public sealed record ProfileRun
 
     public IReadOnlyList<RunDiagnostic> Diagnostics { get; set; } = Array.Empty<RunDiagnostic>();
 
+    public string? Label { get; set; }
+
     public bool Isolated { get; init; }
 
     public string? ArtifactsPath { get; init; }
@@ -232,7 +234,8 @@ public sealed record ProfileRun
             Analyzers.Count,
             Generators.Count,
             Analyzers.Sum(item => item.MeanMilliseconds),
-            Generators.Sum(item => item.MeanMilliseconds));
+            Generators.Sum(item => item.MeanMilliseconds),
+            Label);
     }
 }
 
@@ -247,7 +250,8 @@ public sealed record RunSummary(
     int AnalyzerCount,
     int GeneratorCount,
     double AnalyzerMilliseconds,
-    double GeneratorMilliseconds);
+    double GeneratorMilliseconds,
+    string? Label = null);
 
 public sealed record HistoryQuery(
     string? Search = null,

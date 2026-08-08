@@ -6,6 +6,7 @@ namespace Yaap.Core;
 public sealed class HistoryStore
 {
     public const string HistoryEnvironmentVariable = "YAAP_HISTORY_PATH";
+    public const int MaximumLabelLength = 120;
 
     private const string RunLeasesDirectoryName = "leases";
     private const string TombstonesDirectoryName = "tombstones";
@@ -104,6 +105,17 @@ public sealed class HistoryStore
             if (run is null || run.SchemaVersion != ProfileRun.CurrentSchemaVersion)
             {
                 throw new JsonException("Unsupported or empty history schema.");
+            }
+
+            string summaryPath = Path.Combine(GetRunDirectory(id), "summary.json");
+            if (File.Exists(summaryPath))
+            {
+                await using FileStream summaryStream = OpenSequential(summaryPath);
+                RunSummary? summary = await JsonSerializer.DeserializeAsync<RunSummary>(
+                    summaryStream,
+                    JsonOptions,
+                    cancellationToken).ConfigureAwait(false);
+                run.Label = summary?.Label;
             }
 
             return run;
@@ -351,6 +363,90 @@ public sealed class HistoryStore
         }
     }
 
+    public async Task UpdateLabelAsync(
+        Guid id,
+        string? label,
+        CancellationToken cancellationToken = default)
+    {
+        string? normalized = string.IsNullOrWhiteSpace(label) ? null : label.Trim();
+        if (normalized?.Length > MaximumLabelLength)
+        {
+            throw new YaapException(YaapErrors.InvalidInput(
+                $"History label must be {MaximumLabelLength} characters or fewer."));
+        }
+
+        string path = Path.Combine(GetRunDirectory(id), "summary.json");
+        if (!File.Exists(path))
+        {
+            throw new YaapException(YaapErrors.HistoryFailed($"Run does not exist: {id:D}"));
+        }
+
+        try
+        {
+            using IDisposable lease = AcquireRunLease(id, cancellationToken);
+            RunSummary? summary;
+            await using (FileStream stream = OpenSequential(path))
+            {
+                summary = await JsonSerializer.DeserializeAsync<RunSummary>(
+                    stream,
+                    JsonOptions,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (summary is null || summary.Id != id)
+            {
+                throw new JsonException($"History summary is invalid: {id:D}");
+            }
+
+            await WriteAtomicallyAsync(
+                path,
+                summary with { Label = normalized },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (YaapException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            throw new YaapException(YaapErrors.HistoryFailed(exception.Message), exception);
+        }
+    }
+
+    public async Task<int> DeleteAllAsync(CancellationToken cancellationToken = default)
+    {
+        string runsPath = Path.Combine(RootPath, "runs");
+        if (!Directory.Exists(runsPath))
+        {
+            return 0;
+        }
+
+        int deleted = 0;
+        foreach (string directory in Directory.EnumerateDirectories(runsPath))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!Guid.TryParse(Path.GetFileName(directory), out Guid id))
+            {
+                continue;
+            }
+
+            if (!await DeleteRunDirectoryAsync(id, cancellationToken).ConfigureAwait(false))
+            {
+                throw new YaapException(YaapErrors.HistoryFailed(
+                    $"Run {id:D} is active and cannot be deleted."));
+            }
+
+            deleted++;
+        }
+
+        return deleted;
+    }
+
     public async Task ApplyRetentionAsync(
         int retainCount,
         CancellationToken cancellationToken = default)
@@ -440,6 +536,7 @@ public sealed class HistoryStore
         {
             return summary.TargetName.Contains(query.Search, StringComparison.OrdinalIgnoreCase) ||
                 summary.TargetPath.Contains(query.Search, StringComparison.OrdinalIgnoreCase) ||
+                (summary.Label?.Contains(query.Search, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 summary.Id.ToString("D").Contains(query.Search, StringComparison.OrdinalIgnoreCase);
         }
 
