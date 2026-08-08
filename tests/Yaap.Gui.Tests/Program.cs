@@ -124,6 +124,12 @@ static async Task WindowStartupSmokeAsync()
 
             TabControl mainTabs = (TabControl)window.FindName("MainTabs");
             TabControl analyzerViewTabs = (TabControl)window.FindName("AnalyzerViewTabs");
+            TabItem analyzerTableViewTab =
+                analyzerViewTabs.ItemContainerGenerator.ContainerFromIndex(0) as TabItem ??
+                throw new InvalidOperationException("The Analyzer table view tab was not rendered.");
+            TabItem analyzerTreeViewTab =
+                analyzerViewTabs.ItemContainerGenerator.ContainerFromIndex(1) as TabItem ??
+                throw new InvalidOperationException("The Analyzer tree view tab was not rendered.");
             TreeView analyzerTreeView = (TreeView)window.FindName("AnalyzerTreeView");
             FrameworkElement targetCard = (FrameworkElement)window.FindName("TargetCard");
             FrameworkElement busyCard = (FrameworkElement)window.FindName("BusyCard");
@@ -241,6 +247,13 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 analyzerHeaders.All(header => header.BorderThickness.Right == 1 && header.BorderThickness.Bottom == 1),
                 "Analyzer table headers must visibly separate every resize boundary.");
+            Ensure(
+                analyzerHeaders.All(header => header.FontWeight == FontWeights.SemiBold),
+                "Analyzer table headers must use the same semibold emphasis as the tree headers.");
+            Ensure(
+                analyzerHeaders.All(header =>
+                    FindVisualDescendants<Thumb>(header).Any(thumb => thumb.ActualWidth >= 8)),
+                "Every Analyzer table header boundary must retain a practical resize target.");
             Ensure(
                 analyzerHeaders.All(header => header.ToolTip?.ToString()?.Contains("列幅", StringComparison.Ordinal) == true),
                 "Analyzer table headers must explain the drag-to-resize affordance.");
@@ -505,8 +518,35 @@ static async Task WindowStartupSmokeAsync()
                     if (index == 0)
                     {
                         EnsureAccessibleVerticalScrollBar(analyzerGrid, $"{mode} Analyzer table");
+                        EnsureAnalyzerViewTabState(
+                            analyzerTableViewTab,
+                            analyzerTreeViewTab,
+                            $"{mode} Analyzer table view tab");
                         analyzerGrid.SelectedIndex = 0;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        RenderTargetBitmap analyzerTableBitmap = RenderElement(window);
+                        DataGridColumnHeader analyzerFirstHeader = analyzerHeaders[0];
+                        Color analyzerTableHeaderFill = GetRenderedPixel(
+                            analyzerTableBitmap,
+                            window,
+                            analyzerFirstHeader,
+                            new Point(analyzerFirstHeader.ActualWidth - 24, analyzerFirstHeader.ActualHeight / 2));
+                        Color analyzerTableHeaderSeparator = GetMostContrastingRenderedPixel(
+                            analyzerTableBitmap,
+                            window,
+                            analyzerFirstHeader,
+                            analyzerTableHeaderFill,
+                            analyzerFirstHeader.ActualWidth - 1,
+                            analyzerFirstHeader.ActualHeight / 2,
+                            horizontalRadius: 2);
+                        EnsureContrast(
+                            analyzerFirstHeader.Foreground,
+                            new SolidColorBrush(analyzerTableHeaderFill),
+                            $"{mode} Analyzer table header");
+                        Ensure(
+                            ColorDistance(analyzerTableHeaderFill, analyzerTableHeaderSeparator) >= 28,
+                            $"{mode} Analyzer table header separators must be visibly distinct " +
+                            $"(fill {FormatColor(analyzerTableHeaderFill)}, separator {FormatColor(analyzerTableHeaderSeparator)}).");
                         CaptureWindow(
                             window,
                             captureDirectory,
@@ -582,6 +622,44 @@ static async Task WindowStartupSmokeAsync()
                         IReadOnlyList<Border> analyzerTreeHeaderCells =
                             analyzerTreeHeader.Children.OfType<Border>().ToArray();
                         Ensure(analyzerTreeHeaderCells.Count == 5, "The Analyzer tree must expose all metric headers.");
+                        IReadOnlyList<TextBlock> analyzerTreeHeaderTexts = analyzerTreeHeaderCells
+                            .Select(cell => FindVisualDescendant<TextBlock>(cell) ??
+                                throw new InvalidOperationException("An Analyzer tree header label was not rendered."))
+                            .ToArray();
+                        Ensure(
+                            analyzerTreeHeaderTexts.All(text => text.FontWeight == FontWeights.SemiBold),
+                            "Analyzer tree headers must use the shared semibold emphasis.");
+                        EnsureAnalyzerViewTabState(
+                            analyzerTreeViewTab,
+                            analyzerTableViewTab,
+                            $"{mode} Analyzer tree view tab");
+                        RenderTargetBitmap analyzerTreeBitmap = RenderElement(window);
+                        Border analyzerFirstTreeHeader = analyzerTreeHeaderCells[0];
+                        Color analyzerTreeHeaderFill = GetRenderedPixel(
+                            analyzerTreeBitmap,
+                            window,
+                            analyzerFirstTreeHeader,
+                            new Point(analyzerFirstTreeHeader.ActualWidth / 2, analyzerFirstTreeHeader.ActualHeight / 2));
+                        Color analyzerTreeHeaderSeparator = GetMostContrastingRenderedPixel(
+                            analyzerTreeBitmap,
+                            window,
+                            analyzerFirstTreeHeader,
+                            analyzerTreeHeaderFill,
+                            analyzerFirstTreeHeader.ActualWidth - 1,
+                            analyzerFirstTreeHeader.ActualHeight / 2,
+                            horizontalRadius: 2);
+                        EnsureContrast(
+                            analyzerTreeHeaderTexts[0].Foreground,
+                            new SolidColorBrush(analyzerTreeHeaderFill),
+                            $"{mode} Analyzer tree header");
+                        Ensure(
+                            ColorDistance(analyzerTableHeaderFill, analyzerTreeHeaderFill) <= 3,
+                            $"{mode} Analyzer table and tree header fills must render identically " +
+                            $"({FormatColor(analyzerTableHeaderFill)} vs {FormatColor(analyzerTreeHeaderFill)}).");
+                        Ensure(
+                            ColorDistance(analyzerTreeHeaderFill, analyzerTreeHeaderSeparator) >= 28,
+                            $"{mode} Analyzer tree header separators must be visibly distinct " +
+                            $"(fill {FormatColor(analyzerTreeHeaderFill)}, separator {FormatColor(analyzerTreeHeaderSeparator)}).");
                         TextBlock[] analyzerTreeTimingTexts =
                         {
                             analyzerTreeMeanText,
@@ -1160,12 +1238,8 @@ static void CaptureWindow(Window window, string? captureDirectory, string name)
 
 static void CaptureElement(FrameworkElement element, string? captureDirectory, string name)
 {
-    element.UpdateLayout();
-    int width = Math.Max(1, (int)Math.Ceiling(element.ActualWidth));
-    int height = Math.Max(1, (int)Math.Ceiling(element.ActualHeight));
-    RenderTargetBitmap bitmap = new(width, height, 96, 96, PixelFormats.Pbgra32);
-    bitmap.Render(element);
-    Ensure(bitmap.PixelWidth == width && bitmap.PixelHeight == height, "The GUI render bitmap is invalid.");
+    RenderTargetBitmap bitmap = RenderElement(element);
+    Ensure(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, "The GUI render bitmap is invalid.");
     if (string.IsNullOrWhiteSpace(captureDirectory))
     {
         return;
@@ -1176,6 +1250,102 @@ static void CaptureElement(FrameworkElement element, string? captureDirectory, s
     encoder.Frames.Add(BitmapFrame.Create(bitmap));
     using FileStream stream = File.Create(System.IO.Path.Combine(captureDirectory, $"{name}.png"));
     encoder.Save(stream);
+}
+
+static RenderTargetBitmap RenderElement(FrameworkElement element)
+{
+    element.UpdateLayout();
+    int width = Math.Max(1, (int)Math.Ceiling(element.ActualWidth));
+    int height = Math.Max(1, (int)Math.Ceiling(element.ActualHeight));
+    RenderTargetBitmap bitmap = new(width, height, 96, 96, PixelFormats.Pbgra32);
+    bitmap.Render(element);
+    Ensure(bitmap.PixelWidth == width && bitmap.PixelHeight == height, "The GUI render bitmap is invalid.");
+    return bitmap;
+}
+
+static Color GetRenderedPixel(
+    RenderTargetBitmap bitmap,
+    FrameworkElement bitmapRoot,
+    FrameworkElement target,
+    Point pointWithinTarget)
+{
+    Point point = target.TransformToAncestor(bitmapRoot).Transform(pointWithinTarget);
+    int x = Math.Clamp((int)Math.Round(point.X), 0, bitmap.PixelWidth - 1);
+    int y = Math.Clamp((int)Math.Round(point.Y), 0, bitmap.PixelHeight - 1);
+    byte[] pixel = new byte[4];
+    bitmap.CopyPixels(new Int32Rect(x, y, 1, 1), pixel, 4, 0);
+    return Color.FromArgb(pixel[3], pixel[2], pixel[1], pixel[0]);
+}
+
+static Color GetMostContrastingRenderedPixel(
+    RenderTargetBitmap bitmap,
+    FrameworkElement bitmapRoot,
+    FrameworkElement target,
+    Color reference,
+    double targetX,
+    double targetY,
+    int horizontalRadius)
+{
+    Color result = reference;
+    double greatestDistance = 0;
+    for (int offset = -horizontalRadius; offset <= horizontalRadius; offset++)
+    {
+        Color candidate = GetRenderedPixel(
+            bitmap,
+            bitmapRoot,
+            target,
+            new Point(targetX + offset, targetY));
+        double distance = ColorDistance(reference, candidate);
+        if (distance > greatestDistance)
+        {
+            greatestDistance = distance;
+            result = candidate;
+        }
+    }
+
+    return result;
+}
+
+static double ColorDistance(Color left, Color right) => Math.Sqrt(
+    Math.Pow(left.R - right.R, 2) +
+    Math.Pow(left.G - right.G, 2) +
+    Math.Pow(left.B - right.B, 2));
+
+static string FormatColor(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+
+static void EnsureAnalyzerViewTabState(TabItem selected, TabItem unselected, string name)
+{
+    selected.ApplyTemplate();
+    unselected.ApplyTemplate();
+    Border selectedSurface = selected.Template.FindName("AnalyzerViewTabSurface", selected) as Border ??
+        throw new InvalidOperationException($"{name} did not render the selected tab surface.");
+    Border selectedIndicator = selected.Template.FindName("AnalyzerViewTabIndicator", selected) as Border ??
+        throw new InvalidOperationException($"{name} did not render the selection indicator.");
+    ContentPresenter selectedHeader =
+        selected.Template.FindName("AnalyzerViewTabHeader", selected) as ContentPresenter ??
+        throw new InvalidOperationException($"{name} did not render the header presenter.");
+    Border unselectedIndicator = unselected.Template.FindName("AnalyzerViewTabIndicator", unselected) as Border ??
+        throw new InvalidOperationException($"{name} did not render the unselected indicator.");
+
+    Ensure(selected.IsSelected, $"{name} must be selected.");
+    Ensure(!unselected.IsSelected, $"{name} must leave the alternate view unselected.");
+    Ensure(selectedIndicator.Visibility == Visibility.Visible, $"{name} must show an accent indicator.");
+    Ensure(selectedIndicator.ActualHeight >= 3, $"{name} accent indicator must remain clearly visible.");
+    Ensure(unselectedIndicator.Visibility == Visibility.Collapsed, $"{name} must hide the inactive indicator.");
+    Ensure(
+        TextElement.GetFontWeight(selectedHeader) == FontWeights.SemiBold,
+        $"{name} must emphasize its selected label.");
+    Ensure(
+        selectedSurface.Background is SolidColorBrush { Color.A: byte.MaxValue },
+        $"{name} must use an opaque selected fill that remains stable across backgrounds.");
+    Ensure(
+        selectedSurface.BorderBrush is SolidColorBrush { Color.A: > 0 } &&
+        selectedSurface.BorderThickness.Left >= 1,
+        $"{name} must expose a visible selected outline.");
+    EnsureContrast(
+        TextElement.GetForeground(selectedHeader),
+        selectedSurface.Background,
+        $"{name} selected label");
 }
 
 static void EnsureReadableForeground(Brush brush, AppThemeMode mode, string name)
