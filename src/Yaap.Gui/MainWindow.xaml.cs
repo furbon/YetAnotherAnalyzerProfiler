@@ -331,6 +331,26 @@ public partial class MainWindow : FluentWindow
         }
     }
 
+    private void OnHistoryDateTextChanged(object sender, TextChangedEventArgs eventArgs)
+    {
+        if (sender is not DatePicker picker || DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        string text = eventArgs.OriginalSource is System.Windows.Controls.TextBox textBox
+            ? textBox.Text
+            : picker.Text;
+        if (ReferenceEquals(picker, HistoryFromDatePicker))
+        {
+            viewModel.HistoryFrom = text;
+        }
+        else if (ReferenceEquals(picker, HistoryToDatePicker))
+        {
+            viewModel.HistoryTo = text;
+        }
+    }
+
     private void OnHistoryCalendarOpened(object? sender, RoutedEventArgs eventArgs)
     {
         if (sender is not DatePicker picker)

@@ -272,7 +272,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (Set(ref _historyFrom, value))
             {
                 ((RelayCommand)ClearHistoryPeriodCommand).RaiseCanExecuteChanged();
-                QueueHistoryRefresh();
+                if (string.IsNullOrWhiteSpace(value) || TryParseHistoryDateText(value, out _))
+                {
+                    OnPropertyChanged(nameof(HistoryFromDate));
+                    QueueHistoryRefresh();
+                }
             }
         }
     }
@@ -285,9 +289,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (Set(ref _historyTo, value))
             {
                 ((RelayCommand)ClearHistoryPeriodCommand).RaiseCanExecuteChanged();
-                QueueHistoryRefresh();
+                if (string.IsNullOrWhiteSpace(value) || TryParseHistoryDateText(value, out _))
+                {
+                    OnPropertyChanged(nameof(HistoryToDate));
+                    QueueHistoryRefresh();
+                }
             }
         }
+    }
+
+    public DateTime? HistoryFromDate
+    {
+        get => TryParseHistoryDateText(_historyFrom, out DateTime date) ? date.Date : null;
+        set => HistoryFrom = FormatHistoryDate(value);
+    }
+
+    public DateTime? HistoryToDate
+    {
+        get => TryParseHistoryDateText(_historyTo, out DateTime date) ? date.Date : null;
+        set => HistoryTo = FormatHistoryDate(value);
     }
 
     public string HistoryLimit
@@ -1004,6 +1024,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _historyTo = string.Empty;
         OnPropertyChanged(nameof(HistoryFrom));
         OnPropertyChanged(nameof(HistoryTo));
+        OnPropertyChanged(nameof(HistoryFromDate));
+        OnPropertyChanged(nameof(HistoryToDate));
         ((RelayCommand)ClearHistoryPeriodCommand).RaiseCanExecuteChanged();
         QueueHistoryRefresh();
     }
@@ -1639,6 +1661,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static string FormatHistoryDate(DateTime? value) => value?.ToString(
+        "yyyy/MM/dd",
+        CultureInfo.InvariantCulture) ?? string.Empty;
 
     private static DateTimeOffset? ParseOptionalDateTime(
         string value,
