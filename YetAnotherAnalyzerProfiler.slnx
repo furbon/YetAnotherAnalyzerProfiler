@@ -1,0 +1,17 @@
+﻿<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Yaap.Core/Yaap.Core.csproj" />
+    <Project Path="src/Yaap.Cli/Yaap.Cli.csproj" />
+    <Project Path="src/Yaap.Gui/Yaap.Gui.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Yaap.Tests/Yaap.Tests.csproj" />
+    <Project Path="tests/Yaap.Gui.Tests/Yaap.Gui.Tests.csproj" />
+    <Project Path="tests/assets/Fixture.Analyzers/Fixture.Analyzers.csproj" />
+    <Project Path="tests/assets/Fixture.App/Fixture.App.csproj" />
+    <Project Path="tests/assets/Local.Package/Local.Package.csproj" />
+  </Folder>
+  <Folder Name="/eng/">
+    <Project Path="eng/Yaap.Build/Yaap.Build.csproj" />
+  </Folder>
+</Solution>

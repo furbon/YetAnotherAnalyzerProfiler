@@ -1,0 +1,62 @@
+﻿stages:
+  - verify
+  - platform
+  - publish
+
+.linux-verify:
+  stage: verify
+  script:
+    - sh ./eng/build.sh verify --framework "$FRAMEWORK"
+
+linux-net8:
+  extends: .linux-verify
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  variables:
+    FRAMEWORK: net8.0
+
+linux-net10:
+  extends: .linux-verify
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  variables:
+    FRAMEWORK: net10.0
+
+windows-wpf:
+  stage: platform
+  tags: [windows]
+  script:
+    - pwsh -NoProfile -File eng/build.ps1 verify --framework net10.0
+
+macos-cli:
+  stage: platform
+  tags: [macos]
+  script:
+    - sh ./eng/build.sh verify --framework net10.0
+
+publish-linux:
+  stage: publish
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  script:
+    - sh ./eng/build.sh publish --framework net10.0 --runtime linux-x64
+  artifacts:
+    paths:
+      - artifacts/publish/linux-x64/net10.0
+
+publish-windows:
+  stage: publish
+  tags: [windows]
+  script:
+    - pwsh -NoProfile -File eng/build.ps1 publish --framework net10.0 --runtime win-x64
+  artifacts:
+    paths:
+      - artifacts/publish/win-x64/net10.0
+
+publish-macos:
+  stage: publish
+  tags: [macos]
+  script:
+    - sh ./eng/build.sh publish --framework net10.0 --runtime osx-x64
+    - sh ./eng/build.sh publish --framework net10.0 --runtime osx-arm64
+  artifacts:
+    paths:
+      - artifacts/publish/osx-x64/net10.0
+      - artifacts/publish/osx-arm64/net10.0

@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <AssemblyName>yaap</AssemblyName>
+    <RootNamespace>Yaap.Cli</RootNamespace>
+    <Description>Cross-platform non-interactive CLI for YAAP.</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Yaap.Core/Yaap.Core.csproj" />
+  </ItemGroup>
+</Project>

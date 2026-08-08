@@ -1,0 +1,24 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fixture.Analyzers", "..\Fixture.Analyzers\Fixture.Analyzers.csproj", "{F11FBD60-BED5-4E93-837D-6CC014BD8FEA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fixture.App", "..\Fixture.App\Fixture.App.csproj", "{8EA43647-A23A-47D7-BA93-609E484EF385}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F11FBD60-BED5-4E93-837D-6CC014BD8FEA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F11FBD60-BED5-4E93-837D-6CC014BD8FEA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F11FBD60-BED5-4E93-837D-6CC014BD8FEA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F11FBD60-BED5-4E93-837D-6CC014BD8FEA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8EA43647-A23A-47D7-BA93-609E484EF385}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8EA43647-A23A-47D7-BA93-609E484EF385}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8EA43647-A23A-47D7-BA93-609E484EF385}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8EA43647-A23A-47D7-BA93-609E484EF385}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

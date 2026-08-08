@@ -1,0 +1,13 @@
+﻿{
+  "version": 2,
+  "dependencies": {
+    "net8.0": {
+      "Local.Package": {
+        "type": "Direct",
+        "requested": "[1.0.0, )",
+        "resolved": "1.0.0",
+        "contentHash": "WawPqCB8tVrYn3YBcq9JNBrjS2EGX4gTHAHX816IZR6uPqDw2/frO90M1Kj3mopwwywgaDXlF4Cz6t99OaIDnA=="
+      }
+    }
+  }
+}

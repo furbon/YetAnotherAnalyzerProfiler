@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFrameworks>net8.0-windows;net10.0-windows</TargetFrameworks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>yaap-gui</AssemblyName>
+    <RootNamespace>Yaap.Gui</RootNamespace>
+    <Description>Windows WPF user interface for YAAP.</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Yaap.Core/Yaap.Core.csproj" />
+  </ItemGroup>
+</Project>
