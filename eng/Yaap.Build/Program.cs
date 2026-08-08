@@ -17,6 +17,7 @@ try
             break;
         case "restore":
             await RestoreAsync(root, framework);
+            NormalizePackageLockFiles(root);
             break;
         case "build":
             await BuildAsync(root, framework);
@@ -34,9 +35,11 @@ try
         case "verify":
             CheckRepository(root);
             await RestoreAsync(root, framework);
+            NormalizePackageLockFiles(root);
             await FormatAsync(root);
             await BuildAsync(root, framework);
             await TestAsync(root, framework);
+            NormalizePackageLockFiles(root);
             CheckRepository(root);
             break;
         default:
@@ -125,6 +128,7 @@ static async Task FormatAsync(string root)
         "--verify-no-changes",
         "--no-restore",
     });
+    NormalizePackageLockFiles(root);
 }
 
 static async Task TestAsync(string root, string framework)
@@ -441,6 +445,25 @@ static string[] GetRepositoryFiles(string root)
     return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToArray();
+}
+
+static void NormalizePackageLockFiles(string root)
+{
+    UTF8Encoding encoding = new(encoderShouldEmitUTF8Identifier: true);
+    foreach (string relative in GetRepositoryFiles(root).Where(relative =>
+                 Path.GetFileName(relative).Equals("packages.lock.json", StringComparison.OrdinalIgnoreCase)))
+    {
+        string path = Path.Combine(root, relative);
+        if (!File.Exists(path))
+        {
+            continue;
+        }
+
+        string content = File.ReadAllText(path)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\n", "\r\n", StringComparison.Ordinal);
+        File.WriteAllText(path, content, encoding);
+    }
 }
 
 static bool IsTextFile(string path)
