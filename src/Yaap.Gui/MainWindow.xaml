@@ -480,6 +480,7 @@
                                   Height="32"
                                   Margin="4,0,0,0"
                                   Padding="6"
+                                  AutomationProperties.Name="詳細設定を開く"
                                   ToolTip="{Binding AdvancedSettingsSummary}">
                         <ui:SymbolIcon Symbol="Options20" />
                     </ToggleButton>
@@ -524,18 +525,19 @@
                                         <TextBlock x:Name="ProfileModeLabel" Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="測定モード" />
                                         <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,8" Orientation="Horizontal">
                                             <ComboBox Width="120" Margin="0,0,20,0" AutomationProperties.LabeledBy="{Binding ElementName=ProfileModeLabel}" ItemsSource="{Binding Modes}" SelectedItem="{Binding SelectedMode}" />
-                                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="ウォームアップ回数" />
-                                            <TextBox Width="50" Margin="0,0,20,0" Text="{Binding WarmupCount}" />
-                                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="測定回数" />
-                                            <TextBox Width="50" Text="{Binding IterationCount}" />
+                                            <TextBlock x:Name="WarmupCountLabel" Margin="0,0,6,0" VerticalAlignment="Center" Text="ウォームアップ回数" />
+                                            <TextBox Width="50" Margin="0,0,20,0" AutomationProperties.LabeledBy="{Binding ElementName=WarmupCountLabel}" Text="{Binding WarmupCount}" />
+                                            <TextBlock x:Name="IterationCountLabel" Margin="0,0,6,0" VerticalAlignment="Center" Text="測定回数" />
+                                            <TextBox Width="50" AutomationProperties.LabeledBy="{Binding ElementName=IterationCountLabel}" Text="{Binding IterationCount}" />
                                         </StackPanel>
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="履歴場所" />
+                                        <TextBlock x:Name="HistoryPathLabel" Grid.Row="1" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="履歴場所" />
                                         <Grid Grid.Row="1" Grid.Column="1" Margin="0,0,12,8">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <ui:TextBox PlaceholderText="OS標準の履歴場所を使用"
+                                            <ui:TextBox AutomationProperties.LabeledBy="{Binding ElementName=HistoryPathLabel}"
+                                                        PlaceholderText="OS標準の履歴場所を使用"
                                                         Text="{Binding HistoryPath, UpdateSourceTrigger=PropertyChanged}"
                                                         ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
                                             <Button Grid.Column="1"
@@ -544,8 +546,8 @@
                                                     Command="{Binding BrowseHistoryDirectoryCommand}"
                                                     Content="参照" />
                                         </Grid>
-                                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,0,8,8" VerticalAlignment="Center" Text="保持件数" />
-                                        <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,0,8" Text="{Binding RetentionCount}" />
+                                        <TextBlock x:Name="RetentionCountLabel" Grid.Row="1" Grid.Column="2" Margin="0,0,8,8" VerticalAlignment="Center" Text="保持件数" />
+                                        <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,0,8" AutomationProperties.LabeledBy="{Binding ElementName=RetentionCountLabel}" Text="{Binding RetentionCount}" />
                                         <StackPanel Grid.Row="2"
                                                     Grid.Column="0"
                                                     Grid.ColumnSpan="4"
@@ -561,13 +563,14 @@
                                                       IsChecked="{Binding Isolated}"
                                                       ToolTip="dotnet --artifacts-path を使用します。サンドボックスではありません。" />
                                         </StackPanel>
-                                        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Text="分離出力先" />
+                                        <TextBlock x:Name="ArtifactsPathLabel" Grid.Row="3" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Text="分離出力先" />
                                         <Grid Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <ui:TextBox IsEnabled="{Binding Isolated}"
+                                            <ui:TextBox AutomationProperties.LabeledBy="{Binding ElementName=ArtifactsPathLabel}"
+                                                        IsEnabled="{Binding Isolated}"
                                                         PlaceholderText="YAAP管理の一時領域を使用"
                                                         Text="{Binding ArtifactsPath, UpdateSourceTrigger=PropertyChanged}"
                                                         ToolTip="空欄ではYAAP管理の一時領域を使います。対象ディレクトリ外を指定してください。" />
@@ -584,14 +587,23 @@
                         </ui:Card>
                     </Popup>
                 </StackPanel>
-                <ComboBox x:Name="ConfigurationSelector"
-                          Grid.Row="0"
-                          Grid.Column="3"
-                          Margin="0,0,8,0"
-                          AutomationProperties.Name="ビルド構成"
-                          ItemsSource="{Binding Configurations}"
-                          SelectedItem="{Binding Configuration, Mode=TwoWay}"
-                          ToolTip="対象から検出したビルド構成" />
+                <Grid Grid.Row="0" Grid.Column="3" Margin="0,0,8,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="ConfigurationLabel"
+                               Margin="0,0,6,0"
+                               VerticalAlignment="Center"
+                               Text="構成" />
+                    <ComboBox x:Name="ConfigurationSelector"
+                              Grid.Column="1"
+                              AutomationProperties.LabeledBy="{Binding ElementName=ConfigurationLabel}"
+                              IsEditable="True"
+                              ItemsSource="{Binding Configurations}"
+                              Text="{Binding Configuration, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              ToolTip="対象から検出した構成を選ぶか、任意のビルド構成を入力" />
+                </Grid>
                 <ui:Button x:Name="StartButton"
                            Grid.Row="0"
                            Grid.Column="4"
@@ -650,26 +662,45 @@
             </Grid>
         </ui:Card>
 
-        <ui:InfoBar x:Name="StatusBar"
-                    AutomationProperties.LiveSetting="Polite"
-                    DockPanel.Dock="Bottom"
-                    Margin="0,12,0,0"
-                    IsClosable="False"
-                    IsOpen="True"
-                    Message="{Binding StatusText}"
-                    Severity="{Binding StatusSeverity}"
-                    Title="{Binding StatusTitleText}">
-            <ui:InfoBar.Style>
-                <Style BasedOn="{StaticResource {x:Type ui:InfoBar}}" TargetType="{x:Type ui:InfoBar}">
-                    <Setter Property="Visibility" Value="Visible" />
-                    <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsBusySurfaceVisible}" Value="True">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                        </DataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </ui:InfoBar.Style>
-        </ui:InfoBar>
+        <Grid DockPanel.Dock="Bottom" Margin="0,12,0,0">
+            <ui:InfoBar x:Name="StatusBar"
+                        AutomationProperties.LiveSetting="Polite"
+                        IsClosable="False"
+                        IsOpen="True"
+                        Message="{Binding StatusText}"
+                        Severity="{Binding StatusSeverity}"
+                        Title="{Binding StatusTitleText}">
+                <ui:InfoBar.Style>
+                    <Style BasedOn="{StaticResource {x:Type ui:InfoBar}}" TargetType="{x:Type ui:InfoBar}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsBusySurfaceVisible}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ui:InfoBar.Style>
+            </ui:InfoBar>
+            <Button x:Name="InlineCancelButton"
+                    Margin="0,8,12,8"
+                    Padding="12,4"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    AutomationProperties.Name="現在の処理をキャンセル"
+                    Command="{Binding CancelCommand}"
+                    Content="キャンセル">
+                <Button.Style>
+                    <Style TargetType="{x:Type Button}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsInlineOperationVisible}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+        </Grid>
 
         <TabControl x:Name="MainTabs"
                     Margin="0,12,0,0"
@@ -1006,12 +1037,14 @@
                             <ColumnDefinition Width="360" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0"
+                        <TextBlock x:Name="HistoryLabelEditorLabel"
+                                   Grid.Column="0"
                                    Margin="0,0,8,0"
                                    VerticalAlignment="Center"
                                    Text="選択中のラベル" />
                         <ui:TextBox x:Name="HistoryLabelTextBox"
-                                    Grid.Column="1"
+                                     Grid.Column="1"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=HistoryLabelEditorLabel}"
                                     IsEnabled="{Binding SelectedHistory}"
                                     MaxLength="120"
                                     PlaceholderText="例: 最適化前（自動保存）"
@@ -1063,10 +1096,18 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Width="*" Binding="{Binding TargetName}" Header="対象" />
+                            <DataGridTextColumn Width="240" Binding="{Binding TargetName}" Header="対象" />
                             <DataGridTextColumn Width="120" Binding="{Binding Configuration}" Header="構成" />
-                            <DataGridTextColumn Width="120" Binding="{Binding AnalyzerMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="Analyzer ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                            <DataGridTextColumn Width="120" Binding="{Binding GeneratorMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="Generator ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                            <DataGridTextColumn Width="150" Binding="{Binding AnalyzerMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" HeaderStyle="{StaticResource NumericColumnHeaderStyle}">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock TextAlignment="Right" ToolTip="コンパイラー報告のAnalyzer合計を成功サンプル間で平均した値"><Run Text="Analyzer" /><LineBreak /><Run Text="合計平均 (ms)" /></TextBlock>
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Width="150" Binding="{Binding GeneratorMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" HeaderStyle="{StaticResource NumericColumnHeaderStyle}">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock TextAlignment="Right" ToolTip="コンパイラー報告のGenerator合計を成功サンプル間で平均した値"><Run Text="Generator" /><LineBreak /><Run Text="合計平均 (ms)" /></TextBlock>
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
                         </DataGrid.Columns>
                     </ui:DataGrid>
                 </Grid>
@@ -1120,7 +1161,23 @@
                                  AutoGenerateColumns="False"
                                  IsReadOnly="True">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Width="110" Binding="{Binding Category}" Header="種別" />
+                            <DataGridTemplateColumn Width="110" Header="種別">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <TextBlock.Style>
+                                                <Style TargetType="{x:Type TextBlock}">
+                                                    <Setter Property="Text" Value="{Binding Category}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Category}" Value="analyzer"><Setter Property="Text" Value="Analyzer" /></DataTrigger>
+                                                        <DataTrigger Binding="{Binding Category}" Value="generator"><Setter Property="Text" Value="Generator" /></DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Analyzer／Generator" />
                             <DataGridTextColumn Width="120" Binding="{Binding BaselineMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="基準 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
                             <DataGridTextColumn Width="120" Binding="{Binding CandidateMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="候補 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />

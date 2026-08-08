@@ -3,6 +3,21 @@
   - platform
   - publish
 
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+default:
+  interruptible: true
+  timeout: 45 minutes
+
+variables:
+  RepositoryUrl: $CI_PROJECT_URL
+
 .linux-verify:
   stage: verify
   script:
@@ -26,7 +41,10 @@ windows-wpf:
   tags: [windows]
   script:
     - pwsh -NoProfile -File eng/install-git-hooks.ps1
-    - pwsh -NoProfile -File eng/build.ps1 verify --framework net10.0
+    - pwsh -NoProfile -File eng/build.ps1 verify --framework $env:FRAMEWORK
+  parallel:
+    matrix:
+      - FRAMEWORK: [net8.0, net10.0]
 
 macos-cli:
   stage: platform
@@ -37,32 +55,47 @@ macos-cli:
 
 publish-linux:
   stage: publish
+  resource_group: publish-$CI_COMMIT_REF_SLUG
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   image: mcr.microsoft.com/dotnet/sdk:10.0.302@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0
   script:
     - git config --local core.hooksPath .githooks
     - sh ./eng/build.sh publish --framework net10.0 --runtime linux-x64
   artifacts:
+    expire_in: 7 days
     paths:
       - artifacts/publish/linux-x64/net10.0
 
 publish-windows:
   stage: publish
+  resource_group: publish-$CI_COMMIT_REF_SLUG
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   tags: [windows]
   script:
     - pwsh -NoProfile -File eng/install-git-hooks.ps1
     - pwsh -NoProfile -File eng/build.ps1 publish --framework net10.0 --runtime win-x64
   artifacts:
+    expire_in: 7 days
     paths:
       - artifacts/publish/win-x64/net10.0
 
 publish-macos:
   stage: publish
+  resource_group: publish-$CI_COMMIT_REF_SLUG
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   tags: [macos]
   script:
     - git config --local core.hooksPath .githooks
     - sh ./eng/build.sh publish --framework net10.0 --runtime osx-x64
     - sh ./eng/build.sh publish --framework net10.0 --runtime osx-arm64
   artifacts:
+    expire_in: 7 days
     paths:
       - artifacts/publish/osx-x64/net10.0
       - artifacts/publish/osx-arm64/net10.0

@@ -70,7 +70,9 @@ public sealed class ProfileRunner : IProfileRunner
         Directory.CreateDirectory(workDirectory);
         string effectiveTarget = target.FullPath;
         List<MeasurementResult> measurements = new();
+        ProfileStatisticsAccumulator statistics = new();
         List<RunDiagnostic> runDiagnostics = new();
+        YaapException? terminationFailure = null;
         IReadOnlyList<GeneratorOutputSnapshot> latestOutputSnapshots =
             Array.Empty<GeneratorOutputSnapshot>();
         await history.SaveAsync(run, cancellationToken).ConfigureAwait(false);
@@ -164,6 +166,8 @@ public sealed class ProfileRunner : IProfileRunner
                 List<RunDiagnostic> measurementDiagnostics = new();
                 IReadOnlyList<AnalyzerSample> analyzers = Array.Empty<AnalyzerSample>();
                 IReadOnlyList<GeneratorSample> generators = Array.Empty<GeneratorSample>();
+                double compilerReportedAnalyzerTotalMilliseconds = 0;
+                double compilerReportedGeneratorTotalMilliseconds = 0;
                 bool profilingSucceeded = true;
                 if (File.Exists(compilerCapturePath) || File.Exists(binlogPath))
                 {
@@ -220,9 +224,20 @@ public sealed class ProfileRunner : IProfileRunner
                     {
                         AddAnalyzerSamples(analyzerTotals, analysis.Analyzers);
                         AddGeneratorSamples(generatorTotals, analysis.Generators);
+                        compilerReportedAnalyzerTotalMilliseconds =
+                            analysis.CompilerReportedAnalyzerTotalMilliseconds ??
+                            Statistics.CompilerReportedAnalyzerTotal(analysis.Analyzers);
+                        compilerReportedGeneratorTotalMilliseconds =
+                            analysis.CompilerReportedGeneratorTotalMilliseconds ??
+                            Statistics.CompilerReportedGeneratorTotal(analysis.Generators);
                     }
 
                     measurementDiagnostics.AddRange(analysis.Diagnostics);
+                    if (HasUnrecognizedCompilerReport(analysis.Diagnostics))
+                    {
+                        profilingSucceeded = false;
+                    }
+
                     for (int compilerIndex = 0; compilerIndex < compilerInvocations.Count; compilerIndex++)
                     {
                         SpooledCompilerInvocation invocation = compilerInvocations[compilerIndex];
@@ -263,19 +278,34 @@ public sealed class ProfileRunner : IProfileRunner
                                     cancellationToken).ConfigureAwait(false);
                                 ProcessResult compiler = compilerExecution.Result;
                                 BinlogAnalysis report = reports.Complete();
-                                AddAnalyzerSamples(analyzerTotals, report.Analyzers);
-                                AddGeneratorSamples(generatorTotals, report.Generators);
                                 measurementDiagnostics.AddRange(report.Diagnostics);
-                                if (compiler.ExitCode != 0)
+                                if (HasUnrecognizedCompilerReport(report.Diagnostics))
                                 {
                                     profilingSucceeded = false;
-                                    measurementDiagnostics.Add(CreateProcessFailureDiagnostic(
-                                        ProcessOperation.CompilerReplay,
-                                        compilerInvocation,
-                                        compilerExecution));
+                                }
+
+                                if (compiler.ExitCode != 0 ||
+                                    HasUnrecognizedCompilerReport(report.Diagnostics))
+                                {
+                                    if (compiler.ExitCode != 0)
+                                    {
+                                        profilingSucceeded = false;
+                                        measurementDiagnostics.Add(CreateProcessFailureDiagnostic(
+                                            ProcessOperation.CompilerReplay,
+                                            compilerInvocation,
+                                            compilerExecution));
+                                    }
                                 }
                                 else
                                 {
+                                    AddAnalyzerSamples(analyzerTotals, report.Analyzers);
+                                    AddGeneratorSamples(generatorTotals, report.Generators);
+                                    compilerReportedAnalyzerTotalMilliseconds +=
+                                        report.CompilerReportedAnalyzerTotalMilliseconds ??
+                                        Statistics.CompilerReportedAnalyzerTotal(report.Analyzers);
+                                    compilerReportedGeneratorTotalMilliseconds +=
+                                        report.CompilerReportedGeneratorTotalMilliseconds ??
+                                        Statistics.CompilerReportedGeneratorTotal(report.Generators);
                                     TryDeleteFile(compilerLogPath);
                                 }
                             }
@@ -313,11 +343,15 @@ public sealed class ProfileRunner : IProfileRunner
                     }
                 }
 
-                latestOutputSnapshots = await history.ReplaceGeneratedOutputsAsync(
-                    run.Id,
-                    GeneratedOutputInventory.InspectAsync(generatedPath, cancellationToken),
-                    cancellationToken).ConfigureAwait(false);
                 bool succeeded = build.ExitCode == 0 && profilingSucceeded;
+                if (succeeded)
+                {
+                    latestOutputSnapshots = await history.ReplaceGeneratedOutputsAsync(
+                        run.Id,
+                        GeneratedOutputInventory.InspectAsync(generatedPath, cancellationToken),
+                        cancellationToken).ConfigureAwait(false);
+                }
+
                 if (build.ExitCode != 0)
                 {
                     measurementDiagnostics.Add(CreateProcessFailureDiagnostic(
@@ -330,7 +364,7 @@ public sealed class ProfileRunner : IProfileRunner
                     TryDeleteFile(buildLogPath);
                 }
 
-                measurements.Add(new MeasurementResult(
+                MeasurementResult measurement = new(
                     index,
                     startedAt,
                     build.Elapsed.TotalMilliseconds,
@@ -339,14 +373,33 @@ public sealed class ProfileRunner : IProfileRunner
                     analyzers,
                     generators,
                     Array.Empty<GeneratedOutput>(),
-                    measurementDiagnostics));
-                run.Analyzers = Statistics.AggregateAnalyzers(measurements);
-                run.Generators = Statistics.AggregateGenerators(measurements, latestOutputSnapshots);
+                    measurementDiagnostics)
+                {
+                    CompilerReportedAnalyzerTotalMilliseconds =
+                        compilerReportedAnalyzerTotalMilliseconds,
+                    CompilerReportedGeneratorTotalMilliseconds =
+                        compilerReportedGeneratorTotalMilliseconds,
+                };
+                statistics.Add(measurement);
+                MeasurementResult compactMeasurement = measurement with
+                {
+                    Analyzers = Array.Empty<AnalyzerSample>(),
+                    Generators = Array.Empty<GeneratorSample>(),
+                    GeneratedOutputs = Array.Empty<GeneratedOutput>(),
+                };
+                measurements.Add(compactMeasurement);
+                run.Analyzers = statistics.CreateAnalyzerMetrics();
+                run.Generators = statistics.CreateGeneratorMetrics(latestOutputSnapshots);
+                run.CompilerReportedAnalyzerMeanMilliseconds = statistics.AnalyzerTotalMeanMilliseconds;
+                run.CompilerReportedGeneratorMeanMilliseconds = statistics.GeneratorTotalMeanMilliseconds;
                 run.Measurements = measurements.ToArray();
                 run.Diagnostics = runDiagnostics.Concat(measurementDiagnostics).ToArray();
                 run.Status = succeeded ? RunStatus.Running : RunStatus.Partial;
                 progress?.Report(new ProfileProgress(ProfileStage.Saving, "部分結果を保存しています。", index, options.IterationCount));
-                await history.SaveAsync(run, cancellationToken).ConfigureAwait(false);
+                await history.SaveCheckpointAsync(
+                    run,
+                    measurement,
+                    cancellationToken).ConfigureAwait(false);
 
                 TryDeleteDirectory(generatedPath);
                 TryDeleteFile(compilerCapturePath);
@@ -371,6 +424,10 @@ public sealed class ProfileRunner : IProfileRunner
         {
             run.Status = measurements.Count > 0 ? RunStatus.Partial : RunStatus.Failed;
             runDiagnostics.Add(exception.Diagnostic);
+            if (exception.Diagnostic.Code == "YAAP2002")
+            {
+                terminationFailure = exception;
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
@@ -382,8 +439,10 @@ public sealed class ProfileRunner : IProfileRunner
         }
 
         run.Measurements = measurements.ToArray();
-        run.Analyzers = Statistics.AggregateAnalyzers(measurements);
-        run.Generators = Statistics.AggregateGenerators(measurements, latestOutputSnapshots);
+        run.Analyzers = statistics.CreateAnalyzerMetrics();
+        run.Generators = statistics.CreateGeneratorMetrics(latestOutputSnapshots);
+        run.CompilerReportedAnalyzerMeanMilliseconds = statistics.AnalyzerTotalMeanMilliseconds;
+        run.CompilerReportedGeneratorMeanMilliseconds = statistics.GeneratorTotalMeanMilliseconds;
         run.Diagnostics = run.Diagnostics.Concat(runDiagnostics).Distinct().ToArray();
         run.FinishedAt = DateTimeOffset.UtcNow;
         CleanupTransientCompilerFiles(workDirectory);
@@ -398,6 +457,11 @@ public sealed class ProfileRunner : IProfileRunner
             TryDeleteDirectory(artifactsPath);
         }
 
+        if (terminationFailure is not null)
+        {
+            throw terminationFailure;
+        }
+
         progress?.Report(new ProfileProgress(ProfileStage.Completed, "測定が完了しました。", 1, 1));
         return run;
     }
@@ -406,22 +470,22 @@ public sealed class ProfileRunner : IProfileRunner
     {
         if (options.IterationCount is < 1 or > 1000)
         {
-            throw new YaapException(YaapErrors.InvalidInput("Iteration count must be between 1 and 1000."));
+            throw new YaapException(YaapErrors.InvalidOption("反復回数は 1～1000 を指定してください。"));
         }
 
         if (options.WarmupCount is < 0 or > 1000)
         {
-            throw new YaapException(YaapErrors.InvalidInput("Warm-up count must be between 0 and 1000."));
+            throw new YaapException(YaapErrors.InvalidOption("ウォームアップ回数は 0～1000 を指定してください。"));
         }
 
         if (options.RetentionCount < 1)
         {
-            throw new YaapException(YaapErrors.InvalidInput("Retention count must be at least 1."));
+            throw new YaapException(YaapErrors.InvalidOption("履歴の保持件数は 1 以上を指定してください。"));
         }
 
         if (!options.Isolated && !string.IsNullOrWhiteSpace(options.ArtifactsPath))
         {
-            throw new YaapException(YaapErrors.InvalidInput("--artifacts-path requires isolated mode."));
+            throw new YaapException(YaapErrors.InvalidOption("--artifacts-path は分離出力が有効な場合だけ指定できます。"));
         }
     }
 
@@ -831,9 +895,13 @@ public sealed class ProfileRunner : IProfileRunner
         string path = Path.GetFullPath(options.ArtifactsPath ?? Path.Combine(workDirectory, "artifacts"));
         string target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(targetDirectory));
         string relative = Path.GetRelativePath(target, path);
-        if (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative))
+        bool isOutsideTarget = relative.Equals("..", StringComparison.Ordinal) ||
+            relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+            relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal) ||
+            Path.IsPathRooted(relative);
+        if (!isOutsideTarget)
         {
-            throw new YaapException(YaapErrors.InvalidInput(
+            throw new YaapException(YaapErrors.InvalidOption(
                 "The isolated artifacts path must be outside the analyzed target directory."));
         }
 
@@ -863,6 +931,12 @@ public sealed class ProfileRunner : IProfileRunner
             totals.TryGetValue(key, out double current);
             totals[key] = current + sample.ElapsedMilliseconds;
         }
+    }
+
+    private static bool HasUnrecognizedCompilerReport(IReadOnlyList<RunDiagnostic> diagnostics)
+    {
+        return diagnostics.Any(diagnostic =>
+            diagnostic.Code.Equals("YAAP3002", StringComparison.Ordinal));
     }
 
     private static void TryDeleteDirectory(string path)

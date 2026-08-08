@@ -29,6 +29,12 @@ public static class CliApplication
                 return Success;
             }
 
+            if (TryGetCommandHelp(arguments, out string? commandHelp))
+            {
+                await output.WriteLineAsync(commandHelp).ConfigureAwait(false);
+                return Success;
+            }
+
             return arguments[0].ToLowerInvariant() switch
             {
                 "profile" => await ProfileAsync(
@@ -41,8 +47,8 @@ public static class CliApplication
                 "compare" => await CompareAsync(arguments.Skip(1).ToArray(), output, cancellationToken).ConfigureAwait(false),
                 "export" => await ExportAsync(arguments.Skip(1).ToArray(), output, cancellationToken).ConfigureAwait(false),
                 "analyze" => await AnalyzeAsync(arguments.Skip(1).ToArray(), output, cancellationToken).ConfigureAwait(false),
-                "version" or "--version" => await VersionAsync(output).ConfigureAwait(false),
-                _ => throw new CliUsageException($"Unknown command: {arguments[0]}"),
+                "version" or "--version" => await VersionAsync(arguments.Skip(1).ToArray(), output).ConfigureAwait(false),
+                _ => throw new CliUsageException($"不明なコマンドです: {arguments[0]}"),
             };
         }
         catch (OperationCanceledException)
@@ -53,7 +59,7 @@ public static class CliApplication
         catch (CliUsageException exception)
         {
             await error.WriteLineAsync(exception.Message).ConfigureAwait(false);
-            await error.WriteLineAsync("Run 'yaap help' for usage.").ConfigureAwait(false);
+            await error.WriteLineAsync("使用方法は 'yaap help' で確認できます。").ConfigureAwait(false);
             return UsageError;
         }
         catch (YaapException exception)
@@ -87,7 +93,7 @@ public static class CliApplication
         parsed.RejectConflict("clean", "no-clean");
         parsed.RejectConflict("restore", "no-restore");
         parsed.RejectConflict("isolated", "no-isolated");
-        string target = parsed.RequirePositional(0, "profile requires a target path.");
+        string target = parsed.RequirePositional(0, "profile には測定対象のパスが必要です。");
         ProfileMode mode = parsed.GetEnum("mode", ProfileMode.Warm);
         ProfileOptions defaults = ProfileOptions.ForMode(target, mode);
         ProfileOptions options = defaults with
@@ -102,6 +108,12 @@ public static class CliApplication
             HistoryPath = parsed.Get("history"),
             RetentionCount = parsed.GetInt("retention", defaults.RetentionCount),
         };
+        if (options.WarmupCount is < 0 or > 1000 ||
+            options.IterationCount is < 1 or > 1000 ||
+            options.RetentionCount < 1)
+        {
+            throw new CliUsageException("--warmups は 0～1000、--iterations は 1～1000、--retention は 1 以上を指定してください。");
+        }
 
         bool json = parsed.HasFlag("json");
         IProgress<ProfileProgress>? progress = json
@@ -115,10 +127,12 @@ public static class CliApplication
 
         if (json)
         {
+            HistoryStore history = new(options.HistoryPath);
+            run = await history.LoadAsync(run.Id, cancellationToken).ConfigureAwait(false);
             await WriteRunJsonAsync(
                 output,
                 run,
-                new HistoryStore(options.HistoryPath).StreamGeneratedOutputsAsync(
+                history.StreamGeneratedOutputsAsync(
                     run.Id,
                     cancellationToken),
                 cancellationToken).ConfigureAwait(false);
@@ -131,7 +145,7 @@ public static class CliApplication
         string? exportFormat = parsed.Get("export");
         if (exportFormat is not null)
         {
-            string outputPath = parsed.Get("output") ?? throw new CliUsageException("--export requires --output.");
+            string outputPath = parsed.Get("output") ?? throw new CliUsageException("--export には --output が必要です。");
             await RunExporter.ExportAsync(
                 run,
                 ParseExportFormat(exportFormat),
@@ -159,7 +173,7 @@ public static class CliApplication
         ParsedArguments parsed = ParsedArguments.Parse(arguments);
         parsed.Validate(Array.Empty<string>(), Array.Empty<string>(), 1, 1);
         TargetInfo target = await TargetDiscovery.DiscoverAsync(
-            parsed.RequirePositional(0, "configurations requires a target path."),
+            parsed.RequirePositional(0, "configurations には測定対象のパスが必要です。"),
             cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(output, target, cancellationToken).ConfigureAwait(false);
         return Success;
@@ -172,7 +186,7 @@ public static class CliApplication
     {
         if (arguments.Count == 0)
         {
-            throw new CliUsageException("history requires list, show, or delete.");
+            throw new CliUsageException("history には list、show、delete のいずれかが必要です。");
         }
 
         ParsedArguments parsed = ParsedArguments.Parse(arguments.Skip(1).ToArray());
@@ -188,20 +202,26 @@ public static class CliApplication
                 RunStatus? status = parsed.Get("status") is { } statusText
                     ? ParseEnum<RunStatus>(statusText, "status")
                     : null;
+                int? limit = parsed.GetNullableInt("limit");
+                if (limit is <= 0 or > 10000)
+                {
+                    throw new CliUsageException("--limit は 1～10000 を指定してください。");
+                }
+
                 IReadOnlyList<RunSummary> summaries = await history.ListAsync(
                     new HistoryQuery(
                         parsed.Get("search"),
                         status,
                         parsed.GetDateTime("from"),
                         parsed.GetDateTime("to"),
-                        parsed.GetNullableInt("limit")),
+                        limit),
                     cancellationToken).ConfigureAwait(false);
                 await WriteJsonAsync(output, summaries, cancellationToken).ConfigureAwait(false);
                 return Success;
             case "show":
                 parsed.Validate(new[] { "history" }, Array.Empty<string>(), 1, 1);
                 ProfileRun run = await history.LoadAsync(
-                    parsed.RequireGuid(0, "history show requires a run id."),
+                    parsed.RequireGuid(0, "history show には測定IDが必要です。"),
                     cancellationToken).ConfigureAwait(false);
                 await WriteRunJsonAsync(
                     output,
@@ -213,15 +233,15 @@ public static class CliApplication
                 parsed.Validate(new[] { "history" }, new[] { "force" }, 1, 1);
                 if (!parsed.HasFlag("force"))
                 {
-                    throw new CliUsageException("history delete is non-interactive and requires --force.");
+                    throw new CliUsageException("history delete は非対話操作のため --force が必要です。");
                 }
 
-                Guid id = parsed.RequireGuid(0, "history delete requires a run id.");
+                Guid id = parsed.RequireGuid(0, "history delete には測定IDが必要です。");
                 await history.DeleteAsync(id, cancellationToken).ConfigureAwait(false);
                 await output.WriteLineAsync(id.ToString("D")).ConfigureAwait(false);
                 return Success;
             default:
-                throw new CliUsageException($"Unknown history command: {arguments[0]}");
+                throw new CliUsageException($"不明な history コマンドです: {arguments[0]}");
         }
     }
 
@@ -234,10 +254,10 @@ public static class CliApplication
         parsed.Validate(new[] { "history" }, Array.Empty<string>(), 2, 2);
         HistoryStore history = new(parsed.Get("history"));
         ProfileRun baseline = await history.LoadAsync(
-            parsed.RequireGuid(0, "compare requires baseline and candidate run ids."),
+            parsed.RequireGuid(0, "compare には基準と比較対象の測定IDが必要です。"),
             cancellationToken).ConfigureAwait(false);
         ProfileRun candidate = await history.LoadAsync(
-            parsed.RequireGuid(1, "compare requires baseline and candidate run ids."),
+            parsed.RequireGuid(1, "compare には基準と比較対象の測定IDが必要です。"),
             cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(
             output,
@@ -253,9 +273,9 @@ public static class CliApplication
     {
         ParsedArguments parsed = ParsedArguments.Parse(arguments);
         parsed.Validate(new[] { "format", "output", "history" }, Array.Empty<string>(), 1, 1);
-        Guid id = parsed.RequireGuid(0, "export requires a run id.");
-        string formatText = parsed.Get("format") ?? throw new CliUsageException("export requires --format.");
-        string outputPath = parsed.Get("output") ?? throw new CliUsageException("export requires --output.");
+        Guid id = parsed.RequireGuid(0, "export には測定IDが必要です。");
+        string formatText = parsed.Get("format") ?? throw new CliUsageException("export には --format が必要です。");
+        string outputPath = parsed.Get("output") ?? throw new CliUsageException("export には --output が必要です。");
         HistoryStore history = new(parsed.Get("history"));
         ProfileRun run = await history.LoadAsync(
             id,
@@ -278,14 +298,19 @@ public static class CliApplication
         ParsedArguments parsed = ParsedArguments.Parse(arguments);
         parsed.Validate(Array.Empty<string>(), Array.Empty<string>(), 1, 1);
         BinlogAnalysis result = await new BinlogAnalyzer().AnalyzeAsync(
-            parsed.RequirePositional(0, "analyze requires a binlog path."),
+            parsed.RequirePositional(0, "analyze には binlog のパスが必要です。"),
             cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(output, result, cancellationToken).ConfigureAwait(false);
         return Success;
     }
 
-    private static async Task<int> VersionAsync(TextWriter output)
+    private static async Task<int> VersionAsync(IReadOnlyList<string> arguments, TextWriter output)
     {
+        if (arguments.Count != 0)
+        {
+            throw new CliUsageException("version に引数は指定できません。");
+        }
+
         string version = typeof(CliApplication).Assembly.GetName().Version?.ToString(3) ?? "unknown";
         await output.WriteLineAsync(version).ConfigureAwait(false);
         return Success;
@@ -293,10 +318,10 @@ public static class CliApplication
 
     private static async Task WriteRunSummaryAsync(TextWriter output, ProfileRun run)
     {
-        await output.WriteLineAsync($"Run: {run.Id:D}").ConfigureAwait(false);
-        await output.WriteLineAsync($"Status: {run.Status}").ConfigureAwait(false);
-        await output.WriteLineAsync($"Analyzer metrics: {run.Analyzers.Count}").ConfigureAwait(false);
-        await output.WriteLineAsync($"Generator metrics: {run.Generators.Count}").ConfigureAwait(false);
+        await output.WriteLineAsync($"測定ID: {run.Id:D}").ConfigureAwait(false);
+        await output.WriteLineAsync($"状態: {LocalizedStatus(run.Status)}").ConfigureAwait(false);
+        await output.WriteLineAsync($"Analyzer指標数: {run.Analyzers.Count}").ConfigureAwait(false);
+        await output.WriteLineAsync($"Generator指標数: {run.Generators.Count}").ConfigureAwait(false);
         foreach (RunDiagnostic diagnostic in run.Diagnostics)
         {
             await WriteDiagnosticAsync(output, diagnostic).ConfigureAwait(false);
@@ -368,22 +393,32 @@ public static class CliApplication
             "csv" => ExportFormat.Csv,
             "json" => ExportFormat.Json,
             "md" or "markdown" => ExportFormat.Markdown,
-            _ => throw new CliUsageException($"Unsupported export format: {value}"),
+            _ => throw new CliUsageException($"未対応の出力形式です: {value}"),
         };
     }
+
+    private static string LocalizedStatus(RunStatus status) => status switch
+    {
+        RunStatus.Running => "測定中",
+        RunStatus.Succeeded => "成功",
+        RunStatus.Partial => "部分結果",
+        RunStatus.Failed => "失敗",
+        RunStatus.Canceled => "キャンセル",
+        _ => status.ToString(),
+    };
 
     private static T ParseEnum<T>(string value, string option)
         where T : struct, Enum
     {
         return Enum.TryParse(value, ignoreCase: true, out T result)
             ? result
-            : throw new CliUsageException($"Invalid --{option} value: {value}");
+            : throw new CliUsageException($"--{option} の値が無効です: {value}");
     }
 
     private static string HelpText() => """
         YetAnotherAnalyzerProfiler (YAAP)
 
-        Usage:
+        使用方法:
           yaap profile <target.sln|target.slnx|target.csproj> [options]
           yaap configurations <target>
           yaap history list [--search text] [--status status] [--from ISO-8601]
@@ -395,23 +430,56 @@ public static class CliApplication
           yaap analyze <build.binlog>
           yaap version
 
-        Profile options:
-          --configuration <name>   Build configuration (default: Release)
-          --mode warm|cold|custom  Measurement preset (default: warm)
-          --warmups <count>        Unmeasured builds (default: 1)
-          --iterations <count>     Measured builds (default: 3)
-          --no-clean               Do not clean before each measured build
-          --clean <true|false>     Explicit clean policy for custom mode
-          --no-restore             Skip the single restore
-          --restore <true|false>   Explicit restore policy
-          --isolated               Use isolated output (default)
-          --no-isolated            Allow the target's ordinary bin/obj output
-          --artifacts-path <path>  Explicit isolated artifacts directory
-          --history <path>         History directory
-          --retention <count>      Number of runs to retain (default: 50)
-          --json                   Emit the complete run as JSON
+        profile の主なオプション:
+          --configuration <name>   ビルド構成（既定: Release）
+          --mode warm|cold|custom  測定プリセット（既定: warm）
+          --warmups <0..1000>      集計しない事前ビルド（既定: 1）
+          --iterations <1..1000>   集計するビルド（既定: 3）
+          --no-clean               各測定前の clean を省略
+          --clean <true|false>     custom の clean 方針
+          --no-restore             最初の restore を省略
+          --restore <true|false>   restore 方針
+          --isolated               分離出力を使用（既定）
+          --no-isolated            対象の通常の bin／obj を使用
+          --artifacts-path <path>  分離出力先
+          --history <path>         履歴ディレクトリ
+          --retention <count>      履歴保持件数（既定: 50）
+          --json                   完全な測定結果を JSON で出力
           --export <format> --output <path>
+
+        詳細: yaap <command> --help
+        終了コード: 0=成功、2=使用方法、3=失敗、4=部分結果、130=キャンセル
         """;
+
+    private static bool TryGetCommandHelp(IReadOnlyList<string> arguments, out string? help)
+    {
+        bool requested = arguments.Skip(1).Any(argument => argument is "--help" or "-h");
+        if (!requested)
+        {
+            help = null;
+            return false;
+        }
+
+        string command = arguments[0].ToLowerInvariant();
+        string? historyCommand = command == "history" && arguments.Count >= 2
+            ? arguments[1].ToLowerInvariant()
+            : null;
+        help = (command, historyCommand) switch
+        {
+            ("profile", _) => "使用方法: yaap profile <target.sln|target.slnx|target.csproj> [options]\n範囲: --warmups 0..1000、--iterations 1..1000、--retention 1以上。詳細は yaap help を参照してください。",
+            ("configurations", _) => "使用方法: yaap configurations <target>\n対象から利用可能なビルド構成を JSON で出力します。",
+            ("history", "list") => "使用方法: yaap history list [--search text] [--status Succeeded|Partial|Failed|Canceled] [--from ISO-8601] [--to ISO-8601] [--limit count] [--history path]",
+            ("history", "show") => "使用方法: yaap history show <run-id> [--history path]",
+            ("history", "delete") => "使用方法: yaap history delete <run-id> --force [--history path]\n非対話で削除するため --force が必要です。",
+            ("history", _) => "使用方法: yaap history <list|show|delete> [options]",
+            ("compare", _) => "使用方法: yaap compare <baseline-id> <candidate-id> [--history path]",
+            ("export", _) => "使用方法: yaap export <run-id> --format csv|json|markdown --output <path> [--history path]",
+            ("analyze", _) => "使用方法: yaap analyze <build.binlog>\n既存 binlog のコンパイラー報告値を JSON で出力します。",
+            ("version", _) or ("--version", _) => "使用方法: yaap version",
+            _ => null,
+        };
+        return help is not null;
+    }
 
     private sealed class CliUsageException : Exception
     {
@@ -460,7 +528,7 @@ public static class CliApplication
                 string name = argument[2..];
                 if (name.Length == 0)
                 {
-                    throw new CliUsageException("Invalid empty option.");
+                    throw new CliUsageException("空のオプションは指定できません。");
                 }
 
                 string originalName = name;
@@ -473,7 +541,7 @@ public static class CliApplication
                     name = name[..equals];
                     if (FlagOptions.Contains(name))
                     {
-                        throw new CliUsageException($"--{name} does not accept a value.");
+                        throw new CliUsageException($"--{name} に値は指定できません。");
                     }
                 }
                 else if (!FlagOptions.Contains(name) &&
@@ -485,12 +553,12 @@ public static class CliApplication
 
                 if (name.Length == 0)
                 {
-                    throw new CliUsageException($"Invalid option: --{originalName}");
+                    throw new CliUsageException($"オプション名が無効です: --{originalName}");
                 }
 
                 if (!options.TryAdd(name, value))
                 {
-                    throw new CliUsageException($"Duplicate option: --{name}");
+                    throw new CliUsageException($"オプションが重複しています: --{name}");
                 }
             }
 
@@ -511,28 +579,28 @@ public static class CliApplication
             {
                 if (!allowedValues.Contains(name) && !allowedFlags.Contains(name))
                 {
-                    throw new CliUsageException($"Unknown option: --{name}");
+                    throw new CliUsageException($"不明なオプションです: --{name}");
                 }
 
                 if (allowedFlags.Contains(name) && value is not null)
                 {
-                    throw new CliUsageException($"--{name} does not accept a value.");
+                    throw new CliUsageException($"--{name} に値は指定できません。");
                 }
 
                 if (allowedValues.Contains(name) && value is null)
                 {
-                    throw new CliUsageException($"--{name} requires a value.");
+                    throw new CliUsageException($"--{name} には値が必要です。");
                 }
             }
 
             if (Positionals.Count < minimumPositionals)
             {
-                throw new CliUsageException("A required positional argument is missing.");
+                throw new CliUsageException("必須の位置引数がありません。");
             }
 
             if (Positionals.Count > maximumPositionals)
             {
-                throw new CliUsageException($"Unexpected positional argument: {Positionals[maximumPositionals]}");
+                throw new CliUsageException($"余分な位置引数です: {Positionals[maximumPositionals]}");
             }
         }
 
@@ -540,7 +608,7 @@ public static class CliApplication
         {
             if (_options.ContainsKey(option) && _options.ContainsKey(conflictingOption))
             {
-                throw new CliUsageException($"--{option} cannot be combined with --{conflictingOption}.");
+                throw new CliUsageException($"--{option} と --{conflictingOption} は同時に指定できません。");
             }
         }
 
@@ -551,7 +619,7 @@ public static class CliApplication
                 return null;
             }
 
-            return value ?? throw new CliUsageException($"--{name} requires a value.");
+            return value ?? throw new CliUsageException($"--{name} には値が必要です。");
         }
 
         public int GetInt(string name, int defaultValue) => GetNullableInt(name) ?? defaultValue;
@@ -566,7 +634,7 @@ public static class CliApplication
 
             return bool.TryParse(value, out bool result)
                 ? result
-                : throw new CliUsageException($"--{name} requires true or false.");
+                : throw new CliUsageException($"--{name} には true または false を指定してください。");
         }
 
         public int? GetNullableInt(string name)
@@ -579,7 +647,7 @@ public static class CliApplication
 
             return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int result)
                 ? result
-                : throw new CliUsageException($"--{name} requires an integer.");
+                : throw new CliUsageException($"--{name} には整数を指定してください。");
         }
 
         public DateTimeOffset? GetDateTime(string name)
@@ -592,7 +660,7 @@ public static class CliApplication
 
             return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset result)
                 ? result
-                : throw new CliUsageException($"--{name} requires an ISO-8601 date/time.");
+                : throw new CliUsageException($"--{name} には ISO-8601 形式の日時を指定してください。");
         }
 
         public T GetEnum<T>(string name, T defaultValue)
@@ -612,7 +680,7 @@ public static class CliApplication
             string value = RequirePositional(index, message);
             return Guid.TryParse(value, out Guid result)
                 ? result
-                : throw new CliUsageException($"Invalid run id: {value}");
+                : throw new CliUsageException($"測定IDが無効です: {value}");
         }
     }
 

@@ -11,6 +11,7 @@ public sealed class HistoryStore
     private const string RunLeasesDirectoryName = "leases";
     private const string TombstonesDirectoryName = "tombstones";
     private const string GeneratedOutputsManifestName = "generated-outputs.ndjson";
+    private const string MeasurementCheckpointsDirectoryName = "measurements";
     private const int GeneratedOutputPreviewLimit = 100;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -68,13 +69,59 @@ public sealed class HistoryStore
         {
             string directory = GetRunDirectory(run.Id);
             Directory.CreateDirectory(directory);
+            bool hasMeasurementCheckpoints = Directory.Exists(Path.Combine(
+                directory,
+                MeasurementCheckpointsDirectoryName));
+            ProfileRun persistedRun = hasMeasurementCheckpoints
+                ? run with { Measurements = Array.Empty<MeasurementResult>() }
+                : run;
             await WriteAtomicallyAsync(
                 Path.Combine(directory, "run.json"),
-                run,
+                persistedRun,
                 cancellationToken).ConfigureAwait(false);
             await WriteAtomicallyAsync(
                 Path.Combine(directory, "summary.json"),
                 run.ToSummary(),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            throw new YaapException(YaapErrors.HistoryFailed(exception.Message), exception);
+        }
+    }
+
+    internal async Task SaveCheckpointAsync(
+        ProfileRun run,
+        MeasurementResult measurement,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            string directory = GetRunDirectory(run.Id);
+            string measurementsDirectory = Path.Combine(
+                directory,
+                MeasurementCheckpointsDirectoryName);
+            Directory.CreateDirectory(measurementsDirectory);
+            await WriteAtomicallyAsync(
+                Path.Combine(measurementsDirectory, $"{measurement.Index:D4}.json"),
+                measurement,
+                cancellationToken).ConfigureAwait(false);
+
+            ProfileRun checkpoint = run with
+            {
+                Measurements = Array.Empty<MeasurementResult>(),
+            };
+            await WriteAtomicallyAsync(
+                Path.Combine(directory, "run.json"),
+                checkpoint,
+                cancellationToken).ConfigureAwait(false);
+            await WriteAtomicallyAsync(
+                Path.Combine(directory, "summary.json"),
+                checkpoint.ToSummary(),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -105,6 +152,13 @@ public sealed class HistoryStore
             if (run is null || run.SchemaVersion != ProfileRun.CurrentSchemaVersion)
             {
                 throw new JsonException("Unsupported or empty history schema.");
+            }
+
+            if (run.Measurements.Count == 0)
+            {
+                run.Measurements = await LoadMeasurementCheckpointsAsync(
+                    GetRunDirectory(id),
+                    cancellationToken).ConfigureAwait(false);
             }
 
             string summaryPath = Path.Combine(GetRunDirectory(id), "summary.json");
@@ -277,11 +331,11 @@ public sealed class HistoryStore
         HistoryQuery? query = null,
         CancellationToken cancellationToken = default)
     {
-        QueueTombstoneCleanup();
+        await CleanupTombstonesAsync(cancellationToken).ConfigureAwait(false);
         query ??= new HistoryQuery();
         if (query.Limit is <= 0)
         {
-            throw new YaapException(YaapErrors.InvalidInput("History limit must be greater than zero."));
+            throw new YaapException(YaapErrors.InvalidOption("履歴の表示件数は 1 以上を指定してください。"));
         }
 
         string runsPath = Path.Combine(RootPath, "runs");
@@ -294,9 +348,20 @@ public sealed class HistoryStore
         PriorityQueue<RunSummary, long>? newest = query.Limit is not null
             ? new PriorityQueue<RunSummary, long>()
             : null;
-        foreach (string path in Directory.EnumerateFiles(runsPath, "summary.json", SearchOption.AllDirectories))
+        foreach (string directory in Directory.EnumerateDirectories(runsPath, "*", SearchOption.TopDirectoryOnly))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!Guid.TryParse(Path.GetFileName(directory), out _))
+            {
+                continue;
+            }
+
+            string path = Path.Combine(directory, "summary.json");
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
             try
             {
                 await using FileStream stream = OpenSequential(path);
@@ -368,11 +433,40 @@ public sealed class HistoryStore
         string? label,
         CancellationToken cancellationToken = default)
     {
-        string? normalized = string.IsNullOrWhiteSpace(label) ? null : label.Trim();
+        _ = await UpdateLabelCoreAsync(
+            id,
+            label,
+            expectedLabel: null,
+            compareExpected: false,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<bool> UpdateLabelIfCurrentAsync(
+        Guid id,
+        string? expectedLabel,
+        string? label,
+        CancellationToken cancellationToken = default)
+    {
+        return UpdateLabelCoreAsync(
+            id,
+            label,
+            NormalizeLabel(expectedLabel),
+            compareExpected: true,
+            cancellationToken);
+    }
+
+    private async Task<bool> UpdateLabelCoreAsync(
+        Guid id,
+        string? label,
+        string? expectedLabel,
+        bool compareExpected,
+        CancellationToken cancellationToken)
+    {
+        string? normalized = NormalizeLabel(label);
         if (normalized?.Length > MaximumLabelLength)
         {
-            throw new YaapException(YaapErrors.InvalidInput(
-                $"History label must be {MaximumLabelLength} characters or fewer."));
+            throw new YaapException(YaapErrors.InvalidOption(
+                $"履歴ラベルは {MaximumLabelLength} 文字以内で指定してください。"));
         }
 
         string path = Path.Combine(GetRunDirectory(id), "summary.json");
@@ -398,10 +492,17 @@ public sealed class HistoryStore
                 throw new JsonException($"History summary is invalid: {id:D}");
             }
 
+            if (compareExpected &&
+                !string.Equals(NormalizeLabel(summary.Label), expectedLabel, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             await WriteAtomicallyAsync(
                 path,
                 summary with { Label = normalized },
                 cancellationToken).ConfigureAwait(false);
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -417,6 +518,9 @@ public sealed class HistoryStore
             throw new YaapException(YaapErrors.HistoryFailed(exception.Message), exception);
         }
     }
+
+    private static string? NormalizeLabel(string? label) =>
+        string.IsNullOrWhiteSpace(label) ? null : label.Trim();
 
     public async Task<int> DeleteAllAsync(CancellationToken cancellationToken = default)
     {
@@ -504,6 +608,39 @@ public sealed class HistoryStore
             FileOptions.Asynchronous | FileOptions.SequentialScan);
     }
 
+    private static async Task<IReadOnlyList<MeasurementResult>> LoadMeasurementCheckpointsAsync(
+        string runDirectory,
+        CancellationToken cancellationToken)
+    {
+        string directory = Path.Combine(runDirectory, MeasurementCheckpointsDirectoryName);
+        if (!Directory.Exists(directory))
+        {
+            return Array.Empty<MeasurementResult>();
+        }
+
+        List<MeasurementResult> measurements = new();
+        foreach (string path in Directory.EnumerateFiles(
+                     directory,
+                     "*.json",
+                     SearchOption.TopDirectoryOnly).Order(StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await using FileStream stream = OpenSequential(path);
+            MeasurementResult? measurement = await JsonSerializer.DeserializeAsync<MeasurementResult>(
+                stream,
+                JsonOptions,
+                cancellationToken).ConfigureAwait(false);
+            if (measurement is null)
+            {
+                throw new JsonException($"Measurement checkpoint is empty: {path}");
+            }
+
+            measurements.Add(measurement);
+        }
+
+        return measurements;
+    }
+
     private static FileStream OpenManifestSequential(string path)
     {
         return new FileStream(
@@ -582,7 +719,16 @@ public sealed class HistoryStore
                     }
 
                     TryDeleteRunLeaseFile(id);
-                    QueueTombstoneCleanup();
+                    try
+                    {
+                        DeleteDirectoryCooperatively(tombstonePath, CancellationToken.None);
+                    }
+                    catch (Exception exception) when (
+                        exception is IOException or UnauthorizedAccessException)
+                    {
+                        // The run is already atomically removed. A later history operation retries cleanup.
+                    }
+
                     return true;
                 },
                 cancellationToken).ConfigureAwait(false);
@@ -680,7 +826,7 @@ public sealed class HistoryStore
         }
     }
 
-    private void QueueTombstoneCleanup()
+    private async Task CleanupTombstonesAsync(CancellationToken cancellationToken)
     {
         string tombstonesPath = Path.Combine(RootPath, TombstonesDirectoryName);
         if (!Directory.Exists(tombstonesPath))
@@ -688,30 +834,33 @@ public sealed class HistoryStore
             return;
         }
 
-        _ = Task.Run(() =>
-        {
-            try
+        await Task.Run(
+            () =>
             {
-                foreach (string tombstone in Directory.EnumerateDirectories(
-                             tombstonesPath,
-                             "*.deleted",
-                             SearchOption.TopDirectoryOnly))
+                try
                 {
-                    try
+                    foreach (string tombstone in Directory.EnumerateDirectories(
+                                 tombstonesPath,
+                                 "*.deleted",
+                                 SearchOption.TopDirectoryOnly))
                     {
-                        DeleteDirectoryCooperatively(tombstone, CancellationToken.None);
-                    }
-                    catch (Exception exception) when (
-                        exception is IOException or UnauthorizedAccessException)
-                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        try
+                        {
+                            DeleteDirectoryCooperatively(tombstone, cancellationToken);
+                        }
+                        catch (Exception exception) when (
+                            exception is IOException or UnauthorizedAccessException)
+                        {
+                        }
                     }
                 }
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException)
-            {
-            }
-        });
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException)
+                {
+                }
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static void TryDeleteFile(string path)

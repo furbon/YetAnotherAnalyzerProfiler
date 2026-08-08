@@ -25,6 +25,10 @@ WPF UIテーマ辞書とFluentWindowの統合、restoreを含む詳細設定、�
 `OutputsTruncated`、NDJSONの全件ストリーム、読込みキャンセル、CSV／JSON／Markdownへの全件exportを
 検証します。
 
+反復checkpointの回帰試験では、最終保存後の完全な生サンプル復元、失敗反復の診断保持、成功サンプルだけの
+統計、最終成功時点の生成物、破損時のYAAP4001を確認します。scale試験は集約メモリが反復数ではなく
+一意な指標数に比例し、履歴の総書込みが反復データ量に対して線形であることを対象にします。
+
 `tests/assets` の Analyzer／Source Generator fixture を実際に restore／build し、binlog 解析、
 コンパイラレポート、生成ファイルを通した統合回帰を実行します。`tests/local-feed` はパッケージを
 ローカルで生成し、`NuGet.Config` の `<clear />`、private-feed相当の相対 source、locked restore、

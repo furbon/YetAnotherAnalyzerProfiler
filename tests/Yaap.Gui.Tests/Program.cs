@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Diagnostics;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -23,13 +24,16 @@ List<(string Name, Func<Task> Body)> tests = new()
     ("gui.recent-target-ordering", RecentTargetOrderingAsync),
     ("gui.configuration-priority", ConfigurationPriorityAsync),
     ("gui.configuration-history", ConfigurationHistoryAsync),
+    ("gui.history-load-discards-stale-selection", HistoryLoadDiscardsStaleSelectionAsync),
     ("gui.cli-feature-parity", FeatureParityAsync),
     ("gui.result-tree-filtering", ResultTreeFilteringAsync),
+    ("gui.result-tree-cancellation", ResultTreeCancellationAsync),
     ("gui.discovery-discards-stale-results", DiscoveryDiscardsStaleResultsAsync),
     ("gui.measurement-state", MeasurementStateAsync),
     ("gui.failure-observability", FailureObservabilityAsync),
     ("gui.theme-framework", ThemeFrameworkAsync),
     ("gui.async-command", AsyncCommandAsync),
+    ("gui.shutdown-retry-after-child-exit", ShutdownRetryAfterChildExitAsync),
     ("gui.virtualization-and-generator-disclaimer", XamlContractAsync),
 };
 
@@ -129,6 +133,7 @@ static async Task WindowStartupSmokeAsync()
             TextBlock busyTitle = (TextBlock)window.FindName("BusyTitle");
             TextBlock busyMessage = (TextBlock)window.FindName("BusyMessage");
             Button cancelButton = (Button)window.FindName("BusyCancelButton");
+            Button inlineCancelButton = (Button)window.FindName("InlineCancelButton");
             ToggleButton recentTargetsButton =
                 (ToggleButton)window.FindName("RecentTargetsButton");
             Popup recentTargetsPopup = (Popup)window.FindName("RecentTargetsPopup");
@@ -273,6 +278,10 @@ static async Task WindowStartupSmokeAsync()
             });
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
             Ensure(viewModel.IsOperationRunning, "History loading must remain an observable asynchronous operation.");
+            Ensure(viewModel.StatusTitleText == "処理中", "Inline history loading must not retain a previous run outcome heading.");
+            Ensure(viewModel.StatusSeverity == Wpf.Ui.Controls.InfoBarSeverity.Informational, "Inline history loading must use informational severity.");
+            Ensure(inlineCancelButton.Visibility == Visibility.Visible, "History loading must expose an inline cancel action.");
+            Ensure(inlineCancelButton.IsEnabled, "The inline cancel action must be enabled while loading history.");
             Ensure(!viewModel.IsBusySurfaceVisible, "History loading must not replace the list with the global busy surface.");
             Ensure(mainTabs.IsEnabled, "History loading must not disable or fade the tab content.");
             Ensure(busyCard.Visibility == Visibility.Collapsed, "History loading must not insert the global busy card.");
@@ -327,6 +336,39 @@ static async Task WindowStartupSmokeAsync()
                 CaptureWindow(window, captureDirectory, $"{mode.ToString().ToLowerInvariant()}-busy");
 
                 SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), false);
+                viewModel.LoadSelectedCommand.Execute(null);
+                PumpUntil(window.Dispatcher, () => viewModel.IsOperationRunning, TimeSpan.FromSeconds(2));
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                Ensure(inlineCancelButton.Visibility == Visibility.Visible, "The inline cancel action must render in both themes.");
+                CaptureWindow(window, captureDirectory, $"{mode.ToString().ToLowerInvariant()}-history-loading");
+                viewModel.CancelCommand.Execute(null);
+                PumpUntil(window.Dispatcher, () => !viewModel.IsOperationRunning, TimeSpan.FromSeconds(2));
+                if (!viewModel.TargetPath.Equals(recentTargetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    viewModel.TargetPath = recentTargetPath;
+                }
+
+                Task customTargetDiscovery = viewModel.WaitForTargetDiscoveryAsync();
+                PumpUntil(
+                    window.Dispatcher,
+                    () => customTargetDiscovery.IsCompleted,
+                    TimeSpan.FromSeconds(5));
+                customTargetDiscovery.GetAwaiter().GetResult();
+                viewModel.Configuration = string.Empty;
+                viewModel.Configuration = "CustomProfile";
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                Ensure(viewModel.StartCommand.CanExecute(null), "The rendered custom configuration must remain actionable.");
+                Ensure(
+                    viewModel.MeasurementStateText.Contains("未検出", StringComparison.Ordinal),
+                    "The rendered custom configuration must explain that it was not detected.");
+                Ensure(
+                    viewModel.StatusTitleText.Contains("未検出", StringComparison.Ordinal),
+                    "The custom-configuration warning must replace stale operation status.");
+                CaptureWindow(
+                    window,
+                    captureDirectory,
+                    $"{mode.ToString().ToLowerInvariant()}-custom-configuration");
+                viewModel.Configuration = "Release";
                 SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualFailureRun(RunStatus.Failed));
                 Task failedProjection = viewModel.WaitForResultFilterAsync();
                 PumpUntil(window.Dispatcher, () => failedProjection.IsCompleted, TimeSpan.FromSeconds(5));
@@ -1174,6 +1216,15 @@ static void SetPrivateProperty<T>(object target, string propertyName, T value)
     setter.Invoke(target, new object?[] { value });
 }
 
+static void SetPrivateField<T>(object target, string fieldName, T value)
+{
+    FieldInfo field = target.GetType().GetField(
+        fieldName,
+        BindingFlags.Instance | BindingFlags.NonPublic) ??
+        throw new InvalidOperationException($"Field was not found: {fieldName}");
+    field.SetValue(target, value);
+}
+
 static ProfileRun CreateVisualRun()
 {
     DateTimeOffset startedAt = DateTimeOffset.UtcNow;
@@ -1313,7 +1364,7 @@ static async Task ViewModelInitializationAsync()
             }
             catch (YaapException exception)
             {
-                Ensure(exception.Diagnostic.Code == "YAAP1001", "Invalid export extensions must use the stable input error code.");
+                Ensure(exception.Diagnostic.Code == "YAAP1002", "Invalid export extensions must use the stable option error code.");
             }
         }
     }
@@ -1359,7 +1410,8 @@ static async Task DropAndAutoDiscoveryAsync()
         Ensure(!viewModel.StartCommand.CanExecute(null), "A blank configuration must disable Start.");
         Ensure(viewModel.MeasurementStateText.Contains("ビルド構成を選択", StringComparison.Ordinal), "A blank configuration should have actionable guidance.");
         viewModel.Configuration = "Unknown";
-        Ensure(!viewModel.StartCommand.CanExecute(null), "A configuration absent from discovery must disable Start.");
+        Ensure(viewModel.StartCommand.CanExecute(null), "A custom configuration absent from discovery should remain usable.");
+        Ensure(viewModel.MeasurementStateText.Contains("未検出", StringComparison.Ordinal), "A custom configuration should show a warning.");
         viewModel.Configuration = "Release";
         Ensure(viewModel.StartCommand.CanExecute(null), "A discovered configuration should re-enable Start.");
     }
@@ -1514,6 +1566,51 @@ static async Task ConfigurationHistoryAsync()
     }
 }
 
+static async Task HistoryLoadDiscardsStaleSelectionAsync()
+{
+    ProfileRun first = CreateHistoricalRun("first.csproj", "Release", DateTimeOffset.UtcNow.AddMinutes(-1));
+    ProfileRun second = CreateHistoricalRun("second.csproj", "Release", DateTimeOffset.UtcNow);
+    async Task<ProfileRun> LoadAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (id == first.Id)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        return id == first.Id ? first : second;
+    }
+
+    using MainViewModel viewModel = new(historyLoader: LoadAsync);
+    RunSummary firstSummary = first.ToSummary();
+    RunSummary secondSummary = second.ToSummary();
+    viewModel.History.Add(firstSummary);
+    viewModel.History.Add(secondSummary);
+    viewModel.SelectedHistory = firstSummary;
+    viewModel.LoadSelectedCommand.Execute(null);
+    await WaitUntilAsync(() => viewModel.IsOperationRunning, TimeSpan.FromSeconds(2));
+    viewModel.SelectedHistory = secondSummary;
+    await WaitUntilAsync(() => !viewModel.IsOperationRunning, TimeSpan.FromSeconds(2));
+    Ensure(viewModel.SelectedRun is null, "A canceled stale load must not install its result.");
+
+    viewModel.LoadSelectedCommand.Execute(null);
+    await WaitUntilAsync(() => !viewModel.IsOperationRunning, TimeSpan.FromSeconds(2));
+    Ensure(viewModel.SelectedRun?.Id == second.Id, "The newly selected history result must win.");
+}
+
+static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
+{
+    Stopwatch stopwatch = Stopwatch.StartNew();
+    while (!predicate())
+    {
+        if (stopwatch.Elapsed >= timeout)
+        {
+            throw new TimeoutException("The expected GUI state was not reached.");
+        }
+
+        await Task.Delay(10);
+    }
+}
+
 static async Task FeatureParityAsync()
 {
     string path = System.IO.Path.Combine(
@@ -1596,7 +1693,7 @@ static async Task FeatureParityAsync()
         viewModel.ExportCommand.Execute(null);
         await WaitForOperationAsync(viewModel);
         Ensure(
-            viewModel.StatusText.Contains("YAAP1001", StringComparison.Ordinal) &&
+            viewModel.StatusText.Contains("YAAP1002", StringComparison.Ordinal) &&
             viewModel.StatusText.Contains(".json", StringComparison.Ordinal),
             "GUI export must reject unsupported extensions with an actionable stable error.");
         viewModel.ExportPath = System.IO.Path.Combine(path, "result.markdown");
@@ -1842,7 +1939,7 @@ static Task MeasurementStateAsync()
         "sample.csproj",
         "Profile",
         configurations);
-    Ensure(!unknown.CanStart && unknown.Text.Contains("ビルド構成を選択", StringComparison.Ordinal), "Unknown selection should be blocked.");
+    Ensure(unknown.CanStart && unknown.Text.Contains("未検出", StringComparison.Ordinal), "A custom configuration should be allowed with an explicit warning.");
 
     MeasurementStatePresentation ready = MeasurementStatePresentation.Create(
         false,
@@ -1853,6 +1950,91 @@ static Task MeasurementStateAsync()
         configurations);
     Ensure(ready.CanStart && ready.Text == "測定可能: Release 構成", "A discovered selection should be ready.");
     return Task.CompletedTask;
+}
+
+static Task ResultTreeCancellationAsync()
+{
+    StatisticalMetric[] metrics = Enumerable.Range(0, 100_000)
+        .Select(index => new StatisticalMetric(
+            $"Analyzer{index}",
+            "Assembly",
+            MetricKind.Analyzer,
+            null,
+            index,
+            index,
+            index,
+            0,
+            1))
+        .ToArray();
+    using CancellationTokenSource preCanceled = new();
+    preCanceled.Cancel();
+    EnsureCanceled(
+        () => ResultTreeBuilder.BuildAnalyzers(metrics, null, preCanceled.Token),
+        "Result tree construction ignored a pre-canceled token.");
+
+    using CancellationTokenSource sortingCancellation = new();
+    EnsureCanceled(
+        () => ResultTreeBuilder.BuildAnalyzers(
+            CancelAfterEnumeration(metrics, sortingCancellation),
+            null,
+            sortingCancellation.Token),
+        "Result tree sorting ignored cancellation after enumeration.");
+    return Task.CompletedTask;
+}
+
+static IEnumerable<T> CancelAfterEnumeration<T>(
+    IEnumerable<T> values,
+    CancellationTokenSource cancellation)
+{
+    foreach (T value in values)
+    {
+        yield return value;
+    }
+
+    cancellation.Cancel();
+}
+
+static void EnsureCanceled(Action action, string message)
+{
+    try
+    {
+        action();
+    }
+    catch (OperationCanceledException)
+    {
+        return;
+    }
+
+    throw new InvalidOperationException(message);
+}
+
+static async Task ShutdownRetryAfterChildExitAsync()
+{
+    using Process child = Process.Start(new ProcessStartInfo(
+        "pwsh",
+        "-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30")
+    {
+        CreateNoWindow = true,
+        UseShellExecute = false,
+    }) ?? throw new InvalidOperationException("Shutdown test child process did not start.");
+    using MainViewModel viewModel = new(targetDiscoveryDelay: TimeSpan.Zero);
+    SetPrivateField(
+        viewModel,
+        "_shutdownBlocker",
+        new ProcessDidNotTerminateException(child.Id));
+    try
+    {
+        await viewModel.ShutdownAsync();
+        throw new InvalidOperationException("Shutdown should refuse while the child process is alive.");
+    }
+    catch (ProcessDidNotTerminateException exception)
+    {
+        Ensure(exception.ProcessId == child.Id, "Shutdown reported the wrong child PID.");
+    }
+
+    child.Kill(entireProcessTree: true);
+    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+    await viewModel.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10));
 }
 
 static async Task FailureObservabilityAsync()
@@ -2028,7 +2210,8 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("AllowDrop=\"True\"", StringComparison.Ordinal), "File drop must be enabled.");
     Ensure(xaml.Contains("PreviewDrop=\"OnPreviewDrop\"", StringComparison.Ordinal), "File drop must be handled.");
     Ensure(!xaml.Contains("DiscoverCommand", StringComparison.Ordinal), "Manual discovery should not remain in the GUI.");
-    Ensure(xaml.Contains("SelectedItem=\"{Binding Configuration, Mode=TwoWay}\"", StringComparison.Ordinal), "Configuration selection must not use editable text binding.");
+    Ensure(xaml.Contains("IsEditable=\"True\"", StringComparison.Ordinal), "Imported or custom configurations must remain enterable.");
+    Ensure(xaml.Contains("Text=\"{Binding Configuration, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", StringComparison.Ordinal), "Editable configuration text must update the selected configuration.");
     Ensure(xaml.Contains("MeasurementStateText", StringComparison.Ordinal), "Measurement state must always be visible.");
     Ensure(xaml.Contains("ElementName=AdvancedSettingsButton", StringComparison.Ordinal), "Advanced settings should be closed until its icon button is toggled.");
     Ensure(xaml.Contains("SelectedTheme", StringComparison.Ordinal), "The theme selector is required.");

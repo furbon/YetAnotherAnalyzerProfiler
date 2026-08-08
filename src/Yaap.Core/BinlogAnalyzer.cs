@@ -10,7 +10,12 @@ public sealed record BinlogAnalysis(
     IReadOnlyList<GeneratorSample> Generators,
     IReadOnlyList<RunDiagnostic> Diagnostics,
     long EventCount,
-    IReadOnlyList<CompilerInvocation> CompilerInvocations);
+    IReadOnlyList<CompilerInvocation> CompilerInvocations)
+{
+    public double? CompilerReportedAnalyzerTotalMilliseconds { get; init; }
+
+    public double? CompilerReportedGeneratorTotalMilliseconds { get; init; }
+}
 
 public sealed record CompilerInvocation(string CommandLine, string WorkingDirectory);
 
@@ -111,7 +116,11 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
             throw new YaapException(YaapErrors.BinlogFailed(exception.Message), exception);
         }
 
-        return new BinlogAnalysis(analyzers, generators, diagnostics, eventCount, compilerInvocations);
+        return new BinlogAnalysis(analyzers, generators, diagnostics, eventCount, compilerInvocations)
+        {
+            CompilerReportedAnalyzerTotalMilliseconds = parser.AnalyzerTotalMilliseconds,
+            CompilerReportedGeneratorTotalMilliseconds = parser.GeneratorTotalMilliseconds,
+        };
     }
 
     public static CompilerReportAccumulator CreateCompilerReportAccumulator() => new();
@@ -146,7 +155,11 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
                     _generators.ToArray(),
                     _diagnostics.ToArray(),
                     0,
-                    Array.Empty<CompilerInvocation>());
+                    Array.Empty<CompilerInvocation>())
+                {
+                    CompilerReportedAnalyzerTotalMilliseconds = _parser.AnalyzerTotalMilliseconds,
+                    CompilerReportedGeneratorTotalMilliseconds = _parser.GeneratorTotalMilliseconds,
+                };
             }
         }
     }
@@ -158,7 +171,13 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
         private readonly List<RunDiagnostic> _diagnostics;
         private ReportSection _section;
         private bool _sawReport;
+        private bool _sawAnalyzerReport;
+        private bool _sawGeneratorReport;
         private string? _currentAssembly;
+        private List<AnalyzerSample>? _currentAnalyzerReport;
+        private List<GeneratorSample>? _currentGeneratorReport;
+        private double _completedAnalyzerTotalMilliseconds;
+        private double _completedGeneratorTotalMilliseconds;
 
         public ReportParser(
             List<AnalyzerSample> analyzers,
@@ -169,6 +188,22 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
             _generators = generators;
             _diagnostics = diagnostics;
         }
+
+        public double? AnalyzerTotalMilliseconds => _sawAnalyzerReport
+            ? _completedAnalyzerTotalMilliseconds +
+              Statistics.CompilerReportedAnalyzerTotal(
+                  _currentAnalyzerReport is null
+                      ? Array.Empty<AnalyzerSample>()
+                      : _currentAnalyzerReport)
+            : null;
+
+        public double? GeneratorTotalMilliseconds => _sawGeneratorReport
+            ? _completedGeneratorTotalMilliseconds +
+              Statistics.CompilerReportedGeneratorTotal(
+                  _currentGeneratorReport is null
+                      ? Array.Empty<GeneratorSample>()
+                      : _currentGeneratorReport)
+            : null;
 
         public void Accept(string message)
         {
@@ -182,6 +217,14 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
 
                 if (IsGeneratorHeading(line))
                 {
+                    if (_currentGeneratorReport is not null)
+                    {
+                        _completedGeneratorTotalMilliseconds +=
+                            Statistics.CompilerReportedGeneratorTotal(_currentGeneratorReport);
+                    }
+
+                    _currentGeneratorReport = new List<GeneratorSample>();
+                    _sawGeneratorReport = true;
                     _section = ReportSection.Generator;
                     _currentAssembly = null;
                     _sawReport = true;
@@ -190,6 +233,14 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
 
                 if (IsAnalyzerHeading(line))
                 {
+                    if (_currentAnalyzerReport is not null)
+                    {
+                        _completedAnalyzerTotalMilliseconds +=
+                            Statistics.CompilerReportedAnalyzerTotal(_currentAnalyzerReport);
+                    }
+
+                    _currentAnalyzerReport = new List<AnalyzerSample>();
+                    _sawAnalyzerReport = true;
                     _section = ReportSection.Analyzer;
                     _currentAssembly = null;
                     _sawReport = true;
@@ -202,6 +253,12 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
                     line.Contains("Time", StringComparison.OrdinalIgnoreCase))
                 {
                     _section = ReportSection.Diagnostic;
+                    continue;
+                }
+
+                if (_section != ReportSection.None && LooksLikeUnknownTimedRowRegex().IsMatch(line))
+                {
+                    AddUnrecognized(line);
                     continue;
                 }
 
@@ -218,6 +275,12 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
                 }
 
                 string value = match.Groups["identity"].Value.Trim();
+                if (value.StartsWith('|'))
+                {
+                    AddUnrecognized(line);
+                    continue;
+                }
+
                 if (value.Equals("Analyzer", StringComparison.OrdinalIgnoreCase) ||
                     value.Equals("Generator", StringComparison.OrdinalIgnoreCase) ||
                     value.StartsWith("Total", StringComparison.OrdinalIgnoreCase))
@@ -237,28 +300,34 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
                 switch (_section)
                 {
                     case ReportSection.Generator:
-                        _generators.Add(new GeneratorSample(identity, assembly, milliseconds));
+                        GeneratorSample generator = new(identity, assembly, milliseconds);
+                        _generators.Add(generator);
+                        _currentGeneratorReport?.Add(generator);
                         break;
                     case ReportSection.Diagnostic:
                         Match diagnosticMatch = DiagnosticIdRegex().Match(identity);
                         string? diagnosticId = diagnosticMatch.Success ? diagnosticMatch.Value : null;
-                        _analyzers.Add(new AnalyzerSample(
+                        AnalyzerSample diagnostic = new(
                             identity,
                             assembly,
                             MetricKind.Diagnostic,
                             diagnosticId,
-                            milliseconds));
+                            milliseconds);
+                        _analyzers.Add(diagnostic);
+                        _currentAnalyzerReport?.Add(diagnostic);
                         break;
                     default:
                         Match analyzerDiagnostic = DiagnosticIdRegex().Match(identity);
-                        _analyzers.Add(new AnalyzerSample(
+                        AnalyzerSample analyzer = new(
                             identity,
                             assembly,
                             assemblyRow || !analyzerDiagnostic.Success
                                 ? MetricKind.Analyzer
                                 : MetricKind.Diagnostic,
                             analyzerDiagnostic.Success ? analyzerDiagnostic.Value : null,
-                            milliseconds));
+                            milliseconds);
+                        _analyzers.Add(analyzer);
+                        _currentAnalyzerReport?.Add(analyzer);
                         break;
                 }
             }
@@ -359,6 +428,11 @@ public sealed partial class BinlogAnalyzer : IBinlogAnalyzer
         @"^\s*<?(?<seconds>\d+(?:[\.,]\d+)?)\s+(?:<?\d+(?:[\.,]\d+)?\s*%?\s+)?(?<identity>.+?)\s*$",
         RegexOptions.CultureInvariant)]
     private static partial Regex TimedRowRegex();
+
+    [GeneratedRegex(
+        @"^\s*<?\d+(?:[\.,]\d+)?\s*(?:nanoseconds?|nsecs?|ns|microseconds?|usecs?|us|μs|µs|milliseconds?|msecs?|ms|seconds?|secs?|s|ticks?|ミリ秒|マイクロ秒|ナノ秒|秒)\b",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex LooksLikeUnknownTimedRowRegex();
 
     [GeneratedRegex(
         @"^(?<identity>.+?)\s+\((?<assembly>[^()]+)\)\s*$",

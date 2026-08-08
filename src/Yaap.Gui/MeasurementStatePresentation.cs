@@ -35,14 +35,17 @@ public sealed record MeasurementStatePresentation(bool CanStart, string Text)
             return new MeasurementStatePresentation(false, "測定対象を確認してください。");
         }
 
-        bool hasSelectedConfiguration = !string.IsNullOrWhiteSpace(configuration) &&
-            availableConfigurations.Any(available =>
-                available.Equals(configuration, StringComparison.OrdinalIgnoreCase));
-        if (!hasSelectedConfiguration)
+        if (string.IsNullOrWhiteSpace(configuration))
         {
             return new MeasurementStatePresentation(false, "ビルド構成を選択してください。");
         }
 
-        return new MeasurementStatePresentation(true, $"測定可能: {configuration} 構成");
+        bool detected = availableConfigurations.Any(available =>
+            available.Equals(configuration, StringComparison.OrdinalIgnoreCase));
+        return detected
+            ? new MeasurementStatePresentation(true, $"測定可能: {configuration} 構成")
+            : new MeasurementStatePresentation(
+                true,
+                $"測定可能: {configuration} 構成（対象から未検出。入力名でビルドします）");
     }
 }

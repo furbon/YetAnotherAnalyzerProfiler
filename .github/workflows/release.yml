@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  RepositoryUrl: ${{ github.server_url }}/${{ github.repository }}
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -16,6 +19,10 @@ jobs:
     name: Verify ${{ matrix.os }} / ${{ matrix.framework }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +65,11 @@ jobs:
           path: artifacts/packages/*.nupkg
           if-no-files-found: error
           retention-days: 7
+      - name: Attest the package at its producer
+        if: matrix.package == true
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: artifacts/packages/*.nupkg
 
   binaries:
     name: Publish ${{ matrix.runtime }}
@@ -72,9 +84,13 @@ jobs:
           - os: windows-2025
             runtime: win-x64
           - os: macos-15
-            runtime: osx-x64
-          - os: macos-15
             runtime: osx-arm64
+          - os: macos-15-intel
+            runtime: osx-x64
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Enable repository guards
@@ -92,6 +108,21 @@ jobs:
       - name: Archive distribution
         shell: pwsh
         run: Compress-Archive -Path "artifacts/publish/${{ matrix.runtime }}/net10.0/*" -DestinationPath "artifacts/yaap-${{ matrix.runtime }}.zip"
+      - name: Verify documented archive layout
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath "artifacts/yaap-${{ matrix.runtime }}.zip" -DestinationPath artifacts/archive-smoke
+          if ('${{ matrix.runtime }}' -eq 'win-x64') {
+            & artifacts/archive-smoke/cli/yaap.exe version
+            if (-not (Test-Path artifacts/archive-smoke/gui/yaap-gui.exe)) { throw 'GUI executable is missing.' }
+          } else {
+            chmod +x artifacts/archive-smoke/cli/yaap
+            & artifacts/archive-smoke/cli/yaap version
+          }
+      - name: Attest the archive at its producer
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: artifacts/yaap-${{ matrix.runtime }}.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-${{ matrix.runtime }}
@@ -107,7 +138,9 @@ jobs:
     environment: release
     permissions:
       actions: read
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
@@ -124,18 +157,6 @@ jobs:
           New-Item -ItemType Directory -Path artifacts/release | Out-Null
           gh run download $env:GITHUB_RUN_ID --name nuget-package --dir artifacts/release
           gh run download $env:GITHUB_RUN_ID --pattern "binary-*" --dir artifacts/release
-      - name: Create or retain a draft GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: |
-          gh release view $env:GITHUB_REF_NAME *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $env:GITHUB_REF_NAME --draft --verify-tag --generate-notes --title "YAAP $env:GITHUB_REF_NAME"
-          }
-      - name: Publish NuGet tool
-        shell: pwsh
-        run: dotnet nuget push "artifacts/release/YetAnotherAnalyzerProfiler.Tool.*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
       - name: Create SHA-256 checksums
         shell: pwsh
         run: |
@@ -147,6 +168,65 @@ jobs:
             "$hash  $($_.Name)"
           }
           $lines | Set-Content -LiteralPath artifacts/release/SHA256SUMS.txt -Encoding utf8NoBOM
+      - name: Reject an existing public release and prepare the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $release = gh release view $env:GITHUB_REF_NAME --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if (-not (($release | ConvertFrom-Json).isDraft)) {
+              throw "Release $env:GITHUB_REF_NAME is already public; refusing to mutate it."
+            }
+          } else {
+            gh release create $env:GITHUB_REF_NAME --draft --verify-tag --generate-notes --title "YAAP $env:GITHUB_REF_NAME"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $env:GITHUB_REF_NAME." }
+          }
+      - name: Verify any existing NuGet package is identical
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem artifacts/release -Recurse -Filter 'YetAnotherAnalyzerProfiler.Tool.*.nupkg' -File)
+          if ($packages.Count -ne 1) { throw "Expected exactly one NuGet package; found $($packages.Count)." }
+          $package = $packages[0]
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $uri = "https://api.nuget.org/v3-flatcontainer/yetanotheranalyzerprofiler.tool/$version/yetanotheranalyzerprofiler.tool.$version.nupkg"
+          try {
+            Invoke-WebRequest -Uri $uri -OutFile artifacts/release/existing.nupkg -ErrorAction Stop
+            $local = (Get-FileHash -LiteralPath $package.FullName -Algorithm SHA256).Hash
+            $published = (Get-FileHash -LiteralPath artifacts/release/existing.nupkg -Algorithm SHA256).Hash
+            if ($local -ne $published) { throw "NuGet already contains $version with a different SHA-256 digest." }
+            "YAAP_NUGET_EXISTS=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } catch {
+            $response = $_.Exception.Response
+            if ($null -eq $response -or [int]$response.StatusCode -ne 404) { throw }
+          } finally {
+            Remove-Item artifacts/release/existing.nupkg -ErrorAction SilentlyContinue
+          }
+      - name: Attest release artifacts
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: |
+            artifacts/release/**/*.zip
+            artifacts/release/**/*.nupkg
+            artifacts/release/SHA256SUMS.txt
+      - name: Publish NuGet tool after digest validation
+        if: env.YAAP_NUGET_EXISTS != 'true'
+        shell: pwsh
+        run: dotnet nuget push "artifacts/release/YetAnotherAnalyzerProfiler.Tool.*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+      - name: Verify the published NuGet digest
+        shell: pwsh
+        run: |
+          $package = @(Get-ChildItem artifacts/release -Recurse -Filter 'YetAnotherAnalyzerProfiler.Tool.*.nupkg' -File)[0]
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $uri = "https://api.nuget.org/v3-flatcontainer/yetanotheranalyzerprofiler.tool/$version/yetanotheranalyzerprofiler.tool.$version.nupkg"
+          for ($attempt = 1; $attempt -le 12; $attempt++) {
+            try { Invoke-WebRequest -Uri $uri -OutFile artifacts/release/published.nupkg -ErrorAction Stop; break }
+            catch { if ($attempt -eq 12) { throw }; Start-Sleep -Seconds 10 }
+          }
+          $local = (Get-FileHash -LiteralPath $package.FullName -Algorithm SHA256).Hash
+          $published = (Get-FileHash -LiteralPath artifacts/release/published.nupkg -Algorithm SHA256).Hash
+          Remove-Item artifacts/release/published.nupkg
+          if ($local -ne $published) { throw "Published NuGet digest differs from the validated package." }
       - name: Publish GitHub release with binaries
         env:
           GH_TOKEN: ${{ github.token }}
@@ -155,5 +235,36 @@ jobs:
           $assets = Get-ChildItem artifacts/release -Recurse -File |
             Where-Object { $_.Extension -in '.zip', '.nupkg', '.txt' } |
             ForEach-Object FullName
+          $expected = @{}
+          foreach ($asset in $assets) {
+            $name = Split-Path -Leaf $asset
+            if ($expected.ContainsKey($name)) { throw "Duplicate validated asset name: $name" }
+            $file = Get-Item -LiteralPath $asset
+            $expected[$name] = [pscustomobject]@{
+              Size = $file.Length
+              Digest = "sha256:$((Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant())"
+            }
+          }
           gh release upload $env:GITHUB_REF_NAME $assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload one or more validated release assets." }
+          $releaseJson = gh release view $env:GITHUB_REF_NAME --json assets
+          if ($LASTEXITCODE -ne 0) { throw "Failed to read back draft release assets." }
+          $release = $releaseJson | ConvertFrom-Json
+          $expectedNames = @($expected.Keys | Sort-Object)
+          $actualNames = @($release.assets | ForEach-Object name | Sort-Object)
+          $difference = Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames
+          if ($null -ne $difference) {
+            throw "Draft release asset set differs from the validated allowlist: $($difference | Out-String)"
+          }
+          foreach ($asset in $release.assets) {
+            $validated = $expected[$asset.name]
+            if ([long]$asset.size -ne [long]$validated.Size) {
+              throw "Draft asset size differs from validated asset: $($asset.name)"
+            }
+            if ([string]::IsNullOrWhiteSpace($asset.digest) -or
+                -not $asset.digest.Equals($validated.Digest, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "Draft asset digest differs from validated asset: $($asset.name)"
+            }
+          }
           gh release edit $env:GITHUB_REF_NAME --draft=false
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release $env:GITHUB_REF_NAME." }

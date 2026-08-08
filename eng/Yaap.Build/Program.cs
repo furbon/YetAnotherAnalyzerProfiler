@@ -379,6 +379,21 @@ static async Task TestLocalFeedAsync(string root)
 
 static async Task PackAsync(string root)
 {
+    foreach (string sourceFramework in new[] { "net8.0", "net10.0" })
+    {
+        await RunAsync(root, "dotnet", new[]
+        {
+            "run",
+            "--project",
+            Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"),
+            "--framework",
+            sourceFramework,
+            "--no-restore",
+            "--",
+            "version",
+        });
+    }
+
     string versionProps = File.ReadAllText(Path.Combine(root, "eng", "Version.props"));
     Match versionMatch = Regex.Match(
         versionProps,
@@ -419,6 +434,47 @@ static async Task PackAsync(string root)
         throw new InvalidOperationException($"NuGet tool package was not produced: {package}");
     }
 
+    NormalizeNuGetPackage(package);
+
+    string repeatOutput = Path.Combine(root, "artifacts", "packages-repeat");
+    Directory.CreateDirectory(repeatOutput);
+    await RunAsync(root, "dotnet", new[]
+    {
+        "pack",
+        Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"),
+        "--configuration",
+        "Release",
+        "--no-restore",
+        "--output",
+        repeatOutput,
+    });
+    string repeatedPackage = Path.Combine(
+        repeatOutput,
+        $"YetAnotherAnalyzerProfiler.Tool.{version}.nupkg");
+    if (!File.Exists(repeatedPackage))
+    {
+        throw new InvalidOperationException("Repeated NuGet pack was not produced.");
+    }
+
+    NormalizeNuGetPackage(repeatedPackage);
+
+    byte[] packageHash;
+    byte[] repeatedPackageHash;
+    using (FileStream stream = File.OpenRead(package))
+    {
+        packageHash = SHA256.HashData(stream);
+    }
+
+    using (FileStream stream = File.OpenRead(repeatedPackage))
+    {
+        repeatedPackageHash = SHA256.HashData(stream);
+    }
+
+    if (!packageHash.SequenceEqual(repeatedPackageHash))
+    {
+        throw new InvalidOperationException("Repeated NuGet packs must be byte-for-byte deterministic.");
+    }
+
     using (ZipArchive archive = ZipFile.OpenRead(package))
     {
         HashSet<string> entries = archive.Entries
@@ -426,7 +482,8 @@ static async Task PackAsync(string root)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (string required in new[]
                  {
-                     "README.md",
+                     "PACKAGE-README.md",
+                     "LICENSE",
                      "THIRD-PARTY-NOTICES.txt",
                      "tools/net8.0/any/DotnetToolSettings.xml",
                      "tools/net8.0/any/yaap.deps.json",
@@ -459,6 +516,38 @@ static async Task PackAsync(string root)
         {
             throw new InvalidOperationException(
                 "NuGet tool runtime metadata must use the yaap command name.");
+        }
+
+        ZipArchiveEntry packageReadme = archive.GetEntry("PACKAGE-README.md") ??
+            throw new InvalidOperationException("NuGet tool package README is missing.");
+        using (StreamReader reader = new(packageReadme.Open()))
+        {
+            string text = reader.ReadToEnd();
+            if (text.Contains("](../", StringComparison.Ordinal) ||
+                text.Contains("](docs/", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("NuGet package README contains a repository-relative link.");
+            }
+        }
+
+        string? repositoryUrl = Environment.GetEnvironmentVariable("RepositoryUrl");
+        if (!string.IsNullOrWhiteSpace(repositoryUrl))
+        {
+            ZipArchiveEntry nuspec = archive.Entries.Single(entry =>
+                entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase));
+            using StreamReader reader = new(nuspec.Open());
+            string text = reader.ReadToEnd();
+            if (!text.Contains(repositoryUrl, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("NuGet repository metadata does not match RepositoryUrl.");
+            }
+
+            string? revision = Environment.GetEnvironmentVariable("GITHUB_SHA");
+            if (!string.IsNullOrWhiteSpace(revision) &&
+                !text.Contains(revision, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("NuGet repository commit does not match GITHUB_SHA.");
+            }
         }
     }
 
@@ -493,6 +582,21 @@ static async Task PackAsync(string root)
             OperatingSystem.IsWindows() ? "yaap.exe" : "yaap");
         await RunAsync(root, executable, new[] { "--version" });
         await RunAsync(root, executable, new[] { "--help" });
+        foreach (string[] command in new[]
+                 {
+                     new[] { "profile", "--help" },
+                     new[] { "configurations", "--help" },
+                     new[] { "history", "list", "--help" },
+                     new[] { "history", "show", "--help" },
+                     new[] { "history", "delete", "--help" },
+                     new[] { "compare", "--help" },
+                     new[] { "export", "--help" },
+                     new[] { "analyze", "--help" },
+                     new[] { "version", "--help" },
+                 })
+        {
+            await RunAsync(root, executable, command);
+        }
     }
     finally
     {
@@ -510,6 +614,55 @@ static async Task PackAsync(string root)
             Directory.Delete(resolvedSmokeRoot, recursive: true);
         }
     }
+}
+
+static void NormalizeNuGetPackage(string packagePath)
+{
+    const string corePrefix = "package/services/metadata/core-properties/";
+    const string corePath = corePrefix + "yaap.psmdcp";
+    DateTimeOffset timestamp = new(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    string temporaryPath = packagePath + ".deterministic";
+    using (ZipArchive source = ZipFile.OpenRead(packagePath))
+    using (FileStream output = new(
+               temporaryPath,
+               FileMode.Create,
+               FileAccess.Write,
+               FileShare.None,
+               64 * 1024,
+               FileOptions.SequentialScan))
+    using (ZipArchive destination = new(output, ZipArchiveMode.Create, leaveOpen: false))
+    {
+        foreach (ZipArchiveEntry sourceEntry in source.Entries.OrderBy(
+                     entry => entry.FullName.StartsWith(corePrefix, StringComparison.Ordinal)
+                         ? corePath
+                         : entry.FullName,
+                     StringComparer.Ordinal))
+        {
+            string name = sourceEntry.FullName.StartsWith(corePrefix, StringComparison.Ordinal)
+                ? corePath
+                : sourceEntry.FullName;
+            ZipArchiveEntry destinationEntry = destination.CreateEntry(name, CompressionLevel.Optimal);
+            destinationEntry.LastWriteTime = timestamp;
+            destinationEntry.ExternalAttributes = sourceEntry.ExternalAttributes;
+            using Stream destinationStream = destinationEntry.Open();
+            if (name == "_rels/.rels")
+            {
+                byte[] relationships = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n" +
+                    "  <Relationship Type=\"http://schemas.microsoft.com/packaging/2010/07/manifest\" Target=\"/YetAnotherAnalyzerProfiler.Tool.nuspec\" Id=\"Rmanifest\" />\n" +
+                    $"  <Relationship Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"/{corePath}\" Id=\"Rmetadata\" />\n" +
+                    "</Relationships>");
+                destinationStream.Write(relationships);
+                continue;
+            }
+
+            using Stream sourceStream = sourceEntry.Open();
+            sourceStream.CopyTo(destinationStream);
+        }
+    }
+
+    File.Move(temporaryPath, packagePath, overwrite: true);
 }
 
 static async Task PublishAsync(string root, string framework, string runtime)
@@ -1155,9 +1308,10 @@ static void EnsureCliRestoreIdentity(string root)
     string project = File.ReadAllText(Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"));
     foreach (string contract in new[]
              {
-                 "<AssemblyName>YetAnotherAnalyzerProfiler.Tool</AssemblyName>",
+                 "<AssemblyName>yaap</AssemblyName>",
                  "<PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>",
                  "<TargetName>yaap</TargetName>",
+                 "<Description>C#のRoslyn Analyzer／Source Generatorをコンパイラー報告値で測定するクロスプラットフォームCLI。</Description>",
                  "<ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>",
                  "<ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>",
                  "<ToolCommandName>yaap</ToolCommandName>",
@@ -1748,6 +1902,25 @@ static void EnsureReleaseWorkflow(string root)
                  "--skip-duplicate",
                  "gh release create",
                  "gh release edit",
+                 "RepositoryUrl:",
+                 "attestations: write",
+                 "id-token: write",
+                 "actions/attest@",
+                 "subject-path:",
+                 "isDraft",
+                 "different SHA-256 digest",
+                 "Verify documented archive layout",
+                 "archive-smoke/cli/yaap",
+                 "macos-15-intel",
+                 "Attest the package at its producer",
+                 "Attest the archive at its producer",
+                 "Published NuGet digest differs",
+                 "Draft release asset set differs from the validated allowlist",
+                 "Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames",
+                 "Draft asset digest differs from validated asset",
+                 "Failed to upload one or more validated release assets",
+                 "Failed to read back draft release assets",
+                 "Failed to publish release",
              })
     {
         if (!release.Contains(required, StringComparison.Ordinal))
@@ -1762,11 +1935,69 @@ static void EnsureReleaseWorkflow(string root)
     }
 
     string validator = File.ReadAllText(Path.Combine(root, "eng", "validate-release.ps1"));
-    if (!validator.Contains("eng/Version.props", StringComparison.Ordinal) ||
-        !validator.Contains("expectedTag", StringComparison.Ordinal))
+    foreach (string required in new[]
+             {
+                 "eng/Version.props",
+                 "expectedTag",
+                 "README.md",
+                 "SECURITY.md",
+                 "CHANGELOG.md",
+                 "はまだ公開されていません。",
+                 "公開済みバージョン | なし",
+                 "supportedSeries",
+             })
+    {
+        if (!validator.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Release validation is missing a publication-state guard: {required}");
+        }
+    }
+
+    string dependabot = File.ReadAllText(Path.Combine(root, ".github", "dependabot.yml"));
+    Match version = Regex.Match(
+        File.ReadAllText(Path.Combine(root, "eng", "Version.props")),
+        @"<VersionPrefix>(?<value>\d+\.\d+\.\d+)</VersionPrefix>",
+        RegexOptions.CultureInvariant);
+    string expectedTargetBranch = $"target-branch: develop/v{version.Groups["value"].Value}";
+    if (!version.Success || Regex.Matches(
+            dependabot,
+            Regex.Escape(expectedTargetBranch),
+            RegexOptions.CultureInvariant).Count != 2)
     {
         throw new InvalidOperationException(
-            "Release validation must compare the tag with eng/Version.props.");
+            $"Dependabot updates must target the active development branch twice: {expectedTargetBranch}");
+    }
+
+    foreach (string template in new[] { "bug.yml", "feature.yml", "question.yml", "config.yml" })
+    {
+        if (!File.Exists(Path.Combine(root, ".github", "ISSUE_TEMPLATE", template)))
+        {
+            throw new InvalidOperationException($"GitHub issue template is missing: {template}");
+        }
+    }
+
+    string gitlab = File.ReadAllText(Path.Combine(root, ".gitlab-ci.yml"));
+    foreach (string required in new[]
+             {
+                 "$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS",
+                 "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH",
+                 "resource_group: publish-$CI_COMMIT_REF_SLUG",
+             })
+    {
+        if (!gitlab.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GitLab pipeline guard is missing: {required}");
+        }
+    }
+
+    if (Regex.Matches(
+            gitlab,
+            Regex.Escape("resource_group: publish-$CI_COMMIT_REF_SLUG"),
+            RegexOptions.CultureInvariant).Count != 3)
+    {
+        throw new InvalidOperationException(
+            "Each GitLab publish job must serialize publication through its resource group.");
     }
 }
 

@@ -75,7 +75,7 @@ public sealed class ProcessRunner : IProcessRunner
         Task stdoutTask = DrainAsync(process.StandardOutput, stdout, false, onLine);
         Task stderrTask = DrainAsync(process.StandardError, stderr, true, onLine);
         using CancellationTokenRegistration registration = cancellationToken.Register(
-            static state => QueueKill((Process)state!),
+            static state => TryKill((Process)state!),
             process);
 
         try
@@ -110,6 +110,7 @@ public sealed class ProcessRunner : IProcessRunner
         Task stdoutTask,
         Task stderrTask)
     {
+        TryKill(process);
         Task completion;
         try
         {
@@ -140,23 +141,24 @@ public sealed class ProcessRunner : IProcessRunner
             return;
         }
 
-        QueueKill(process);
-        ObserveFault(completion);
-    }
+        TryKill(process);
+        if (await Task.WhenAny(
+                completion,
+                Task.Delay(CancellationExitTimeout)).ConfigureAwait(false) == completion)
+        {
+            try
+            {
+                await completion.ConfigureAwait(false);
+            }
+            catch
+            {
+            }
 
-    private static void QueueKill(Process process)
-    {
-        try
-        {
-            ThreadPool.QueueUserWorkItem(
-                static state => TryKill((Process)state!),
-                process,
-                preferLocal: false);
+            return;
         }
-        catch
-        {
-            // A cancellation callback must never throw, including while the process is racing to exit.
-        }
+
+        ObserveFault(completion);
+        throw new ProcessDidNotTerminateException(process.Id);
     }
 
     private static void TryKill(Process process)
