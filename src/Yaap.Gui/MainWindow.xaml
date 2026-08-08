@@ -31,12 +31,14 @@
         <Style x:Key="ResultColumnHeaderStyle"
                BasedOn="{StaticResource {x:Type DataGridColumnHeader}}"
                TargetType="{x:Type DataGridColumnHeader}">
-            <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+            <Setter Property="Background" Value="{DynamicResource ControlSolidFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
             <Setter Property="MinHeight" Value="36" />
             <Setter Property="Padding" Value="12,0" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
             <Setter Property="ToolTip" Value="境界をドラッグして列幅を変更" />
         </Style>
         <Style x:Key="NumericColumnHeaderStyle"
@@ -51,6 +53,70 @@
                BasedOn="{StaticResource ResultColumnHeaderStyle}"
                TargetType="{x:Type DataGridColumnHeader}">
             <Setter Property="HorizontalContentAlignment" Value="Right" />
+        </Style>
+        <Style x:Key="AnalyzerResultHeaderTextStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="AnalyzerViewTabStyle"
+               BasedOn="{StaticResource {x:Type TabItem}}"
+               TargetType="{x:Type TabItem}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type TabItem}">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="AnalyzerViewTabSurface"
+                                    Padding="{TemplateBinding Padding}"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4,4,0,0">
+                                <ContentPresenter x:Name="AnalyzerViewTabHeader"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  ContentSource="Header"
+                                                  RecognizesAccessKey="True"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <Border x:Name="AnalyzerViewTabIndicator"
+                                    Height="3"
+                                    Margin="8,0"
+                                    VerticalAlignment="Bottom"
+                                    Background="{DynamicResource AccentFillColorDefaultBrush}"
+                                    CornerRadius="2,2,0,0"
+                                    Visibility="Collapsed" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource ControlSolidFillColorDefaultBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Setter TargetName="AnalyzerViewTabHeader" Property="TextElement.FontWeight" Value="SemiBold" />
+                                <Setter TargetName="AnalyzerViewTabIndicator" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                                <Setter Property="BorderThickness" Value="2" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="AnalyzerResultSurfaceStyle" TargetType="{x:Type Border}">
             <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
@@ -871,6 +937,7 @@
                     <TabControl x:Name="AnalyzerViewTabs"
                                 Grid.Row="2"
                                 Margin="8,0,8,8"
+                                ItemContainerStyle="{StaticResource AnalyzerViewTabStyle}"
                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}">
                         <TabItem Header="表形式">
                             <Border x:Name="AnalyzerTableSurface"
@@ -932,7 +999,7 @@
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
                                     <Grid x:Name="AnalyzerTreeHeader"
-                                          Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                          Background="{DynamicResource ControlSolidFillColorDefaultBrush}"
                                           MinHeight="36">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" MinWidth="260" />
@@ -941,20 +1008,20 @@
                                             <ColumnDefinition Width="100" />
                                             <ColumnDefinition Width="100" />
                                         </Grid.ColumnDefinitions>
-                                        <Border BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
-                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="アセンブリ／Analyzer／診断" ToolTip="アセンブリ別の階層" />
+                                        <Border BorderBrush="{DynamicResource ControlStrongStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0" SnapsToDevicePixels="True">
+                                            <TextBlock Style="{StaticResource AnalyzerResultHeaderTextStyle}" Text="アセンブリ／Analyzer／診断" ToolTip="アセンブリ別の階層" />
                                         </Border>
-                                        <Border Grid.Column="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
-                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="種別" />
+                                        <Border Grid.Column="1" BorderBrush="{DynamicResource ControlStrongStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0" SnapsToDevicePixels="True">
+                                            <TextBlock Style="{StaticResource AnalyzerResultHeaderTextStyle}" Text="種別" />
                                         </Border>
-                                        <Border Grid.Column="2" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
-                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" TextAlignment="Right" Text="平均 ms" />
+                                        <Border Grid.Column="2" BorderBrush="{DynamicResource ControlStrongStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0" SnapsToDevicePixels="True">
+                                            <TextBlock Style="{StaticResource AnalyzerResultHeaderTextStyle}" TextAlignment="Right" Text="平均 ms" />
                                         </Border>
-                                        <Border Grid.Column="3" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
-                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" TextAlignment="Right" Text="最小 ms" />
+                                        <Border Grid.Column="3" BorderBrush="{DynamicResource ControlStrongStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0" SnapsToDevicePixels="True">
+                                            <TextBlock Style="{StaticResource AnalyzerResultHeaderTextStyle}" TextAlignment="Right" Text="最小 ms" />
                                         </Border>
-                                        <Border Grid.Column="4" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="12,0">
-                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" TextAlignment="Right" Text="最大 ms" />
+                                        <Border Grid.Column="4" BorderBrush="{DynamicResource ControlStrongStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="12,0" SnapsToDevicePixels="True">
+                                            <TextBlock Style="{StaticResource AnalyzerResultHeaderTextStyle}" TextAlignment="Right" Text="最大 ms" />
                                         </Border>
                                     </Grid>
                                     <TreeView x:Name="AnalyzerTreeView"
