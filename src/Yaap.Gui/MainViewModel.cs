@@ -12,12 +12,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly ProfileRunner _profileRunner;
     private readonly Func<string, CancellationToken, Task<TargetInfo>> _targetDiscoverer;
     private readonly TimeSpan _targetDiscoveryDelay;
+    private IReadOnlyDictionary<string, string> _latestConfigurationByTarget =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _profileCancellation;
     private CancellationTokenSource? _targetDiscoveryCancellation;
     private Task _targetDiscoveryTask = Task.CompletedTask;
     private long _targetDiscoveryGeneration;
     private string _targetPath = string.Empty;
-    private string _configuration = "Release";
+    private string _configuration = string.Empty;
     private string _historyPath = string.Empty;
     private string _artifactsPath = string.Empty;
     private string _searchText = string.Empty;
@@ -33,11 +35,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _isRunning;
     private bool _isDiscoveringTarget;
     private bool _hasValidTarget;
+    private bool _historyInitialized;
     private bool _disposed;
     private int _warmupCount = 1;
     private int _iterationCount = 3;
     private int _retentionCount = 50;
     private ProfileMode _selectedMode = ProfileMode.Warm;
+    private ThemeOption _selectedTheme;
     private RunSummary? _selectedHistory;
     private ProfileRun? _selectedRun;
     private ComparisonResult? _comparison;
@@ -50,6 +54,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _profileRunner = profileRunner ?? new ProfileRunner();
         _targetDiscoverer = targetDiscoverer ?? TargetDiscovery.DiscoverAsync;
         _targetDiscoveryDelay = targetDiscoveryDelay ?? TimeSpan.FromMilliseconds(350);
+        _selectedTheme = ThemeOptions[0];
         BrowseCommand = new RelayCommand(Browse, () => !IsRunning);
         StartCommand = new AsyncRelayCommand(StartAsync, CanStart, SetError);
         RefreshHistoryCommand = new AsyncRelayCommand(RefreshHistoryAsync, () => !IsRunning, SetError);
@@ -64,9 +69,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<RunSummary> History { get; } = new();
 
-    public ObservableCollection<string> Configurations { get; } = new() { "Release", "Debug" };
+    public ObservableCollection<string> Configurations { get; } = new();
 
     public IReadOnlyList<ProfileMode> Modes { get; } = Enum.GetValues<ProfileMode>();
+
+    public static IReadOnlyList<ThemeOption> ThemeOptions { get; } =
+        new[]
+        {
+            new ThemeOption(AppThemeMode.Auto, "自動"),
+            new ThemeOption(AppThemeMode.Light, "ライト"),
+            new ThemeOption(AppThemeMode.Dark, "ダーク"),
+        };
 
     public IReadOnlyList<string> HistoryStatuses { get; } =
         new[] { "すべて", "実行中", "成功", "部分結果", "失敗", "キャンセル" };
@@ -79,6 +92,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (Set(ref _targetPath, value))
             {
                 _hasValidTarget = false;
+                Configurations.Clear();
+                Configuration = string.Empty;
                 QueueTargetDiscovery();
                 RaiseCommandStates();
             }
@@ -88,19 +103,44 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string Configuration
     {
         get => _configuration;
-        set => Set(ref _configuration, value);
+        set
+        {
+            if (Set(ref _configuration, value))
+            {
+                RaiseCommandStates();
+            }
+        }
     }
 
     public string HistoryPath
     {
         get => _historyPath;
-        set => Set(ref _historyPath, value);
+        set
+        {
+            if (Set(ref _historyPath, value))
+            {
+                _historyInitialized = false;
+                _latestConfigurationByTarget =
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                OnPropertyChanged(nameof(AdvancedSettingsSummary));
+                if (_hasValidTarget && !IsRunning)
+                {
+                    QueueTargetDiscovery();
+                }
+            }
+        }
     }
 
     public string ArtifactsPath
     {
         get => _artifactsPath;
-        set => Set(ref _artifactsPath, value);
+        set
+        {
+            if (Set(ref _artifactsPath, value))
+            {
+                OnPropertyChanged(nameof(AdvancedSettingsSummary));
+            }
+        }
     }
 
     public string SearchText
@@ -161,7 +201,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool Isolated
     {
         get => _isolated;
-        set => Set(ref _isolated, value);
+        set
+        {
+            if (Set(ref _isolated, value))
+            {
+                OnPropertyChanged(nameof(AdvancedSettingsSummary));
+            }
+        }
     }
 
     public bool CleanBeforeEach
@@ -199,6 +245,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 WarmupCount = defaults.WarmupCount;
                 IterationCount = defaults.IterationCount;
                 CleanBeforeEach = defaults.CleanBeforeEach;
+            }
+        }
+    }
+
+    public ThemeOption SelectedTheme
+    {
+        get => _selectedTheme;
+        set
+        {
+            if (value is not null)
+            {
+                Set(ref _selectedTheme, value);
             }
         }
     }
@@ -269,6 +327,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string ComparisonSummary => Comparison is null
         ? string.Empty
         : $"生成ファイル数差: {Comparison.GeneratedFileCountDelta:+#;-#;0}、バイト数差: {Comparison.GeneratedByteCountDelta:+#;-#;0}";
+
+    public string StartAvailabilityText => GetStartBlocker() is { } blocker
+        ? $"測定開始できません: {blocker}"
+        : $"測定可能: {Configuration} 構成";
+
+    public string AdvancedSettingsSummary => Isolated
+        ? "詳細設定（分離出力: 有効）"
+        : "詳細設定（分離出力: 無効）";
+
+    public string HistoryCountText => $"履歴 {History.Count} 件";
 
     public IReadOnlyList<StatisticalMetric> Analyzers => SelectedRun?.Analyzers
         .Where(item => MatchesResultFilter(item.Identity, item.Assembly, item.DiagnosticId))
@@ -408,10 +476,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            string selectedConfiguration = Configuration;
-            _hasValidTarget = true;
+            await EnsureConfigurationHistoryAsync(cancellation.Token);
+            if (!IsCurrentDiscovery(path, generation))
+            {
+                return;
+            }
+
             string[] discovered = target.Configurations
                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(configuration => configuration, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             Configurations.Clear();
             foreach (string configuration in discovered)
@@ -419,14 +492,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 Configurations.Add(configuration);
             }
 
-            if (Configurations.Count > 0 &&
-                !Configurations.Any(item => item.Equals(selectedConfiguration, StringComparison.OrdinalIgnoreCase)))
-            {
-                Configuration = Configurations.FirstOrDefault(item =>
-                    item.Equals("Release", StringComparison.OrdinalIgnoreCase)) ?? Configurations[0];
-            }
-
-            StatusText = $"構成を {Configurations.Count} 件検出しました。";
+            Configuration = SelectPreferredConfiguration(path, discovered);
+            _hasValidTarget = discovered.Length > 0;
+            StatusText = _hasValidTarget
+                ? $"構成を {Configurations.Count} 件検出し、{Configuration} を選択しました。"
+                : "利用できるビルド構成を検出できませんでした。";
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -460,10 +530,37 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private bool CanStart()
     {
-        return !IsRunning &&
-            !IsDiscoveringTarget &&
-            _hasValidTarget &&
-            !string.IsNullOrWhiteSpace(Configuration);
+        return GetStartBlocker() is null;
+    }
+
+    private string? GetStartBlocker()
+    {
+        if (IsRunning)
+        {
+            return "測定を実行中です。";
+        }
+
+        if (string.IsNullOrWhiteSpace(TargetPath))
+        {
+            return "測定対象を指定してください。";
+        }
+
+        if (IsDiscoveringTarget)
+        {
+            return "対象とビルド構成を確認しています。";
+        }
+
+        if (!_hasValidTarget)
+        {
+            return "対象を検証できませんでした。上の状態メッセージを確認してください。";
+        }
+
+        if (string.IsNullOrWhiteSpace(Configuration))
+        {
+            return "ビルド構成が選択されていません。";
+        }
+
+        return null;
     }
 
     private void Browse()
@@ -522,26 +619,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task RefreshHistoryAsync(CancellationToken cancellationToken)
     {
-        IReadOnlyList<RunSummary> summaries = await Store().ListAsync(
-            new HistoryQuery(
-                Search: EmptyToNull(SearchText),
-                Status: HistoryStatus switch
-                {
-                    "実行中" => RunStatus.Running,
-                    "成功" => RunStatus.Succeeded,
-                    "部分結果" => RunStatus.Partial,
-                    "失敗" => RunStatus.Failed,
-                    "キャンセル" => RunStatus.Canceled,
-                    _ => null,
-                }),
-            cancellationToken);
+        IReadOnlyList<RunSummary> allSummaries = await Store().ListAsync(
+            cancellationToken: cancellationToken);
+        SetConfigurationHistory(allSummaries);
+
+        RunStatus? status = HistoryStatus switch
+        {
+            "実行中" => RunStatus.Running,
+            "成功" => RunStatus.Succeeded,
+            "部分結果" => RunStatus.Partial,
+            "失敗" => RunStatus.Failed,
+            "キャンセル" => RunStatus.Canceled,
+            _ => null,
+        };
+        IEnumerable<RunSummary> summaries = allSummaries.Where(summary =>
+            (status is null || summary.Status == status) &&
+            (string.IsNullOrWhiteSpace(SearchText) ||
+             summary.TargetName.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
+             summary.TargetPath.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
+             summary.Id.ToString("D").Contains(SearchText, StringComparison.OrdinalIgnoreCase)));
         History.Clear();
         foreach (RunSummary summary in summaries)
         {
             History.Add(summary);
         }
 
-        StatusText = $"履歴 {History.Count} 件";
+        OnPropertyChanged(nameof(HistoryCountText));
     }
 
     private async Task LoadSelectedAsync(CancellationToken cancellationToken)
@@ -612,6 +715,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void RaiseCommandStates()
     {
+        OnPropertyChanged(nameof(StartAvailabilityText));
         foreach (ICommand command in new[]
                  {
                      StartCommand,
@@ -647,6 +751,86 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private string SelectPreferredConfiguration(
+        string targetPath,
+        IEnumerable<string> configurations)
+    {
+        string[] available = configurations
+            .Where(configuration => !string.IsNullOrWhiteSpace(configuration))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(configuration => configuration, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (available.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        string? normalizedPath = TryNormalizePath(targetPath);
+        if (normalizedPath is not null &&
+            _latestConfigurationByTarget.TryGetValue(normalizedPath, out string? historical))
+        {
+            string? historicalMatch = available.FirstOrDefault(configuration =>
+                configuration.Equals(historical, StringComparison.OrdinalIgnoreCase));
+            if (historicalMatch is not null)
+            {
+                return historicalMatch;
+            }
+        }
+
+        return available.FirstOrDefault(configuration =>
+                   configuration.Equals("Release", StringComparison.OrdinalIgnoreCase)) ??
+            available.FirstOrDefault(configuration =>
+                configuration.Equals("Debug", StringComparison.OrdinalIgnoreCase)) ??
+            available[0];
+    }
+
+    private async Task EnsureConfigurationHistoryAsync(CancellationToken cancellationToken)
+    {
+        if (_historyInitialized)
+        {
+            return;
+        }
+
+        IReadOnlyList<RunSummary> summaries = await Task.Run(
+            () => Store().ListAsync(cancellationToken: cancellationToken),
+            cancellationToken);
+        SetConfigurationHistory(summaries);
+    }
+
+    private void SetConfigurationHistory(IEnumerable<RunSummary> summaries)
+    {
+        Dictionary<string, string> latest = new(StringComparer.OrdinalIgnoreCase);
+        foreach (RunSummary summary in summaries.OrderByDescending(summary => summary.StartedAt))
+        {
+            string? normalizedPath = TryNormalizePath(summary.TargetPath);
+            if (normalizedPath is not null)
+            {
+                latest.TryAdd(normalizedPath, summary.Configuration);
+            }
+        }
+
+        _latestConfigurationByTarget = latest;
+        _historyInitialized = true;
+    }
+
+    private static string? TryNormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
 
     private bool MatchesResultFilter(params string?[] values)
     {

@@ -1,6 +1,7 @@
 ﻿<Window x:Class="Yaap.Gui.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Yaap.Gui"
         Title="YetAnotherAnalyzerProfiler"
         Width="1280"
         Height="800"
@@ -10,12 +11,13 @@
         PreviewDragOver="OnPreviewDragOver"
         PreviewDrop="OnPreviewDrop"
         WindowStartupLocation="CenterScreen">
-    <DockPanel Margin="12">
+    <DockPanel Margin="16">
         <Border DockPanel.Dock="Top"
-                Padding="10"
-                BorderBrush="#DDD"
+                Padding="14"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1"
-                CornerRadius="4">
+                CornerRadius="10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -25,7 +27,6 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -54,15 +55,17 @@
                 <ComboBox Grid.Row="0"
                           Grid.Column="3"
                           Margin="0,0,8,8"
-                          IsEditable="True"
                           ItemsSource="{Binding Configurations}"
-                          Text="{Binding Configuration, UpdateSourceTrigger=PropertyChanged}" />
+                          SelectedItem="{Binding Configuration, Mode=TwoWay}"
+                          ToolTip="対象から検出したビルド構成" />
                 <Button Grid.Row="0"
                         Grid.Column="4"
                         Margin="0,0,0,8"
-                        Padding="16,4"
                         Command="{Binding StartCommand}"
-                        Content="測定開始" />
+                        Content="測定開始"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        ToolTip="{Binding StartAvailabilityText}"
+                        ToolTipService.ShowOnDisabled="True" />
 
                 <TextBlock Grid.Row="1"
                            Grid.Column="0"
@@ -90,59 +93,119 @@
                     <TextBox Width="45"
                              Margin="0,0,12,0"
                              Text="{Binding IterationCount}" />
-                    <CheckBox Margin="0,0,12,0"
-                              VerticalAlignment="Center"
-                              Content="毎回 clean"
-                              IsChecked="{Binding CleanBeforeEach}" />
-                    <CheckBox VerticalAlignment="Center"
-                              Content="分離出力 (--artifacts-path)"
-                              IsChecked="{Binding Isolated}" />
+                    <TextBlock Margin="8,0,4,0"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource MutedForegroundBrush}"
+                               Text="テーマ" />
+                    <ComboBox Width="105"
+                              DisplayMemberPath="Label"
+                              ItemsSource="{Binding Source={x:Static local:MainViewModel.ThemeOptions}}"
+                              SelectedItem="{Binding SelectedTheme}" />
                 </StackPanel>
                 <Button Grid.Row="1"
                         Grid.Column="4"
                         Margin="0,0,0,8"
-                        Padding="16,4"
                         Command="{Binding CancelCommand}"
                         Content="キャンセル" />
 
-                <TextBlock Grid.Row="2"
-                           Grid.Column="0"
-                           Margin="0,0,8,0"
-                           VerticalAlignment="Center"
-                           Text="履歴場所" />
-                <TextBox Grid.Row="2"
-                         Grid.Column="1"
-                         Grid.ColumnSpan="2"
-                         Margin="0,0,8,0"
-                         Text="{Binding HistoryPath, UpdateSourceTrigger=PropertyChanged}"
-                         ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
-                <StackPanel Grid.Row="2"
-                            Grid.Column="3"
-                            Margin="0,0,8,0"
-                            Orientation="Horizontal">
-                    <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="保持件数" />
-                    <TextBox Width="60" Text="{Binding RetentionCount}" />
-                </StackPanel>
-                <TextBlock Grid.Row="2"
-                           Grid.Column="4"
-                           VerticalAlignment="Center"
-                           Text="{Binding StatusText}"
-                           TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Row="3"
-                           Grid.Column="0"
-                           Margin="0,8,8,0"
-                           VerticalAlignment="Center"
-                           Text="分離出力先" />
-                <TextBox Grid.Row="3"
-                         Grid.Column="1"
-                         Grid.ColumnSpan="4"
-                         Margin="0,8,0,0"
-                         Text="{Binding ArtifactsPath, UpdateSourceTrigger=PropertyChanged}"
-                         ToolTip="空欄ではYAAP管理の一時領域を使います。対象ディレクトリ外を指定してください。" />
+                <Expander Grid.Row="2"
+                          Grid.Column="0"
+                          Grid.ColumnSpan="5"
+                          Margin="0,2,0,0"
+                          Header="{Binding AdvancedSettingsSummary}"
+                          IsExpanded="False">
+                    <Border Margin="0,8,0,0"
+                            Padding="12"
+                            Background="{DynamicResource ElevatedSurfaceBrush}"
+                            BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="7">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="履歴場所" />
+                            <TextBox Grid.Row="0"
+                                     Grid.Column="1"
+                                     Margin="0,0,12,8"
+                                     Text="{Binding HistoryPath, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="2"
+                                       Margin="0,0,8,8"
+                                       VerticalAlignment="Center"
+                                       Text="保持件数" />
+                            <TextBox Grid.Row="0"
+                                     Grid.Column="3"
+                                     Margin="0,0,0,8"
+                                     Text="{Binding RetentionCount}" />
+                            <CheckBox Grid.Row="1"
+                                      Grid.Column="0"
+                                      Grid.ColumnSpan="2"
+                                      Margin="0,0,12,8"
+                                      VerticalAlignment="Center"
+                                      Content="毎回 clean"
+                                      IsChecked="{Binding CleanBeforeEach}" />
+                            <CheckBox Grid.Row="1"
+                                      Grid.Column="2"
+                                      Grid.ColumnSpan="2"
+                                      Margin="0,0,0,8"
+                                      VerticalAlignment="Center"
+                                      Content="分離出力 (--artifacts-path)"
+                                      IsChecked="{Binding Isolated}" />
+                            <TextBlock Grid.Row="2"
+                                       Grid.Column="0"
+                                       Margin="0,0,8,0"
+                                       VerticalAlignment="Center"
+                                       Text="分離出力先" />
+                            <TextBox Grid.Row="2"
+                                     Grid.Column="1"
+                                     Grid.ColumnSpan="3"
+                                     IsEnabled="{Binding Isolated}"
+                                     Text="{Binding ArtifactsPath, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="空欄ではYAAP管理の一時領域を使います。対象ディレクトリ外を指定してください。" />
+                        </Grid>
+                    </Border>
+                </Expander>
             </Grid>
         </Border>
 
-        <TabControl Margin="0,12,0,0">
+        <Border DockPanel.Dock="Bottom"
+                Margin="0,10,0,0"
+                Padding="12,9"
+                Background="{DynamicResource StatusBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="7">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Margin="0,0,18,0"
+                           FontWeight="SemiBold"
+                           Text="{Binding StartAvailabilityText}" />
+                <TextBlock Grid.Column="1"
+                           Foreground="{DynamicResource MutedForegroundBrush}"
+                           Text="{Binding StatusText}"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </Border>
+
+        <TabControl Margin="0,12,0,0"
+                    Padding="1">
             <TabItem Header="Analyzer">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -229,6 +292,10 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="0,0,0,8" Orientation="Horizontal">
+                        <TextBlock Margin="0,0,12,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource MutedForegroundBrush}"
+                                   Text="{Binding HistoryCountText}" />
                         <TextBox Width="320"
                                  Margin="0,0,8,0"
                                  Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
