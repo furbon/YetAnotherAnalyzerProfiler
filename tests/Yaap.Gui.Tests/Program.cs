@@ -18,6 +18,7 @@ List<(string Name, Func<Task> Body)> tests = new()
     ("gui.recent-target-ordering", RecentTargetOrderingAsync),
     ("gui.configuration-priority", ConfigurationPriorityAsync),
     ("gui.configuration-history", ConfigurationHistoryAsync),
+    ("gui.cli-feature-parity", FeatureParityAsync),
     ("gui.result-tree-filtering", ResultTreeFilteringAsync),
     ("gui.discovery-discards-stale-results", DiscoveryDiscardsStaleResultsAsync),
     ("gui.measurement-state", MeasurementStateAsync),
@@ -103,6 +104,7 @@ static async Task WindowStartupSmokeAsync()
             FrameworkElement advancedSettingsPopupContent =
                 advancedSettingsPopup.Child as FrameworkElement ??
                 throw new InvalidOperationException("The advanced-settings popup content was not created.");
+            CheckBox restoreCheckBox = (CheckBox)window.FindName("RestoreCheckBox");
             Wpf.Ui.Controls.SymbolIcon recentTargetsChevron =
                 FindVisualDescendant<Wpf.Ui.Controls.SymbolIcon>(recentTargetsButton) ??
                 throw new InvalidOperationException("The recent-target chevron was not rendered.");
@@ -110,6 +112,9 @@ static async Task WindowStartupSmokeAsync()
                 FindVisualDescendant<Wpf.Ui.Controls.SymbolIcon>(advancedSettingsButton) ??
                 throw new InvalidOperationException("The advanced-settings icon was not rendered.");
             DataGrid analyzerGrid = (DataGrid)window.FindName("AnalyzerGrid");
+            DataGrid generatorGrid = (DataGrid)window.FindName("GeneratorGrid");
+            TextBlock generatorOutputsTruncatedNotice =
+                (TextBlock)window.FindName("GeneratorOutputsTruncatedNotice");
             TextBlock compareBaselineLabel = (TextBlock)window.FindName("CompareBaselineLabel");
             TextBlock exportFormatLabel = (TextBlock)window.FindName("ExportFormatLabel");
             TextBlock settingsTitle = (TextBlock)window.FindName("SettingsTitle");
@@ -119,6 +124,11 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 ReferenceEquals(advancedSettingsPopup.DataContext, viewModel),
                 "The advanced-settings popup must bind to the window view model.");
+            Ensure(restoreCheckBox.IsChecked == true, "Restore must be enabled in the GUI by default.");
+            viewModel.Restore = false;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            Ensure(restoreCheckBox.IsChecked == false, "The restore control must update from the view model.");
+            viewModel.Restore = true;
             Ensure(targetCard.ActualHeight < 80, "Collapsed advanced settings must not reserve a second row.");
             Ensure(
                 recentTargetsChevron.Symbol == Wpf.Ui.Controls.SymbolRegular.ChevronDown16,
@@ -156,7 +166,7 @@ static async Task WindowStartupSmokeAsync()
             Ensure(busyCard.Visibility == Visibility.Visible, "The measurement progress surface must be visible.");
             Ensure(statusBar.Visibility == Visibility.Collapsed, "The persistent status bar must not duplicate running progress.");
             Ensure(
-                busyTitle.Text == viewModel.MeasurementStateText,
+                busyTitle.Text == viewModel.BusyTitleText,
                 "The busy heading must use the canonical measurement state text.");
             Ensure(busyMessage.Text == viewModel.StatusText, "The busy surface must show the current progress message.");
             Ensure(cancelButton.IsEnabled, "Cancel must remain enabled while measuring.");
@@ -203,6 +213,15 @@ static async Task WindowStartupSmokeAsync()
                     else if (index == 5)
                     {
                         EnsureReadableForeground(settingsTitle.Foreground, mode, "SettingsTitle");
+                    }
+
+                    if (index == 1)
+                    {
+                        generatorGrid.SelectedIndex = 0;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                        Ensure(
+                            generatorOutputsTruncatedNotice.Visibility == Visibility.Visible,
+                            "A truncated generated-output preview must direct users to full export.");
                     }
 
                     CaptureWindow(
@@ -491,10 +510,13 @@ static ProfileRun CreateVisualRun()
                 9,
                 0.5,
                 3,
-                1,
-                256,
-                12,
-                new[] { new GeneratedOutput("Sample.Generators.ModelGenerator", "Generated/Model.g.cs", 256, 12) }),
+                101,
+                25_856,
+                1_212,
+                new[] { new GeneratedOutput("Sample.Generators.ModelGenerator", "Sample.Generators", "Generated/Model.g.cs", 256, 12) })
+            {
+                OutputsTruncated = true,
+            },
         },
         Diagnostics = new[]
         {
@@ -518,7 +540,9 @@ static async Task ViewModelInitializationAsync()
         Ensure(viewModel.Modes.Contains(ProfileMode.Warm), "Warm mode should be available.");
         Ensure(viewModel.HistoryStatuses.Contains("部分結果"), "History status filtering should be available.");
         Ensure(viewModel.Isolated, "The GUI should default to isolated output.");
+        Ensure(viewModel.Restore, "The GUI should restore by default.");
         Ensure(viewModel.RetentionCount == 50, "Default history retention should be available.");
+        Ensure(viewModel.HistoryLimit == "500", "GUI history display must have a bounded default.");
         Ensure(viewModel.CancelCommand.CanExecute(null) == false, "Cancel should be disabled while idle.");
         Ensure(viewModel.SelectedTheme.Mode == AppThemeMode.Auto, "The system theme should be the default.");
         Ensure(viewModel.MeasurementStateText.Contains("測定対象", StringComparison.Ordinal), "The disabled-start reason should be visible.");
@@ -720,6 +744,79 @@ static async Task ConfigurationHistoryAsync()
     }
 }
 
+static async Task FeatureParityAsync()
+{
+    string path = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(),
+        "yaap-gui-tests",
+        Guid.NewGuid().ToString("N"));
+    string historyPath = System.IO.Path.Combine(path, "history");
+    Directory.CreateDirectory(path);
+    try
+    {
+        string project = System.IO.Path.Combine(path, "Parity.csproj");
+        string binlog = System.IO.Path.Combine(path, "existing.binlog");
+        await File.WriteAllTextAsync(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        await File.WriteAllBytesAsync(binlog, new byte[] { 1 });
+        HistoryStore history = new(historyPath);
+        await history.SaveAsync(CreateHistoricalRun(project, "Debug", DateTimeOffset.UtcNow.AddDays(-2)));
+        await history.SaveAsync(CreateHistoricalRun(project, "Release", DateTimeOffset.UtcNow));
+
+        using MainViewModel viewModel = new(
+            targetDiscoveryDelay: TimeSpan.Zero,
+            binlogAnalyzer: (_, _) => Task.FromResult(new BinlogAnalysis(
+                new[] { new AnalyzerSample("ParityAnalyzer", "Parity", MetricKind.Analyzer, null, 12) },
+                new[] { new GeneratorSample("ParityGenerator", "Parity", 8) },
+                Array.Empty<RunDiagnostic>(),
+                42,
+                Array.Empty<CompilerInvocation>())))
+        {
+            HistoryPath = historyPath,
+        };
+        await viewModel.InitializeAsync();
+        Ensure(viewModel.History.Count == 2, "History should initially contain both runs.");
+
+        viewModel.HistoryFrom = DateTimeOffset.UtcNow.AddHours(-1).ToString("O");
+        viewModel.HistoryLimit = "1";
+        viewModel.RefreshHistoryCommand.Execute(null);
+        await WaitForOperationAsync(viewModel);
+        Ensure(viewModel.History.Count == 1, "GUI history date and limit filters must match CLI capability.");
+        Ensure(viewModel.History[0].Configuration == "Release", "History filtering returned the wrong run.");
+
+        viewModel.BinlogPath = binlog;
+        Ensure(viewModel.AnalyzeBinlogCommand.CanExecute(null), "A binlog path should enable analysis.");
+        viewModel.AnalyzeBinlogCommand.Execute(null);
+        await WaitForOperationAsync(viewModel);
+        Ensure(viewModel.SelectedRun?.TargetPath == binlog, "GUI binlog analysis did not select its result.");
+        Ensure(viewModel.SelectedRun?.Analyzers.Single().Identity == "ParityAnalyzer", "Analyzer results were not projected from the binlog.");
+        Ensure(viewModel.SelectedRun?.Generators.Single().Identity == "ParityGenerator", "Generator results were not projected from the binlog.");
+        Ensure(viewModel.StatusText.Contains("42", StringComparison.Ordinal), "Binlog event count should be visible.");
+    }
+    finally
+    {
+        Directory.Delete(path, recursive: true);
+    }
+}
+
+static async Task WaitForOperationAsync(MainViewModel viewModel)
+{
+    for (int attempt = 0; attempt < 500; attempt++)
+    {
+        if (!viewModel.IsOperationRunning)
+        {
+            await Task.Delay(10);
+            if (!viewModel.IsOperationRunning)
+            {
+                return;
+            }
+        }
+
+        await Task.Delay(10);
+    }
+
+    throw new TimeoutException("The GUI operation did not complete.");
+}
+
 static Task ResultTreeFilteringAsync()
 {
     StatisticalMetric analyzer = new(
@@ -763,15 +860,21 @@ static Task ResultTreeFilteringAsync()
         20,
         new[]
         {
-            new GeneratedOutput("SampleGenerator", "Generated/First.g.cs", 100, 8),
-            new GeneratedOutput("SampleGenerator", "Generated/Second.g.cs", 200, 12),
-        });
+            new GeneratedOutput("SampleGenerator", "Sample.Generators", "Generated/First.g.cs", 100, 8),
+            new GeneratedOutput("SampleGenerator", "Sample.Generators", "Generated/Second.g.cs", 200, 12),
+        })
+    {
+        OutputsTruncated = true,
+    };
     IReadOnlyList<ResultTreeNode> generatorTree = ResultTreeBuilder.BuildGenerators(
         new[] { generator },
         "Second");
     Ensure(generatorTree.Count == 1, "A generated-file match should retain its generator branch.");
     Ensure(generatorTree[0].Children[0].Children.Count == 1, "Only matching generated files should remain in a filtered tree.");
     Ensure(generatorTree[0].Children[0].Children[0].Name.EndsWith("Second.g.cs", StringComparison.Ordinal), "The matching generated file should be visible.");
+    Ensure(
+        generatorTree[0].Children[0].Detail.Contains("先頭100件を表示、全件はexport", StringComparison.Ordinal),
+        "A truncated generator tree node must direct users to full export.");
     Ensure(ResultTreeBuilder.BuildGenerators(new[] { generator }, "Missing").Count == 0, "Nonmatching generator branches should be removed.");
     return Task.CompletedTask;
 }
@@ -859,6 +962,27 @@ static async Task AsyncCommandAsync()
     command.Execute(null);
     await completion.Task.WaitAsync(TimeSpan.FromSeconds(5));
     Ensure(executed, "Async command did not execute.");
+
+    TaskCompletionSource cancellationStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    Exception? cancellationError = null;
+    AsyncRelayCommand cancelable = new(
+        async cancellationToken =>
+        {
+            cancellationStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        },
+        onError: exception => cancellationError = exception);
+    cancelable.Execute(null);
+    await cancellationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Ensure(cancelable.IsExecuting, "Cancelable command did not enter the executing state.");
+    cancelable.Cancel();
+    for (int attempt = 0; attempt < 100 && cancelable.IsExecuting; attempt++)
+    {
+        await Task.Delay(10);
+    }
+
+    Ensure(!cancelable.IsExecuting, "Cancelable command did not finish after cancellation.");
+    Ensure(cancellationError is null, "Normal command cancellation must not be reported as an error.");
 }
 
 static Task MeasurementStateAsync()
@@ -925,10 +1049,14 @@ static async Task XamlContractAsync()
 {
     string root = FindRepositoryRoot();
     string xaml = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "src", "Yaap.Gui", "MainWindow.xaml"));
+    string viewModel = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "src", "Yaap.Gui", "MainViewModel.cs"));
     string appXaml = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "src", "Yaap.Gui", "App.xaml"));
     string notices = await File.ReadAllTextAsync(System.IO.Path.Combine(root, "THIRD-PARTY-NOTICES.txt"));
     Ensure(xaml.Contains("VirtualizationMode=\"Recycling\"", StringComparison.Ordinal), "Virtualization is required.");
     Ensure(xaml.Contains("生成ファイル単位の実行時間", StringComparison.Ordinal), "Generator timing disclaimer is required.");
+    Ensure(xaml.Contains("先頭100件を表示しています。全件はexportで確認できます。", StringComparison.Ordinal), "Truncated generated-output previews must explain full export.");
+    Ensure(xaml.Contains("SelectedItem.OutputsTruncated", StringComparison.Ordinal), "The truncated-preview notice must be conditional.");
+    Ensure(viewModel.Contains("StreamGeneratedOutputsAsync(SelectedRun.Id, cancellationToken)", StringComparison.Ordinal), "GUI export must stream the complete generated-output manifest.");
     Ensure(xaml.Contains("キャンセル", StringComparison.Ordinal), "Cancellation UI is required.");
     Ensure(xaml.Contains("ResultFilter", StringComparison.Ordinal), "Analyzer and generator filtering is required.");
     Ensure(xaml.Contains("PlaceholderText=\"*.csproj; *.slnx; *.sln\"", StringComparison.Ordinal), "The target placeholder is required.");
@@ -946,6 +1074,13 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("ChevronDown16", StringComparison.Ordinal), "Recent targets must use a Fluent chevron.");
     Ensure(xaml.Contains("HorizontalAlignment=\"Stretch\"", StringComparison.Ordinal), "Recent-target items must stretch to a uniform width.");
     Ensure(xaml.Contains("x:Name=\"AdvancedSettingsPopup\"", StringComparison.Ordinal), "Advanced settings must use a compact popup.");
+    Ensure(xaml.Contains("x:Name=\"RestoreCheckBox\"", StringComparison.Ordinal), "Advanced settings must expose restore control.");
+    Ensure(xaml.Contains("IsChecked=\"{Binding Restore}\"", StringComparison.Ordinal), "The restore control must bind to the view model.");
+    Ensure(viewModel.Contains("Restore = Restore", StringComparison.Ordinal), "The GUI restore setting must reach ProfileOptions.");
+    Ensure(xaml.Contains("Text=\"{Binding HistoryFrom}\"", StringComparison.Ordinal), "GUI history must expose the CLI-equivalent start filter.");
+    Ensure(xaml.Contains("Text=\"{Binding HistoryTo}\"", StringComparison.Ordinal), "GUI history must expose the CLI-equivalent end filter.");
+    Ensure(xaml.Contains("Text=\"{Binding HistoryLimit}\"", StringComparison.Ordinal), "GUI history must expose the CLI-equivalent limit filter.");
+    Ensure(xaml.Contains("Command=\"{Binding AnalyzeBinlogCommand}\"", StringComparison.Ordinal), "GUI must expose existing-binlog analysis.");
     Ensure(xaml.Contains("Symbol=\"Options20\"", StringComparison.Ordinal), "Advanced settings must use a Fluent options icon.");
     Ensure(!xaml.Contains("<Expander", StringComparison.Ordinal), "Advanced settings must not reserve an expander row.");
     Ensure(xaml.Contains("NumericCellTextStyle", StringComparison.Ordinal), "Numeric cells must share an alignment style.");
@@ -954,7 +1089,8 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("ui:ProgressRing", StringComparison.Ordinal), "Measurement progress must be visually prominent.");
     Ensure(xaml.Contains("x:Name=\"BusyCancelButton\"", StringComparison.Ordinal), "Cancel must remain available on the busy surface.");
     Ensure(xaml.Contains("x:Name=\"StatusBar\"", StringComparison.Ordinal), "The idle status surface must have a testable identity.");
-    Ensure(xaml.Contains("Text=\"{Binding MeasurementStateText}\"", StringComparison.Ordinal), "The busy surface must use the canonical measurement state.");
+    Ensure(xaml.Contains("Text=\"{Binding BusyTitleText}\"", StringComparison.Ordinal), "The busy surface must describe measurement and secondary operations.");
+    Ensure(xaml.Contains("AutomationProperties.LiveSetting=\"Polite\"", StringComparison.Ordinal), "Busy and status changes must be announced to assistive technology.");
     Ensure(!xaml.Contains("Text=\"測定を実行しています\"", StringComparison.Ordinal), "The busy surface must not duplicate measurement-state wording.");
     Ensure(!xaml.Contains("Header=\"標本\"", StringComparison.Ordinal), "The Analyzer table must not expose sample count.");
     Ensure(xaml.Contains("x:Name=\"StartButton\"", StringComparison.Ordinal), "The primary measurement action must be testable.");

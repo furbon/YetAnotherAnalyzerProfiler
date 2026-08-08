@@ -2,73 +2,86 @@
 
 public static class GeneratedOutputInventory
 {
-    public static async Task<IReadOnlyList<GeneratedOutput>> InspectAsync(
+    public static async IAsyncEnumerable<GeneratedOutput> InspectAsync(
         string rootPath,
-        CancellationToken cancellationToken = default)
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(rootPath))
         {
-            return Array.Empty<GeneratedOutput>();
+            yield break;
         }
 
-        List<GeneratedOutput> outputs = new();
-        foreach (string file in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories))
+        EnumerationOptions enumerationOptions = new()
+        {
+            AttributesToSkip = FileAttributes.ReparsePoint,
+            IgnoreInaccessible = false,
+            RecurseSubdirectories = true,
+            ReturnSpecialDirectories = false,
+        };
+        foreach (string file in Directory.EnumerateFiles(rootPath, "*", enumerationOptions))
         {
             cancellationToken.ThrowIfCancellationRequested();
             FileInfo info = new(file);
             string relativePath = Path.GetRelativePath(rootPath, file).Replace('\\', '/');
             string[] segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            string generator = segments.Length >= 2
-                ? segments[^2]
+            string assembly = segments.Length >= 3 ? segments[0] : string.Empty;
+            string generator = segments.Length >= 3
+                ? segments[1]
+                : segments.Length >= 2
+                    ? segments[^2]
                 : "unknown";
             long lineCount = await CountLinesAsync(file, cancellationToken).ConfigureAwait(false);
-            outputs.Add(new GeneratedOutput(generator, relativePath, info.Length, lineCount));
+            yield return new GeneratedOutput(generator, assembly, relativePath, info.Length, lineCount);
         }
-
-        return outputs
-            .OrderBy(output => output.GeneratorIdentity, StringComparer.Ordinal)
-            .ThenBy(output => output.RelativePath, StringComparer.Ordinal)
-            .ToArray();
     }
 
     private static async Task<long> CountLinesAsync(string path, CancellationToken cancellationToken)
     {
-        byte[] buffer = new byte[64 * 1024];
-        long lines = 0;
-        long bytes = 0;
-        byte last = 0;
-        await using FileStream stream = new(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite,
-            buffer.Length,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        while (true)
+        byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
         {
-            int read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (read == 0)
+            long lines = 0;
+            long bytes = 0;
+            byte last = 0;
+            await using FileStream stream = new(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite,
+                64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            while (true)
             {
-                break;
-            }
-
-            bytes += read;
-            for (int index = 0; index < read; index++)
-            {
-                if (buffer[index] == (byte)'\n')
+                int read = await stream.ReadAsync(
+                    buffer.AsMemory(0, 64 * 1024),
+                    cancellationToken).ConfigureAwait(false);
+                if (read == 0)
                 {
-                    lines++;
+                    break;
                 }
+
+                bytes += read;
+                for (int index = 0; index < read; index++)
+                {
+                    if (buffer[index] == (byte)'\n')
+                    {
+                        lines++;
+                    }
+                }
+
+                last = buffer[read - 1];
             }
 
-            last = buffer[read - 1];
-        }
+            if (bytes > 0 && last != (byte)'\n')
+            {
+                lines++;
+            }
 
-        if (bytes > 0 && last != (byte)'\n')
+            return lines;
+        }
+        finally
         {
-            lines++;
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
         }
-
-        return lines;
     }
 }

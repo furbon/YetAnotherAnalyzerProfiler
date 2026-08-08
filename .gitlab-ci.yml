@@ -6,17 +6,18 @@
 .linux-verify:
   stage: verify
   script:
+    - git config --local core.hooksPath .githooks
     - sh ./eng/build.sh verify --framework "$FRAMEWORK"
 
 linux-net8:
   extends: .linux-verify
-  image: mcr.microsoft.com/dotnet/sdk:8.0
+  image: mcr.microsoft.com/dotnet/sdk:8.0.423@sha256:e2f26f26169fd10d6f1b426e01c97397717b32e9d5ab4ee4a7d5497ed9403007
   variables:
     FRAMEWORK: net8.0
 
 linux-net10:
   extends: .linux-verify
-  image: mcr.microsoft.com/dotnet/sdk:10.0
+  image: mcr.microsoft.com/dotnet/sdk:10.0.302@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0
   variables:
     FRAMEWORK: net10.0
 
@@ -24,18 +25,21 @@ windows-wpf:
   stage: platform
   tags: [windows]
   script:
+    - pwsh -NoProfile -File eng/install-git-hooks.ps1
     - pwsh -NoProfile -File eng/build.ps1 verify --framework net10.0
 
 macos-cli:
   stage: platform
   tags: [macos]
   script:
+    - git config --local core.hooksPath .githooks
     - sh ./eng/build.sh verify --framework net10.0
 
 publish-linux:
   stage: publish
-  image: mcr.microsoft.com/dotnet/sdk:10.0
+  image: mcr.microsoft.com/dotnet/sdk:10.0.302@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0
   script:
+    - git config --local core.hooksPath .githooks
     - sh ./eng/build.sh publish --framework net10.0 --runtime linux-x64
   artifacts:
     paths:
@@ -45,6 +49,7 @@ publish-windows:
   stage: publish
   tags: [windows]
   script:
+    - pwsh -NoProfile -File eng/install-git-hooks.ps1
     - pwsh -NoProfile -File eng/build.ps1 publish --framework net10.0 --runtime win-x64
   artifacts:
     paths:
@@ -54,6 +59,7 @@ publish-macos:
   stage: publish
   tags: [macos]
   script:
+    - git config --local core.hooksPath .githooks
     - sh ./eng/build.sh publish --framework net10.0 --runtime osx-x64
     - sh ./eng/build.sh publish --framework net10.0 --runtime osx-arm64
   artifacts:

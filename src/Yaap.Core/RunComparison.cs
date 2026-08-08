@@ -2,19 +2,27 @@
 
 public static class RunComparison
 {
-    public static ComparisonResult Compare(ProfileRun baseline, ProfileRun candidate)
+    public static ComparisonResult Compare(
+        ProfileRun baseline,
+        ProfileRun candidate,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(baseline);
+        ArgumentNullException.ThrowIfNull(candidate);
+        cancellationToken.ThrowIfCancellationRequested();
         List<MetricDelta> metrics = new();
         AddDeltas(
             metrics,
             "analyzer",
             ToAnalyzerDictionary(baseline.Analyzers),
-            ToAnalyzerDictionary(candidate.Analyzers));
+            ToAnalyzerDictionary(candidate.Analyzers),
+            cancellationToken);
         AddDeltas(
             metrics,
             "generator",
             ToGeneratorDictionary(baseline.Generators),
-            ToGeneratorDictionary(candidate.Generators));
+            ToGeneratorDictionary(candidate.Generators),
+            cancellationToken);
 
         int baselineFiles = baseline.Generators.Sum(item => item.GeneratedFileCount);
         int candidateFiles = candidate.Generators.Sum(item => item.GeneratedFileCount);
@@ -58,10 +66,12 @@ public static class RunComparison
         ICollection<MetricDelta> target,
         string category,
         IReadOnlyDictionary<string, double> baseline,
-        IReadOnlyDictionary<string, double> candidate)
+        IReadOnlyDictionary<string, double> candidate,
+        CancellationToken cancellationToken)
     {
         foreach (string identity in baseline.Keys.Union(candidate.Keys, StringComparer.Ordinal))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             bool hasBaseline = baseline.TryGetValue(identity, out double before);
             bool hasCandidate = candidate.TryGetValue(identity, out double after);
             double? delta = hasBaseline && hasCandidate ? after - before : null;
@@ -81,14 +91,29 @@ public static class RunComparison
     private static IReadOnlyList<string> GetWarnings(ProfileRun baseline, ProfileRun candidate)
     {
         List<string> warnings = new();
+        AddWarningIfDifferent(warnings, "状態", baseline.Status, candidate.Status);
+        AddWarningIfDifferent(warnings, "測定モード", baseline.Mode, candidate.Mode);
+        AddWarningIfDifferent(warnings, "ウォームアップ回数", baseline.WarmupCount, candidate.WarmupCount);
+        AddWarningIfDifferent(warnings, "測定回数", baseline.IterationCount, candidate.IterationCount);
+        AddWarningIfDifferent(warnings, "clean方針", baseline.CleanBeforeEach, candidate.CleanBeforeEach);
+        AddWarningIfDifferent(warnings, "restore方針", baseline.Restore, candidate.Restore);
+        AddWarningIfDifferent(warnings, "分離出力", baseline.Isolated, candidate.Isolated);
+        AddWarningIfDifferent(warnings, "成功測定数", baseline.Measurements.Count, candidate.Measurements.Count);
         AddWarningIfDifferent(warnings, "SDK", baseline.Environment.DotNetSdk, candidate.Environment.DotNetSdk);
         AddWarningIfDifferent(warnings, "OS", baseline.Environment.OperatingSystem, candidate.Environment.OperatingSystem);
-        AddWarningIfDifferent(warnings, "architecture", baseline.Environment.Architecture, candidate.Environment.Architecture);
-        AddWarningIfDifferent(warnings, "CPU count", baseline.Environment.ProcessorCount, candidate.Environment.ProcessorCount);
-        AddWarningIfDifferent(warnings, "configuration", baseline.Configuration, candidate.Configuration);
+        AddWarningIfDifferent(warnings, "アーキテクチャ", baseline.Environment.Architecture, candidate.Environment.Architecture);
+        AddWarningIfDifferent(warnings, "論理プロセッサ数", baseline.Environment.ProcessorCount, candidate.Environment.ProcessorCount);
+        AddWarningIfDifferent(warnings, "構成", baseline.Configuration, candidate.Configuration);
+        AddWarningIfDifferent(warnings, "Gitコミット", baseline.Environment.GitCommit, candidate.Environment.GitCommit);
+        AddWarningIfDifferent(warnings, "Git作業ツリー状態", baseline.Environment.GitDirty, candidate.Environment.GitDirty);
         string baselineFrameworks = string.Join(';', baseline.TargetFrameworks.Order(StringComparer.Ordinal));
         string candidateFrameworks = string.Join(';', candidate.TargetFrameworks.Order(StringComparer.Ordinal));
-        AddWarningIfDifferent(warnings, "target frameworks", baselineFrameworks, candidateFrameworks);
+        AddWarningIfDifferent(warnings, "対象フレームワーク", baselineFrameworks, candidateFrameworks);
+        if (baseline.Status != RunStatus.Succeeded || candidate.Status != RunStatus.Succeeded)
+        {
+            warnings.Add("成功以外の測定結果を含むため、差分は参考値です。");
+        }
+
         return warnings;
     }
 
@@ -96,7 +121,7 @@ public static class RunComparison
     {
         if (!EqualityComparer<T>.Default.Equals(baseline, candidate))
         {
-            warnings.Add($"Different {field}: baseline={baseline}, candidate={candidate}");
+            warnings.Add($"{field}が異なります: ベースライン={baseline}, 候補={candidate}");
         }
     }
 }

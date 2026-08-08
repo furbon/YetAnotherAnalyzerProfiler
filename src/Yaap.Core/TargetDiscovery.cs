@@ -74,12 +74,25 @@ public static class TargetDiscovery
             throw new YaapException(YaapErrors.InvalidInput(fullPath));
         }
 
-        return extension.ToLowerInvariant() switch
+        try
         {
-            ".sln" => await DiscoverSolutionAsync(fullPath, cancellationToken).ConfigureAwait(false),
-            ".slnx" => await DiscoverSolutionXmlAsync(fullPath, cancellationToken).ConfigureAwait(false),
-            _ => await DiscoverProjectAsync(fullPath, cancellationToken).ConfigureAwait(false),
-        };
+            return extension.ToLowerInvariant() switch
+            {
+                ".sln" => await DiscoverSolutionAsync(fullPath, cancellationToken).ConfigureAwait(false),
+                ".slnx" => await DiscoverSolutionXmlAsync(fullPath, cancellationToken).ConfigureAwait(false),
+                _ => await DiscoverProjectAsync(fullPath, cancellationToken).ConfigureAwait(false),
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or XmlException)
+        {
+            throw new YaapException(YaapErrors.InvalidInput(
+                $"Could not read target '{fullPath}': {exception.Message}"), exception);
+        }
     }
 
     private static async Task<TargetInfo> DiscoverSolutionAsync(
@@ -96,30 +109,53 @@ public static class TargetDiscovery
             64 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         using StreamReader reader = new(stream);
+        bool readingSolutionConfigurations = false;
         while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
-            if (!line.Contains("|Any CPU =", StringComparison.OrdinalIgnoreCase))
+            string trimmed = line.Trim();
+            if (trimmed.StartsWith(
+                    "GlobalSection(SolutionConfigurationPlatforms)",
+                    StringComparison.OrdinalIgnoreCase))
             {
-                System.Text.RegularExpressions.Match projectMatch =
-                    System.Text.RegularExpressions.Regex.Match(
-                        line,
-                        @"= ""[^""]+"", ""(?<path>[^""]+\.csproj)""",
-                        System.Text.RegularExpressions.RegexOptions.IgnoreCase |
-                        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-                if (projectMatch.Success)
+                readingSolutionConfigurations = true;
+                continue;
+            }
+
+            if (readingSolutionConfigurations)
+            {
+                if (trimmed.Equals("EndGlobalSection", StringComparison.OrdinalIgnoreCase))
                 {
-                    projects.Add(Path.GetFullPath(
-                        NormalizeRelativePath(projectMatch.Groups["path"].Value),
-                        Path.GetDirectoryName(fullPath)!));
+                    readingSolutionConfigurations = false;
+                    continue;
+                }
+
+                int equalsIndex = trimmed.IndexOf('=');
+                string configurationPlatform = equalsIndex >= 0
+                    ? trimmed[..equalsIndex].Trim()
+                    : trimmed;
+                int platformSeparator = configurationPlatform.IndexOf('|');
+                string configuration = platformSeparator >= 0
+                    ? configurationPlatform[..platformSeparator].Trim()
+                    : string.Empty;
+                if (!string.IsNullOrWhiteSpace(configuration))
+                {
+                    configurations.Add(configuration);
                 }
 
                 continue;
             }
 
-            string value = line.Trim().Split('|')[0];
-            if (!string.IsNullOrWhiteSpace(value))
+            System.Text.RegularExpressions.Match projectMatch =
+                System.Text.RegularExpressions.Regex.Match(
+                    line,
+                    @"= ""[^""]+"", ""(?<path>[^""]+\.csproj)""",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            if (projectMatch.Success)
             {
-                configurations.Add(value);
+                projects.Add(Path.GetFullPath(
+                    NormalizeRelativePath(projectMatch.Groups["path"].Value),
+                    Path.GetDirectoryName(fullPath)!));
             }
         }
 
@@ -248,7 +284,7 @@ public static class TargetDiscovery
         CancellationToken cancellationToken)
     {
         HashSet<string> frameworks = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string projectPath in projectPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string projectPath in projectPaths.Distinct(FileSystemPath.Comparer))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(projectPath))
@@ -269,4 +305,11 @@ public static class TargetDiscovery
             .Replace('\\', Path.DirectorySeparatorChar)
             .Replace('/', Path.DirectorySeparatorChar);
     }
+}
+
+internal static class FileSystemPath
+{
+    public static StringComparer Comparer { get; } = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
 }

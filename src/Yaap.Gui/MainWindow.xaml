@@ -46,7 +46,7 @@
             <ui:Card.Style>
                 <Style BasedOn="{StaticResource {x:Type ui:Card}}" TargetType="{x:Type ui:Card}">
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
                             <Setter Property="IsEnabled" Value="False" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -63,15 +63,17 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0"
+                <TextBlock x:Name="TargetPathLabel"
+                           Grid.Row="0"
                            Grid.Column="0"
                            Margin="0,0,8,0"
                            VerticalAlignment="Center"
                            Text="対象" />
                 <ui:TextBox Grid.Row="0"
-                            Grid.Column="1"
+                             Grid.Column="1"
+                             AutomationProperties.LabeledBy="{Binding ElementName=TargetPathLabel}"
                             Margin="0,0,8,0"
-                            IsReadOnly="{Binding IsRunning}"
+                            IsReadOnly="{Binding IsBusy}"
                             PlaceholderText="*.csproj; *.slnx; *.sln"
                             Text="{Binding TargetPath, UpdateSourceTrigger=PropertyChanged}"
                             ToolTip=".sln、.slnx、.csproj をこの画面へドロップできます。" />
@@ -82,7 +84,7 @@
                     <Button Margin="0,0,4,0"
                             Padding="12,4"
                             Command="{Binding BrowseCommand}"
-                            Content="参照" />
+                            Content="_参照" />
                     <ToggleButton x:Name="RecentTargetsButton"
                                   Padding="10,4"
                                   ToolTip="最近選択した測定対象を選択">
@@ -214,9 +216,9 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="測定モード" />
+                                        <TextBlock x:Name="ProfileModeLabel" Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalAlignment="Center" Text="測定モード" />
                                         <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,8" Orientation="Horizontal">
-                                            <ComboBox Width="120" Margin="0,0,20,0" ItemsSource="{Binding Modes}" SelectedItem="{Binding SelectedMode}" />
+                                            <ComboBox Width="120" Margin="0,0,20,0" AutomationProperties.LabeledBy="{Binding ElementName=ProfileModeLabel}" ItemsSource="{Binding Modes}" SelectedItem="{Binding SelectedMode}" />
                                             <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="ウォームアップ回数" />
                                             <TextBox Width="50" Margin="0,0,20,0" Text="{Binding WarmupCount}" />
                                             <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="測定回数" />
@@ -231,8 +233,21 @@
                                                     ToolTip="空欄の場合はOS標準のローカルアプリケーションデータを使用します。" />
                                         <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,0,8,8" VerticalAlignment="Center" Text="保持件数" />
                                         <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,0,8" Text="{Binding RetentionCount}" />
-                                        <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,12,8" Content="毎回 clean" IsChecked="{Binding CleanBeforeEach}" />
-                                        <CheckBox Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" Margin="0,0,0,8" Content="分離出力 (--artifacts-path)" IsChecked="{Binding Isolated}" />
+                                        <StackPanel Grid.Row="2"
+                                                    Grid.Column="0"
+                                                    Grid.ColumnSpan="4"
+                                                    Margin="0,0,0,8"
+                                                    Orientation="Horizontal">
+                                            <CheckBox x:Name="RestoreCheckBox"
+                                                      Margin="0,0,20,0"
+                                                      Content="restore を実行"
+                                                      IsChecked="{Binding Restore}"
+                                                      ToolTip="測定開始時に dotnet restore を1回実行します。" />
+                                            <CheckBox Margin="0,0,20,0" Content="毎回 clean" IsChecked="{Binding CleanBeforeEach}" />
+                                            <CheckBox Content="分離出力"
+                                                      IsChecked="{Binding Isolated}"
+                                                      ToolTip="dotnet --artifacts-path を使用します。サンドボックスではありません。" />
+                                        </StackPanel>
                                         <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Text="分離出力先" />
                                         <ui:TextBox Grid.Row="3"
                                                     Grid.Column="1"
@@ -251,6 +266,7 @@
                           Grid.Row="0"
                           Grid.Column="3"
                           Margin="0,0,8,0"
+                          AutomationProperties.Name="ビルド構成"
                           ItemsSource="{Binding Configurations}"
                           SelectedItem="{Binding Configuration, Mode=TwoWay}"
                           ToolTip="対象から検出したビルド構成" />
@@ -269,6 +285,7 @@
         </ui:Card>
 
         <ui:Card x:Name="BusyCard"
+                 AutomationProperties.LiveSetting="Polite"
                  DockPanel.Dock="Top"
                  Margin="0,8,0,0"
                  Padding="10">
@@ -276,7 +293,7 @@
                 <Style BasedOn="{StaticResource {x:Type ui:Card}}" TargetType="{x:Type ui:Card}">
                     <Setter Property="Visibility" Value="Collapsed" />
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
                             <Setter Property="Visibility" Value="Visible" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -297,7 +314,7 @@
                     <TextBlock x:Name="BusyTitle"
                                FontWeight="SemiBold"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                               Text="{Binding MeasurementStateText}" />
+                               Text="{Binding BusyTitleText}" />
                     <TextBlock x:Name="BusyMessage"
                                FontSize="12"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
@@ -312,6 +329,7 @@
         </ui:Card>
 
         <ui:InfoBar x:Name="StatusBar"
+                    AutomationProperties.LiveSetting="Polite"
                     DockPanel.Dock="Bottom"
                     Margin="0,12,0,0"
                     IsClosable="False"
@@ -322,7 +340,7 @@
                 <Style BasedOn="{StaticResource {x:Type ui:InfoBar}}" TargetType="{x:Type ui:InfoBar}">
                     <Setter Property="Visibility" Value="Visible" />
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
                             <Setter Property="Visibility" Value="Collapsed" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -340,7 +358,7 @@
             <TabControl.Style>
                 <Style BasedOn="{StaticResource {x:Type TabControl}}" TargetType="{x:Type TabControl}">
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
                             <Setter Property="IsEnabled" Value="False" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -393,6 +411,7 @@
             <TabItem Header="Analyzer">
                 <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
@@ -463,6 +482,7 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="2*" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
                                 <ui:DataGrid x:Name="GeneratorGrid"
@@ -487,7 +507,23 @@
                                            Margin="6"
                                            FontWeight="SemiBold"
                                            Text="以下は生成物の一覧です。Roslyn は生成ファイル単位の実行時間を提供しないため表示しません。" />
-                                <ui:DataGrid Grid.Row="2"
+                                <TextBlock x:Name="GeneratorOutputsTruncatedNotice"
+                                           Grid.Row="2"
+                                           Margin="6,0,6,6"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Text="先頭100件を表示しています。全件はexportで確認できます。">
+                                    <TextBlock.Style>
+                                        <Style TargetType="{x:Type TextBlock}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedItem.OutputsTruncated, ElementName=GeneratorGrid}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ui:DataGrid Grid.Row="3"
                                              ItemsSource="{Binding SelectedItem.Outputs, ElementName=GeneratorGrid}"
                                              AutoGenerateColumns="False"
                                              EnableRowVirtualization="True"
@@ -536,6 +572,7 @@
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="0,0,0,8" Orientation="Horizontal">
@@ -545,6 +582,7 @@
                                    Text="{Binding HistoryCountText}" />
                         <ui:TextBox Width="320"
                                     Margin="0,0,8,0"
+                                    AutomationProperties.Name="履歴の検索"
                                     PlaceholderText="対象名、パス、履歴IDを検索"
                                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                                     ToolTip="名前、パス、IDを検索" />
@@ -556,7 +594,15 @@
                         <Button Margin="0,0,8,0" Padding="12,4" Command="{Binding LoadSelectedCommand}" Content="詳細を遅延読込" />
                         <Button Padding="12,4" Command="{Binding DeleteSelectedCommand}" Content="選択履歴を削除" />
                     </StackPanel>
-                    <ui:DataGrid Grid.Row="1"
+                    <StackPanel Grid.Row="1" Margin="0,0,0,8" Orientation="Horizontal">
+                        <TextBlock x:Name="HistoryFromLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="開始日時" />
+                        <TextBox Width="190" Margin="0,0,12,0" AutomationProperties.LabeledBy="{Binding ElementName=HistoryFromLabel}" Text="{Binding HistoryFrom}" ToolTip="ISO-8601。空欄は制限なし。" />
+                        <TextBlock x:Name="HistoryToLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="終了日時" />
+                        <TextBox Width="190" Margin="0,0,12,0" AutomationProperties.LabeledBy="{Binding ElementName=HistoryToLabel}" Text="{Binding HistoryTo}" ToolTip="ISO-8601。空欄は制限なし。" />
+                        <TextBlock x:Name="HistoryLimitLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="上限" />
+                        <TextBox Width="80" AutomationProperties.LabeledBy="{Binding ElementName=HistoryLimitLabel}" Text="{Binding HistoryLimit}" ToolTip="1～10000。空欄は500件。" />
+                    </StackPanel>
+                    <ui:DataGrid Grid.Row="2"
                               ItemsSource="{Binding History}"
                               SelectedItem="{Binding SelectedHistory}"
                               AutoGenerateColumns="False"
@@ -586,9 +632,9 @@
                     </Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="0,0,0,8" Orientation="Horizontal">
                         <TextBlock x:Name="CompareBaselineLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="ベースライン" />
-                        <TextBox Width="280" Margin="0,0,12,0" Text="{Binding BaselineId}" />
-                        <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="候補" />
-                        <TextBox Width="280" Margin="0,0,12,0" Text="{Binding CandidateId}" />
+                        <TextBox Width="280" Margin="0,0,12,0" AutomationProperties.LabeledBy="{Binding ElementName=CompareBaselineLabel}" Text="{Binding BaselineId}" />
+                        <TextBlock x:Name="CompareCandidateLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="候補" />
+                        <TextBox Width="280" Margin="0,0,12,0" AutomationProperties.LabeledBy="{Binding ElementName=CompareCandidateLabel}" Text="{Binding CandidateId}" />
                         <Button Padding="12,4" Command="{Binding CompareCommand}" Content="比較" />
                     </StackPanel>
                     <ui:DataGrid Grid.Row="1"
@@ -617,20 +663,27 @@
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="0,0,0,8" Orientation="Horizontal">
                         <TextBlock x:Name="ExportFormatLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="形式" />
-                        <ComboBox Width="110" Margin="0,0,8,0" Text="{Binding ExportFormat}">
+                        <ComboBox Width="110" Margin="0,0,8,0" AutomationProperties.LabeledBy="{Binding ElementName=ExportFormatLabel}" Text="{Binding ExportFormat}">
                             <ComboBoxItem Content="json" />
                             <ComboBoxItem Content="csv" />
                             <ComboBoxItem Content="markdown" />
                         </ComboBox>
-                        <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="出力先" />
-                        <TextBox Width="480" Margin="0,0,8,0" Text="{Binding ExportPath}" />
+                        <TextBlock x:Name="ExportPathLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="出力先" />
+                        <TextBox Width="480" Margin="0,0,8,0" AutomationProperties.LabeledBy="{Binding ElementName=ExportPathLabel}" Text="{Binding ExportPath}" />
                         <Button Padding="12,4" Command="{Binding ExportCommand}" Content="選択結果を出力" />
                     </StackPanel>
-                    <ui:DataGrid Grid.Row="1"
+                    <StackPanel Grid.Row="1" Margin="0,0,0,8" Orientation="Horizontal">
+                        <TextBlock x:Name="BinlogPathLabel" Margin="0,0,4,0" VerticalAlignment="Center" Text="既存binlog" />
+                        <TextBox Width="640" Margin="0,0,8,0" AutomationProperties.LabeledBy="{Binding ElementName=BinlogPathLabel}" Text="{Binding BinlogPath, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Margin="0,0,8,0" Padding="12,4" Command="{Binding BrowseBinlogCommand}" Content="参照" />
+                        <Button Padding="12,4" Command="{Binding AnalyzeBinlogCommand}" Content="解析して結果に表示" />
+                    </StackPanel>
+                    <ui:DataGrid Grid.Row="2"
                               ItemsSource="{Binding Diagnostics}"
                               AutoGenerateColumns="False"
                               EnableRowVirtualization="True"
@@ -660,11 +713,13 @@
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                Text="設定" />
                     <StackPanel Grid.Row="1" Margin="0,0,0,24" Orientation="Horizontal">
-                        <TextBlock Width="140"
+                        <TextBlock x:Name="ThemeLabel"
+                                   Width="140"
                                    VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                    Text="テーマ" />
                         <ComboBox Width="160"
+                                  AutomationProperties.LabeledBy="{Binding ElementName=ThemeLabel}"
                                   DisplayMemberPath="Label"
                                   ItemsSource="{Binding Source={x:Static local:MainViewModel.ThemeOptions}}"
                                   SelectedItem="{Binding SelectedTheme}" />

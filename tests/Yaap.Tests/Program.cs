@@ -1,7 +1,14 @@
 ﻿using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 using Yaap.Cli;
 using Yaap.Core;
+
+if (args is ["--child-wait"])
+{
+    await Task.Delay(TimeSpan.FromMinutes(5));
+    return 0;
+}
 
 List<TestCase> tests = new()
 {
@@ -10,17 +17,24 @@ List<TestCase> tests = new()
     new("unit.compiler-report-locales", CompilerReportLocalesAsync),
     new("comparison.deltas-and-warnings", ComparisonAsync),
     new("history.search-retention-delete", HistoryAsync),
+    new("history.concurrent-retention-protects-active", ConcurrentRetentionAsync),
+    new("history.atomic-delete-cancellation", AtomicHistoryDeleteAsync),
     new("export.csv-json-markdown", ExportAsync),
+    new("export.json-async-cancel", JsonExportCancellationAsync),
+    new("export.atomic-cancel-and-csv-safety", AtomicExportAsync),
     new("functional.target-discovery", TargetDiscoveryAsync),
     new("functional.compiler-invocation-capture", CompilerInvocationCaptureAsync),
     new("failure.malformed-binlog-diagnostic", MalformedBinlogAsync),
     new("functional.profile-prefers-sdk-capture", ProfilePrefersSdkCaptureAsync),
     new("functional.generated-output-inventory", GeneratedOutputAsync),
+    new("functional.generated-output-assembly-isolation", GeneratedOutputAssemblyIsolationAsync),
+    new("functional.generated-output-manifest-streaming", GeneratedOutputManifestAsync),
     new("functional.profile-isolated", ProfileIsolatedAsync),
     new("functional.profile-normal-output", ProfileNormalAsync),
     new("failure.profile-partial-record", ProfileFailureAsync),
     new("failure.profile-partial-after-success", ProfilePartialAsync),
     new("cancellation.profile-record", ProfileCancellationAsync),
+    new("cancellation.process-exit-bounded", ProcessCancellationAsync),
     new("cli.help-and-errors", CliAsync),
     new("scale.aggregate-bounded-identities", ScaleAsync),
 };
@@ -47,7 +61,7 @@ foreach (TestCase test in selected)
     Stopwatch timer = Stopwatch.StartNew();
     try
     {
-        await test.Body();
+        await test.Body().WaitAsync(TimeSpan.FromMinutes(3));
         Console.WriteLine($"PASS {test.Name} ({timer.ElapsedMilliseconds} ms)");
     }
     catch (Exception exception)
@@ -78,12 +92,12 @@ static Task StatisticsAsync()
         1,
         new[] { new AnalyzerSample("A", "Asm", MetricKind.Analyzer, null, 10) },
         new[] { new GeneratorSample("G", "Gen", 20) },
-        new[] { new GeneratedOutput("G", "G/a.cs", 10, 2) });
+        new[] { new GeneratedOutput("G", "Gen", "G/a.cs", 10, 2) });
     MeasurementResult second = Measurement(
         2,
         new[] { new AnalyzerSample("A", "Asm", MetricKind.Analyzer, null, 30) },
         new[] { new GeneratorSample("G", "Gen", 40) },
-        new[] { new GeneratedOutput("G", "G/a.cs", 12, 3) });
+        new[] { new GeneratedOutput("G", "Gen", "G/a.cs", 12, 3) });
     StatisticalMetric analyzer = Assert.Single(Statistics.AggregateAnalyzers(new[] { first, second }));
     GeneratorMetric generator = Assert.Single(Statistics.AggregateGenerators(new[] { first, second }));
     Assert.Equal(20d, analyzer.MeanMilliseconds);
@@ -145,6 +159,8 @@ static async Task HistoryAsync()
     ProfileRun loaded = await history.LoadAsync(first.Id);
     Assert.Equal(first.Id, loaded.Id);
     Assert.Equal(1, (await history.ListAsync(new HistoryQuery(Search: "beta"))).Count);
+    Assert.Equal(second.Id, Assert.Single(await history.ListAsync(new HistoryQuery(Limit: 1))).Id);
+    await Assert.ThrowsAsync<YaapException>(() => history.ListAsync(new HistoryQuery(Limit: 0)));
     Assert.Equal(1, (await history.ListAsync(new HistoryQuery(
         Status: RunStatus.Succeeded,
         From: first.StartedAt.AddSeconds(1),
@@ -161,6 +177,115 @@ static async Task HistoryAsync()
     Assert.Equal(0, (await history.ListAsync()).Count);
 }
 
+static async Task ConcurrentRetentionAsync()
+{
+    using TemporaryDirectory target = new();
+    using TemporaryDirectory historyPath = new();
+    string project = await WriteProjectAsync(target.Path);
+    TaskCompletionSource firstBuildStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    TaskCompletionSource releaseFirstBuild = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    RecordingProcessRunner firstProcess = new(async (invocation, cancellationToken) =>
+    {
+        if (invocation.Arguments.FirstOrDefault() == "build")
+        {
+            firstBuildStarted.TrySetResult();
+            await releaseFirstBuild.Task.WaitAsync(cancellationToken);
+            CreateFakeBuildOutputs(invocation);
+        }
+
+        return SuccessfulProcess(invocation);
+    });
+    ProfileOptions options = new()
+    {
+        TargetPath = project,
+        WarmupCount = 0,
+        IterationCount = 1,
+        CleanBeforeEach = false,
+        Restore = false,
+        HistoryPath = historyPath.Path,
+        RetentionCount = 1,
+    };
+    Task<ProfileRun> firstTask = new ProfileRunner(
+        firstProcess,
+        new FakeBinlogAnalyzer(),
+        new EnvironmentDetector(firstProcess)).RunAsync(options);
+    await firstBuildStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    HistoryStore history = new(historyPath.Path);
+    RunSummary active = Assert.Single(await history.ListAsync());
+    YaapException activeDelete = await Assert.ThrowsAsync<YaapException>(
+        () => history.DeleteAsync(active.Id));
+    Assert.Equal("YAAP4001", activeDelete.Diagnostic.Code);
+
+    RecordingProcessRunner secondProcess = new((invocation, _) =>
+    {
+        CreateFakeBuildOutputs(invocation);
+        return Task.FromResult(SuccessfulProcess(invocation));
+    });
+    ProfileRun second = await new ProfileRunner(
+        secondProcess,
+        new FakeBinlogAnalyzer(),
+        new EnvironmentDetector(secondProcess)).RunAsync(options);
+    IReadOnlyList<RunSummary> whileActive = await history.ListAsync();
+    Assert.Equal(2, whileActive.Count);
+    Assert.True(whileActive.Any(summary => summary.Id == active.Id));
+    Assert.True(whileActive.Any(summary => summary.Id == second.Id));
+
+    releaseFirstBuild.TrySetResult();
+    await firstTask.WaitAsync(TimeSpan.FromSeconds(10));
+    IReadOnlyList<RunSummary> retained = await history.ListAsync();
+    Assert.Equal(1, retained.Count);
+    Assert.Equal(second.Id, retained[0].Id);
+}
+
+static async Task AtomicHistoryDeleteAsync()
+{
+    using TemporaryDirectory temporary = new();
+    HistoryStore history = new(temporary.Path);
+    for (int attempt = 0; attempt < 5; attempt++)
+    {
+        ProfileRun run = Run(target: $"atomic-{attempt}.csproj");
+        await history.SaveAsync(run);
+        string runDirectory = history.GetRunDirectory(run.Id);
+        string payload = System.IO.Path.Combine(runDirectory, "payload");
+        Directory.CreateDirectory(payload);
+        for (int index = 0; index < 200; index++)
+        {
+            await File.WriteAllTextAsync(
+                System.IO.Path.Combine(payload, $"{index:D3}.txt"),
+                index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        using CancellationTokenSource cancellation = new();
+        Task deletion = history.DeleteAsync(run.Id, cancellation.Token);
+        cancellation.Cancel();
+        try
+        {
+            await deletion;
+            Assert.False(Directory.Exists(runDirectory));
+        }
+        catch (OperationCanceledException)
+        {
+            Assert.True(Directory.Exists(runDirectory));
+            Assert.True(File.Exists(System.IO.Path.Combine(runDirectory, "run.json")));
+            Assert.Equal(200, Directory.EnumerateFiles(payload).Count());
+            ProfileRun loaded = await history.LoadAsync(run.Id);
+            Assert.Equal(run.Id, loaded.Id);
+            await history.DeleteAsync(run.Id);
+        }
+    }
+
+    string tombstones = System.IO.Path.Combine(temporary.Path, "tombstones");
+    for (int attempt = 0; attempt < 100 &&
+         Directory.Exists(tombstones) &&
+         Directory.EnumerateDirectories(tombstones).Any(); attempt++)
+    {
+        await Task.Delay(20);
+    }
+
+    Assert.False(Directory.Exists(tombstones) && Directory.EnumerateDirectories(tombstones).Any());
+}
+
 static async Task ExportAsync()
 {
     ProfileRun run = Run(
@@ -168,7 +293,7 @@ static async Task ExportAsync()
         generators: new[]
         {
             new GeneratorMetric("G", "Gen", 2, 1, 3, 0.5, 2, 1, 10, 2,
-                new[] { new GeneratedOutput("G", "G/a.cs", 10, 2) }),
+                new[] { new GeneratedOutput("G", "Gen", "G/a.cs", 10, 2) }),
         });
     foreach (ExportFormat format in Enum.GetValues<ExportFormat>())
     {
@@ -181,6 +306,50 @@ static async Task ExportAsync()
         Assert.Contains(format == ExportFormat.Markdown ? "生成ファイル単位の時間ではありません" : "A", content);
         Assert.Contains("G/a.cs", content);
     }
+}
+
+static async Task AtomicExportAsync()
+{
+    using TemporaryDirectory temporary = new();
+    string outputPath = System.IO.Path.Combine(temporary.Path, "result.csv");
+    await File.WriteAllTextAsync(outputPath, "existing-content");
+    using CancellationTokenSource cancellation = new();
+    cancellation.Cancel();
+    await Assert.ThrowsAsync<OperationCanceledException>(() => RunExporter.ExportAsync(
+        Run(analyzers: new[] { Metric("=dangerous", 1) }),
+        ExportFormat.Csv,
+        outputPath,
+        cancellation.Token));
+    Assert.Equal("existing-content", await File.ReadAllTextAsync(outputPath));
+    Assert.False(Directory.EnumerateFiles(temporary.Path, "*.tmp", SearchOption.TopDirectoryOnly).Any());
+
+    await RunExporter.ExportAsync(
+        Run(analyzers: new[] { Metric("=dangerous", 1) }),
+        ExportFormat.Csv,
+        outputPath);
+    Assert.Contains("'=dangerous", await File.ReadAllTextAsync(outputPath));
+}
+
+static async Task JsonExportCancellationAsync()
+{
+    using CancellationTokenSource cancellation = new();
+    await using BlockingWriteStream output = new();
+    Task export = RunExporter.ExportAsync(
+        Run(analyzers: new[] { Metric("async", 1) }),
+        ExportFormat.Json,
+        output,
+        EmptyGeneratedOutputs(),
+        cancellation.Token);
+    await output.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Assert.False(export.IsCompleted, "JSON export must yield before serializing the run payload.");
+    cancellation.Cancel();
+    await Assert.ThrowsAsync<OperationCanceledException>(() => export);
+}
+
+static async IAsyncEnumerable<GeneratedOutput> EmptyGeneratedOutputs()
+{
+    await Task.CompletedTask;
+    yield break;
 }
 
 static async Task TargetDiscoveryAsync()
@@ -202,6 +371,21 @@ static async Task TargetDiscoveryAsync()
     Assert.Equal(".slnx", solutionXml.Extension);
     Assert.True(solution.TargetFrameworks.Contains("net8.0"));
     Assert.True(solutionXml.TargetFrameworks.Contains("net8.0"));
+    string customSolutionPath = System.IO.Path.Combine(temporary.Path, "Custom.sln");
+    await File.WriteAllTextAsync(
+        customSolutionPath,
+        "Microsoft Visual Studio Solution File, Format Version 12.00\n" +
+        "Global\n" +
+        "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\n" +
+        "\t\tProfile|x64 = Profile|x64\n" +
+        "\t\tShip|ARM64 = Ship|ARM64\n" +
+        "\tEndGlobalSection\n" +
+        "EndGlobal\n");
+    TargetInfo customSolution = await TargetDiscovery.DiscoverAsync(customSolutionPath);
+    Assert.Equal(2, customSolution.Configurations.Count);
+    Assert.True(customSolution.Configurations.Contains("Profile"));
+    Assert.True(customSolution.Configurations.Contains("Ship"));
+    Assert.False(customSolution.Configurations.Contains("Debug"));
     await Assert.ThrowsAsync<YaapException>(() => TargetDiscovery.DiscoverAsync(System.IO.Path.Combine(temporary.Path, "missing.sln")));
     Assert.True(TargetDiscovery.IsSupportedPath(project));
     Assert.True(TargetDiscovery.HasSupportedExtension("sample.slnx"));
@@ -256,10 +440,165 @@ static async Task GeneratedOutputAsync()
     string directory = System.IO.Path.Combine(temporary.Path, "Assembly", "Generator");
     Directory.CreateDirectory(directory);
     await File.WriteAllTextAsync(System.IO.Path.Combine(directory, "a.cs"), "one\ntwo\nthree");
-    GeneratedOutput output = Assert.Single(await GeneratedOutputInventory.InspectAsync(temporary.Path));
+    GeneratedOutput output = Assert.Single(await CollectAsync(
+        GeneratedOutputInventory.InspectAsync(temporary.Path)));
     Assert.Equal("Generator", output.GeneratorIdentity);
+    Assert.Equal("Assembly", output.GeneratorAssembly);
     Assert.Equal(3L, output.LineCount);
     Assert.True(output.ByteCount > 3);
+}
+
+static async Task GeneratedOutputAssemblyIsolationAsync()
+{
+    using TemporaryDirectory temporary = new();
+    string first = System.IO.Path.Combine(temporary.Path, "Assembly.A", "SharedGenerator", "Nested");
+    string second = System.IO.Path.Combine(temporary.Path, "Assembly.B", "SharedGenerator");
+    Directory.CreateDirectory(first);
+    Directory.CreateDirectory(second);
+    await File.WriteAllTextAsync(System.IO.Path.Combine(first, "a.cs"), "a");
+    await File.WriteAllTextAsync(System.IO.Path.Combine(second, "b.cs"), "bb");
+    IReadOnlyList<GeneratedOutput> outputs = await CollectAsync(
+        GeneratedOutputInventory.InspectAsync(temporary.Path));
+    Assert.Equal(2, outputs.Count);
+    Assert.True(outputs.Any(output =>
+        output.GeneratorAssembly == "Assembly.A" && output.GeneratorIdentity == "SharedGenerator"));
+    Assert.True(outputs.Any(output =>
+        output.GeneratorAssembly == "Assembly.B" && output.GeneratorIdentity == "SharedGenerator"));
+
+    MeasurementResult measurement = Measurement(
+        1,
+        Array.Empty<AnalyzerSample>(),
+        new[]
+        {
+            new GeneratorSample("SharedGenerator", "Assembly.A", 1),
+            new GeneratorSample("SharedGenerator", "Assembly.B", 2),
+        },
+        outputs);
+    IReadOnlyList<GeneratorMetric> metrics = Statistics.AggregateGenerators(new[] { measurement });
+    Assert.Equal(2, metrics.Count);
+    Assert.Equal(1, metrics.Single(metric => metric.Assembly == "Assembly.A").GeneratedFileCount);
+    Assert.Equal(1, metrics.Single(metric => metric.Assembly == "Assembly.B").GeneratedFileCount);
+}
+
+static async Task GeneratedOutputManifestAsync()
+{
+    using TemporaryDirectory target = new();
+    using TemporaryDirectory historyPath = new();
+    string project = await WriteProjectAsync(target.Path);
+    RecordingProcessRunner process = new((invocation, _) =>
+    {
+        CreateFakeBuildOutputs(invocation);
+        if (invocation.Arguments.FirstOrDefault() == "build" &&
+            invocation.Arguments.Any(item => item.StartsWith("-bl:", StringComparison.Ordinal)))
+        {
+            string property = invocation.Arguments.Single(item =>
+                item.StartsWith("-p:CompilerGeneratedFilesOutputPath=", StringComparison.Ordinal));
+            string root = property["-p:CompilerGeneratedFilesOutputPath=".Length..]
+                .Replace("$(MSBuildProjectName)", "Fixture.App", StringComparison.Ordinal);
+            string directory = System.IO.Path.Combine(
+                root,
+                "Fixture.Analyzers",
+                "Fixture.Analyzers.FixtureGenerator");
+            for (int index = 0; index < 150; index++)
+            {
+                File.WriteAllText(
+                    System.IO.Path.Combine(directory, $"Preview-{index:D3}.g.cs"),
+                    $"line {index}\n");
+            }
+        }
+
+        return Task.FromResult(SuccessfulProcess(invocation));
+    });
+    ProfileRun run = await new ProfileRunner(
+        process,
+        new FakeBinlogAnalyzer(),
+        new EnvironmentDetector(process)).RunAsync(new ProfileOptions
+        {
+            TargetPath = project,
+            Mode = ProfileMode.Custom,
+            WarmupCount = 0,
+            IterationCount = 1,
+            CleanBeforeEach = false,
+            Restore = false,
+            HistoryPath = historyPath.Path,
+        });
+
+    GeneratorMetric metric = Assert.Single(run.Generators);
+    Assert.Equal(151, metric.GeneratedFileCount);
+    Assert.Equal(100, metric.Outputs.Count);
+    Assert.True(metric.OutputsTruncated);
+    HistoryStore history = new(historyPath.Path);
+    ProfileRun loaded = await history.LoadAsync(run.Id);
+    GeneratorMetric loadedMetric = Assert.Single(loaded.Generators);
+    Assert.Equal(100, loadedMetric.Outputs.Count);
+    Assert.True(loadedMetric.OutputsTruncated);
+    string runJson = await File.ReadAllTextAsync(System.IO.Path.Combine(
+        history.GetRunDirectory(run.Id),
+        "run.json"));
+    Assert.False(runJson.Contains("Preview-149.g.cs", StringComparison.Ordinal));
+
+    IReadOnlyList<GeneratedOutput> allOutputs = await CollectAsync(
+        history.StreamGeneratedOutputsAsync(run.Id));
+    Assert.Equal(151, allOutputs.Count);
+    Assert.True(allOutputs.Any(output => output.RelativePath.EndsWith(
+        "Preview-149.g.cs",
+        StringComparison.Ordinal)));
+
+    foreach ((ExportFormat Format, string Marker) previewExpectation in new[]
+             {
+                 (ExportFormat.Csv, ",true"),
+                 (ExportFormat.Json, "\"outputsTruncated\": true"),
+                 (ExportFormat.Markdown, "プレビュー"),
+             })
+    {
+        await using MemoryStream previewOutput = new();
+        await RunExporter.ExportAsync(loaded, previewExpectation.Format, previewOutput);
+        Assert.Contains(
+            previewExpectation.Marker,
+            Encoding.UTF8.GetString(previewOutput.ToArray()));
+    }
+
+    foreach (ExportFormat format in Enum.GetValues<ExportFormat>())
+    {
+        await using MemoryStream output = new();
+        await RunExporter.ExportAsync(
+            loaded,
+            format,
+            output,
+            history.StreamGeneratedOutputsAsync(run.Id));
+        string exported = Encoding.UTF8.GetString(output.ToArray());
+        Assert.Contains("Preview-149.g.cs", exported);
+        if (format == ExportFormat.Json)
+        {
+            Assert.Contains("\"generatedOutputs\"", exported);
+        }
+    }
+
+    using StringWriter cliOutput = new();
+    using StringWriter cliError = new();
+    int cliResult = await CliApplication.RunAsync(
+        new[]
+        {
+            "history",
+            "show",
+            run.Id.ToString("D"),
+            "--history",
+            historyPath.Path,
+        },
+        cliOutput,
+        cliError);
+    Assert.Equal(CliApplication.Success, cliResult);
+    Assert.Equal(string.Empty, cliError.ToString());
+    Assert.Contains("\"generatedOutputs\"", cliOutput.ToString());
+    Assert.Contains("Preview-149.g.cs", cliOutput.ToString());
+
+    using CancellationTokenSource cancellation = new();
+    await using IAsyncEnumerator<GeneratedOutput> enumerator = history
+        .StreamGeneratedOutputsAsync(run.Id, cancellation.Token)
+        .GetAsyncEnumerator();
+    Assert.True(await enumerator.MoveNextAsync());
+    cancellation.Cancel();
+    await Assert.ThrowsAsync<OperationCanceledException>(() => enumerator.MoveNextAsync().AsTask());
 }
 
 static async Task ProfileIsolatedAsync()
@@ -459,6 +798,22 @@ static async Task ProfileCancellationAsync()
     Assert.True(run.Diagnostics.Any(item => item.Code == "YAAP5001"));
 }
 
+static async Task ProcessCancellationAsync()
+{
+    string assembly = Assembly.GetExecutingAssembly().Location;
+    using CancellationTokenSource cancellation = new(TimeSpan.FromMilliseconds(200));
+    Stopwatch stopwatch = Stopwatch.StartNew();
+    await Assert.ThrowsAsync<OperationCanceledException>(() => new ProcessRunner().RunAsync(
+        new ProcessInvocation(
+            "dotnet",
+            new[] { assembly, "--child-wait" },
+            FindRepositoryRoot()),
+        cancellationToken: cancellation.Token));
+    Assert.True(
+        stopwatch.Elapsed < TimeSpan.FromSeconds(7),
+        $"Canceled child process exceeded the bounded exit time: {stopwatch.Elapsed}.");
+}
+
 static async Task CliAsync()
 {
     using StringWriter output = new();
@@ -472,11 +827,29 @@ static async Task CliAsync()
     Assert.Contains("Unknown command", error.ToString());
     output.GetStringBuilder().Clear();
     error.GetStringBuilder().Clear();
-    int optionBeforeTarget = await CliApplication.RunAsync(
-        new[] { "configurations", "--json", FindRepositoryRoot() + "/tests/assets/Fixture.App/Fixture.App.csproj" },
+    string target = FindRepositoryRoot() + "/tests/assets/Fixture.App/Fixture.App.csproj";
+    int configurations = await CliApplication.RunAsync(
+        new[] { "configurations", target },
         output,
         error);
-    Assert.Equal(0, optionBeforeTarget);
+    Assert.Equal(0, configurations);
+    Assert.Contains("targetFrameworks", output.ToString());
+
+    foreach (string[] invalidArguments in new[]
+             {
+                 new[] { "configurations", "--json", target },
+                 new[] { "configurations", target, "extra" },
+                 new[] { "profile", target, "--iteratons", "1" },
+                 new[] { "profile", target, "--clean", "true", "--no-clean" },
+                 new[] { "history", "list", "--status", "failed", "--status", "succeeded" },
+             })
+    {
+        output.GetStringBuilder().Clear();
+        error.GetStringBuilder().Clear();
+        int result = await CliApplication.RunAsync(invalidArguments, output, error);
+        Assert.Equal(CliApplication.UsageError, result);
+        Assert.True(error.ToString().Length > 0);
+    }
 }
 
 static Task ScaleAsync()
@@ -617,6 +990,19 @@ static MeasurementResult Measurement(
         generators,
         outputs,
         Array.Empty<RunDiagnostic>());
+}
+
+static async Task<IReadOnlyList<T>> CollectAsync<T>(
+    IAsyncEnumerable<T> source,
+    CancellationToken cancellationToken = default)
+{
+    List<T> values = new();
+    await foreach (T value in source.WithCancellation(cancellationToken))
+    {
+        values.Add(value);
+    }
+
+    return values;
 }
 
 static async Task<string> WriteProjectAsync(string directory)
@@ -796,6 +1182,47 @@ internal sealed class CaptureProcessRunner : IProcessRunner
             TimeSpan.FromMilliseconds(1),
             output,
             Array.Empty<string>()));
+    }
+}
+
+internal sealed class BlockingWriteStream : Stream
+{
+    public TaskCompletionSource WriteStarted { get; } = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public override bool CanRead => false;
+
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => true;
+
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush()
+    {
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count) =>
+        throw new InvalidOperationException("Synchronous JSON writes are not allowed.");
+
+    public override ValueTask WriteAsync(
+        ReadOnlyMemory<byte> buffer,
+        CancellationToken cancellationToken = default)
+    {
+        WriteStarted.TrySetResult();
+        return new ValueTask(Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
     }
 }
 

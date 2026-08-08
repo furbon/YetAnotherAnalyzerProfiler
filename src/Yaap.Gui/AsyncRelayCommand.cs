@@ -7,6 +7,7 @@ public sealed class AsyncRelayCommand : ICommand
     private readonly Func<CancellationToken, Task> _execute;
     private readonly Func<bool>? _canExecute;
     private readonly Action<Exception>? _onError;
+    private CancellationTokenSource? _cancellation;
     private bool _executing;
 
     public AsyncRelayCommand(
@@ -21,6 +22,8 @@ public sealed class AsyncRelayCommand : ICommand
 
     public event EventHandler? CanExecuteChanged;
 
+    public bool IsExecuting => _executing;
+
     public bool CanExecute(object? parameter) => !_executing && (_canExecute?.Invoke() ?? true);
 
     public async void Execute(object? parameter)
@@ -31,10 +34,15 @@ public sealed class AsyncRelayCommand : ICommand
         }
 
         _executing = true;
+        CancellationTokenSource cancellation = new();
+        _cancellation = cancellation;
         RaiseCanExecuteChanged();
         try
         {
-            await _execute(CancellationToken.None);
+            await _execute(cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
         }
         catch (Exception exception)
         {
@@ -42,8 +50,25 @@ public sealed class AsyncRelayCommand : ICommand
         }
         finally
         {
+            if (ReferenceEquals(_cancellation, cancellation))
+            {
+                _cancellation = null;
+            }
+
+            cancellation.Dispose();
             _executing = false;
             RaiseCanExecuteChanged();
+        }
+    }
+
+    public void Cancel()
+    {
+        try
+        {
+            _cancellation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 
