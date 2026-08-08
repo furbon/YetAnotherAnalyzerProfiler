@@ -18,6 +18,7 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         DataContext = viewModel;
         RecentTargetsPopup.DataContext = viewModel;
+        AdvancedSettingsPopup.DataContext = viewModel;
 
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
         Loaded += async (_, _) =>
