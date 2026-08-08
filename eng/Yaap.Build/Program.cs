@@ -42,20 +42,26 @@ try
             await PackAsync(root);
             break;
         case "verify":
-            EnsureSdkVersion(root, framework);
-            CheckRepository(root);
-            await RestoreAsync(root, framework);
-            NormalizePackageLockFiles(root);
-            await FormatAsync(root);
-            await BuildAsync(root, framework);
-            await TestAsync(root, framework);
-            if (framework.Equals("net10.0", StringComparison.OrdinalIgnoreCase))
             {
-                await PackAsync(root);
+                Dictionary<string, string> expectedPackageLocks = CapturePackageLockHashes(root);
+                EnsureSdkVersion(root, framework);
+                CheckRepository(root);
+                await EnsurePackageLockRestoreDeterminismAsync(root, expectedPackageLocks);
+                await RestoreAsync(root, framework);
+                NormalizePackageLockFiles(root);
+                EnsurePackageLockHashes(root, expectedPackageLocks);
+                await FormatAsync(root);
+                await BuildAsync(root, framework);
+                await TestAsync(root, framework);
+                if (framework.Equals("net10.0", StringComparison.OrdinalIgnoreCase))
+                {
+                    await PackAsync(root);
+                }
+                NormalizePackageLockFiles(root);
+                EnsurePackageLockHashes(root, expectedPackageLocks);
+                CheckRepository(root);
+                break;
             }
-            NormalizePackageLockFiles(root);
-            CheckRepository(root);
-            break;
         default:
             throw new InvalidOperationException(
                 "Task must be check, restore, format, build, test, pack, publish, or verify.");
@@ -108,6 +114,21 @@ static async Task RestoreAsync(string root, string framework)
         Path.Combine(root, "tests", "assets", "Local.Package", "Local.Package.csproj"),
         "--locked-mode",
     });
+}
+
+static async Task EnsurePackageLockRestoreDeterminismAsync(
+    string root,
+    IReadOnlyDictionary<string, string> expectedHashes)
+{
+    await RunAsync(root, "dotnet", new[]
+    {
+        "restore",
+        Path.Combine(root, "YetAnotherAnalyzerProfiler.slnx"),
+        "--force-evaluate",
+        "-p:RestoreLockedMode=false",
+    });
+    NormalizePackageLockFiles(root);
+    EnsurePackageLockHashes(root, expectedHashes);
 }
 
 static async Task BuildAsync(string root, string framework)
@@ -337,10 +358,14 @@ static async Task PackAsync(string root)
                      "README.md",
                      "THIRD-PARTY-NOTICES.txt",
                      "tools/net8.0/any/DotnetToolSettings.xml",
+                     "tools/net8.0/any/yaap.deps.json",
                      "tools/net8.0/any/yaap.dll",
+                     "tools/net8.0/any/yaap.runtimeconfig.json",
                      "tools/net8.0/any/Yaap.BuildLogger.dll",
                      "tools/net10.0/any/DotnetToolSettings.xml",
+                     "tools/net10.0/any/yaap.deps.json",
                      "tools/net10.0/any/yaap.dll",
+                     "tools/net10.0/any/yaap.runtimeconfig.json",
                      "tools/net10.0/any/Yaap.BuildLogger.dll",
                  })
         {
@@ -355,6 +380,14 @@ static async Task PackAsync(string root)
         {
             throw new InvalidOperationException(
                 "NuGet tool package must not leak build logger assemblies as project content.");
+        }
+
+        if (entries.Any(entry =>
+                entry.EndsWith("/YetAnotherAnalyzerProfiler.Tool.deps.json", StringComparison.OrdinalIgnoreCase) ||
+                entry.EndsWith("/YetAnotherAnalyzerProfiler.Tool.runtimeconfig.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "NuGet tool runtime metadata must use the yaap command name.");
         }
     }
 
@@ -938,6 +971,7 @@ static void CheckRepository(string root)
     EnsureAgentBranchGuardrailFiles(root);
     EnsureToolchainManifest(root);
     EnsureReleaseWorkflow(root);
+    EnsureCliRestoreIdentity(root);
 
     string canonical = File.ReadAllText(Path.Combine(root, "eng", "agent-instructions.md"));
     foreach (string path in new[]
@@ -970,6 +1004,9 @@ static void CheckRepository(string root)
         bool agentSkill = relative.Replace('\\', '/').StartsWith(
             ".agents/skills/",
             StringComparison.OrdinalIgnoreCase);
+        bool nugetLock = Path.GetFileName(relative).Equals(
+            "packages.lock.json",
+            StringComparison.OrdinalIgnoreCase);
         bool portableLf = shell || agentSkill;
         bool hasBom = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
         string text;
@@ -988,6 +1025,15 @@ static void CheckRepository(string root)
             {
                 throw new InvalidOperationException(
                     $"Shell scripts and agent skills must be UTF-8 without BOM and LF: {relative}");
+            }
+        }
+        else if (nugetLock)
+        {
+            if (hasBom || (text.Contains('\n') && !text.Contains("\r\n", StringComparison.Ordinal)) ||
+                text.Replace("\r\n", string.Empty, StringComparison.Ordinal).Contains('\n'))
+            {
+                throw new InvalidOperationException(
+                    $"NuGet lock files must be UTF-8 without BOM and CRLF: {relative}");
             }
         }
         else if (!hasBom || (text.Contains('\n') && !text.Contains("\r\n", StringComparison.Ordinal)) ||
@@ -1031,6 +1077,27 @@ static void CheckRepository(string root)
     }
 
     Console.WriteLine($"Repository guards passed for {files.Length} files.");
+}
+
+static void EnsureCliRestoreIdentity(string root)
+{
+    string project = File.ReadAllText(Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"));
+    foreach (string contract in new[]
+             {
+                 "<AssemblyName>YetAnotherAnalyzerProfiler.Tool</AssemblyName>",
+                 "<PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>",
+                 "<TargetName>yaap</TargetName>",
+                 "<ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>",
+                 "<ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>",
+                 "<ToolCommandName>yaap</ToolCommandName>",
+             })
+    {
+        if (!project.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"CLI restore/package/output identities must remain deterministic: {contract}");
+        }
+    }
 }
 
 static void EnsureDeepReviewHarness(string root, string canonicalAgentInstructions)
@@ -1353,7 +1420,7 @@ static string GetGitOutput(string root, params string[] arguments)
 
 static void NormalizePackageLockFiles(string root)
 {
-    UTF8Encoding encoding = new(encoderShouldEmitUTF8Identifier: true);
+    UTF8Encoding encoding = new(encoderShouldEmitUTF8Identifier: false);
     foreach (string relative in GetRepositoryFiles(root).Where(relative =>
                  Path.GetFileName(relative).Equals("packages.lock.json", StringComparison.OrdinalIgnoreCase)))
     {
@@ -1367,6 +1434,39 @@ static void NormalizePackageLockFiles(string root)
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace("\n", "\r\n", StringComparison.Ordinal);
         File.WriteAllText(path, content, encoding);
+    }
+}
+
+static Dictionary<string, string> CapturePackageLockHashes(string root)
+{
+    return GetRepositoryFiles(root)
+        .Where(relative => Path.GetFileName(relative).Equals(
+            "packages.lock.json",
+            StringComparison.OrdinalIgnoreCase))
+        .Where(relative => File.Exists(Path.Combine(root, relative)))
+        .ToDictionary(
+            relative => relative.Replace('\\', '/'),
+            relative => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(root, relative)))),
+            StringComparer.OrdinalIgnoreCase);
+}
+
+static void EnsurePackageLockHashes(
+    string root,
+    IReadOnlyDictionary<string, string> expectedHashes)
+{
+    Dictionary<string, string> actualHashes = CapturePackageLockHashes(root);
+    string[] changed = expectedHashes.Keys
+        .Union(actualHashes.Keys, StringComparer.OrdinalIgnoreCase)
+        .Where(relative =>
+            !expectedHashes.TryGetValue(relative, out string? expected) ||
+            !actualHashes.TryGetValue(relative, out string? actual) ||
+            !expected.Equals(actual, StringComparison.Ordinal))
+        .OrderBy(relative => relative, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (changed.Length > 0)
+    {
+        throw new InvalidOperationException(
+            "Ordinary restore changed tracked NuGet lock files: " + string.Join(", ", changed));
     }
 }
 

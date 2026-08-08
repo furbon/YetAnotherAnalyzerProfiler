@@ -18,7 +18,8 @@ These rules apply to every repository change made by Codex or GitHub Copilot.
 - Human documentation and GUI text are Japanese. Code identifiers and agent instructions are English.
 - Source text is UTF-8 with BOM, CRLF, and space indentation. Shell scripts and
   open-agent skill files under `.agents/skills/` are portable UTF-8 without BOM and
-  LF exceptions.
+  LF exceptions. NuGet-owned `packages.lock.json` files are UTF-8 without BOM and
+  CRLF so an ordinary restore never dirties the worktree.
 - Package versions are centralized. Before adding a package, record provenance, maintenance, adoption, license, vulnerabilities, transitive dependencies, compatibility, and alternatives in the active plan.
 - Do not commit machine-specific paths, credentials, local smoke-test names/results, build outputs, histories, packages, binlogs, or temporary files.
 - Before concrete tracked work, read `.docs_agent/WORKFLOW.md` when present and create its required local task plan. Critical rules remain binding even when their source is Git-ignored.

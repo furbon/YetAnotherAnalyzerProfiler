@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -13,7 +14,7 @@ namespace Yaap.Gui;
 
 public partial class MainWindow : FluentWindow
 {
-    private readonly ConditionalWeakTable<System.Windows.Controls.TextBlock, object> _configuredCalendarText = new();
+    private readonly ConditionalWeakTable<System.Windows.Controls.Button, object> _configuredCalendarButtons = new();
     private bool _scrollBarRefreshPending;
 
     public MainWindow()
@@ -399,20 +400,120 @@ public partial class MainWindow : FluentWindow
         foreach (System.Windows.Controls.TextBlock text in
                  FindVisualDescendants<System.Windows.Controls.TextBlock>(calendar))
         {
-            bool configured = _configuredCalendarText.TryGetValue(text, out _);
+            if (IsCurrentCalendarButtonText(text, calendar))
+            {
+                text.Foreground = Brushes.Black;
+            }
+            else
+            {
+                text.SetResourceReference(
+                    System.Windows.Controls.TextBlock.ForegroundProperty,
+                    "TextFillColorPrimaryBrush");
+            }
+        }
+
+        foreach (System.Windows.Controls.Button button in
+                 FindVisualDescendants<System.Windows.Controls.Button>(calendar))
+        {
+            bool configured = _configuredCalendarButtons.TryGetValue(button, out _);
             if (configured && !force)
             {
                 continue;
             }
 
-            text.SetResourceReference(
-                System.Windows.Controls.TextBlock.ForegroundProperty,
-                "TextFillColorPrimaryBrush");
+            if (button.Name.Equals("PART_PreviousButton", StringComparison.Ordinal))
+            {
+                button.Tag = "Previous";
+                ApplyCalendarButtonStyle(button, "CalendarNavigationButtonStyle");
+                button.SetResourceReference(Control.ForegroundProperty, "TextFillColorPrimaryBrush");
+                button.Opacity = 1;
+                AutomationProperties.SetName(button, "前の期間へ移動");
+                button.ToolTip = "前の期間へ移動";
+            }
+            else if (button.Name.Equals("PART_NextButton", StringComparison.Ordinal))
+            {
+                button.Tag = "Next";
+                ApplyCalendarButtonStyle(button, "CalendarNavigationButtonStyle");
+                button.SetResourceReference(Control.ForegroundProperty, "TextFillColorPrimaryBrush");
+                button.Opacity = 1;
+                AutomationProperties.SetName(button, "次の期間へ移動");
+                button.ToolTip = "次の期間へ移動";
+            }
+            else if (button.Name.Equals("PART_HeaderButton", StringComparison.Ordinal))
+            {
+                ApplyCalendarButtonStyle(button, "CalendarHeaderButtonStyle");
+                AutomationProperties.SetName(button, "表示期間を切り替え");
+                button.ToolTip = "月、年、年代の表示を切り替え";
+            }
+            else
+            {
+                continue;
+            }
+
+            button.ApplyTemplate();
+            button.InvalidateVisual();
             if (!configured)
             {
-                _configuredCalendarText.Add(text, new object());
+                _configuredCalendarButtons.Add(button, new object());
             }
         }
+    }
+
+    private void ApplyCalendarButtonStyle(System.Windows.Controls.Button button, string resourceKey)
+    {
+        Style style = (Style)FindResource(resourceKey);
+        button.Style = style;
+        Setter templateSetter = style.Setters
+            .OfType<Setter>()
+            .First(setter => setter.Property == Control.TemplateProperty);
+        button.Template = (ControlTemplate)templateSetter.Value;
+    }
+
+    private static bool IsCurrentCalendarButtonText(
+        System.Windows.Controls.TextBlock text,
+        Calendar calendar)
+    {
+        CalendarButton? calendarButton = null;
+        for (DependencyObject? current = VisualTreeHelper.GetParent(text);
+             current is not null;
+             current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is CalendarButton)
+            {
+                calendarButton = (CalendarButton)current;
+                break;
+            }
+
+            if (ReferenceEquals(current, calendar))
+            {
+                break;
+            }
+        }
+
+        if (calendarButton is null)
+        {
+            return false;
+        }
+
+        if (calendarButton.DataContext is DateTime date)
+        {
+            return calendar.DisplayMode switch
+            {
+                CalendarMode.Year => date.Year == calendar.DisplayDate.Year &&
+                    date.Month == calendar.DisplayDate.Month,
+                CalendarMode.Decade => date.Year == calendar.DisplayDate.Year,
+                _ => false,
+            };
+        }
+
+        return calendar.DisplayMode switch
+        {
+            CalendarMode.Year => text.Text.Equals($"{calendar.DisplayDate.Month}月", StringComparison.Ordinal),
+            CalendarMode.Decade => text.Text.Equals(
+                calendar.DisplayDate.Year.ToString(System.Globalization.CultureInfo.CurrentCulture),
+                StringComparison.Ordinal),
+            _ => false,
+        };
     }
 
     private void OnHistoryPreviewMouseRightButtonDown(
