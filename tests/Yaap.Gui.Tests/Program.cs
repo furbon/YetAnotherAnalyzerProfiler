@@ -1,6 +1,8 @@
 ﻿using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -153,6 +155,8 @@ static async Task WindowStartupSmokeAsync()
             DataGrid comparisonGrid = (DataGrid)window.FindName("ComparisonGrid");
             DatePicker historyFromDatePicker =
                 (DatePicker)window.FindName("HistoryFromDatePicker");
+            DatePicker historyToDatePicker =
+                (DatePicker)window.FindName("HistoryToDatePicker");
             FrameworkElement historyPeriodPanel =
                 (FrameworkElement)window.FindName("HistoryPeriodPanel");
             Button historyRefreshButton =
@@ -419,8 +423,51 @@ static async Task WindowStartupSmokeAsync()
                     }
                     else if (index == 2 && historyGrid.ContextMenu is ContextMenu historyMenu)
                     {
-                        viewModel.HistoryFrom = DateTime.Today.AddDays(-2).ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture);
-                        viewModel.HistoryTo = DateTime.Today.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture);
+                        Ensure(
+                            !historyPeriodClearButton.IsEnabled,
+                            "An empty history period must start with a disabled clear action.");
+                        ButtonAutomationPeer clearPeer = new(historyPeriodClearButton);
+                        historyToDatePicker.SelectedDate = DateTime.Today;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                        Ensure(
+                            MainViewModel.TryParseHistoryDateText(viewModel.HistoryTo, out DateTime calendarOnlyTo) &&
+                            calendarOnlyTo.Date == DateTime.Today,
+                            "A calendar-only selection must update the history end date.");
+                        Ensure(
+                            historyPeriodClearButton.IsEnabled,
+                            "A calendar-only selection must immediately enable period clearing.");
+                        ((IInvokeProvider)clearPeer.GetPattern(PatternInterface.Invoke)).Invoke();
+                        PumpUntil(
+                            window.Dispatcher,
+                            () => viewModel.HistoryFrom.Length == 0 && viewModel.HistoryTo.Length == 0,
+                            TimeSpan.FromSeconds(2));
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                        Ensure(
+                            !historyPeriodClearButton.IsEnabled,
+                            "Clearing a calendar-only selection must disable the action again.");
+
+                        string typedFrom = DateTime.Today.AddDays(-2).ToString(
+                            "yyyy/MM/dd",
+                            System.Globalization.CultureInfo.InvariantCulture);
+                        historyFromDatePicker.ApplyTemplate();
+                        TextBox historyFromTextBox =
+                            (TextBox)historyFromDatePicker.Template.FindName(
+                                "PART_TextBox",
+                                historyFromDatePicker);
+                        historyFromTextBox.Text = typedFrom;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                        Ensure(
+                            viewModel.HistoryFrom.Equals(typedFrom, StringComparison.Ordinal),
+                            "History start text must update its source before focus changes.");
+                        Ensure(
+                            historyPeriodClearButton.IsEnabled,
+                            "Text-only history input must immediately enable period clearing.");
+                        historyToDatePicker.SelectedDate = DateTime.Today;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                        Ensure(
+                            MainViewModel.TryParseHistoryDateText(viewModel.HistoryTo, out DateTime selectedTo) &&
+                            selectedTo.Date == DateTime.Today,
+                            "History calendar selection must update its source before focus changes.");
                         Task visualPeriodRefresh = viewModel.WaitForHistoryRefreshAsync();
                         PumpUntil(window.Dispatcher, () => visualPeriodRefresh.IsCompleted, TimeSpan.FromSeconds(5));
                         visualPeriodRefresh.GetAwaiter().GetResult();
@@ -487,7 +534,15 @@ static async Task WindowStartupSmokeAsync()
                             typeof(UIElement),
                             "IsKeyboardFocusedPropertyKey",
                             false);
-                        viewModel.ClearHistoryPeriodCommand.Execute(null);
+                        ((IInvokeProvider)clearPeer.GetPattern(PatternInterface.Invoke)).Invoke();
+                        PumpUntil(
+                            window.Dispatcher,
+                            () => viewModel.HistoryFrom.Length == 0 && viewModel.HistoryTo.Length == 0,
+                            TimeSpan.FromSeconds(2));
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                        Ensure(
+                            historyFromDatePicker.Text.Length == 0 && historyToDatePicker.Text.Length == 0,
+                            "The rendered history clear button must clear both date controls.");
                         Task visualPeriodClear = viewModel.WaitForHistoryRefreshAsync();
                         PumpUntil(window.Dispatcher, () => visualPeriodClear.IsCompleted, TimeSpan.FromSeconds(5));
                         visualPeriodClear.GetAwaiter().GetResult();
@@ -1782,8 +1837,10 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("<DatePicker", StringComparison.Ordinal), "History date filters must provide calendar pickers.");
     Ensure(xaml.Contains("x:Key=\"OpaqueCalendarStyle\"", StringComparison.Ordinal), "History calendars must use an opaque theme-aware style.");
     Ensure(xaml.Contains("CalendarStyle=\"{StaticResource OpaqueCalendarStyle}\"", StringComparison.Ordinal), "Both history date pickers must use the opaque calendar style.");
-    Ensure(xaml.Contains("Text=\"{Binding HistoryFrom}\"", StringComparison.Ordinal), "GUI history must expose the start-date filter.");
-    Ensure(xaml.Contains("Text=\"{Binding HistoryTo}\"", StringComparison.Ordinal), "GUI history must expose the end-date filter.");
+    Ensure(xaml.Contains("Text=\"{Binding HistoryFrom, UpdateSourceTrigger=PropertyChanged}\"", StringComparison.Ordinal), "The history start date must update before focus changes.");
+    Ensure(xaml.Contains("Text=\"{Binding HistoryTo, UpdateSourceTrigger=PropertyChanged}\"", StringComparison.Ordinal), "The history end date must update before focus changes.");
+    Ensure(xaml.Contains("SelectedDate=\"{Binding HistoryFromDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", StringComparison.Ordinal), "The history start calendar selection must stay synchronized.");
+    Ensure(xaml.Contains("SelectedDate=\"{Binding HistoryToDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", StringComparison.Ordinal), "The history end calendar selection must stay synchronized.");
     Ensure(xaml.Contains("Command=\"{Binding ClearHistoryPeriodCommand}\"", StringComparison.Ordinal), "History period filters must provide one-step clearing.");
     Ensure(xaml.Contains("x:Key=\"CalendarNavigationButtonStyle\"", StringComparison.Ordinal), "Calendar navigation must use an explicit theme-aware style.");
     Ensure(xaml.Contains("x:Name=\"CalendarNavigationGlyph\"", StringComparison.Ordinal), "Calendar navigation must use centered vector glyphs.");

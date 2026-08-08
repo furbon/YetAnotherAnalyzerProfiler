@@ -947,8 +947,10 @@
                                         CalendarOpened="OnHistoryCalendarOpened"
                                         AutomationProperties.LabeledBy="{Binding ElementName=HistoryFromLabel}"
                                         DateValidationError="OnHistoryDateValidationError"
+                                        SelectedDate="{Binding HistoryFromDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         SelectedDateFormat="Short"
-                                        Text="{Binding HistoryFrom}"
+                                        TextBoxBase.TextChanged="OnHistoryDateTextChanged"
+                                        Text="{Binding HistoryFrom, UpdateSourceTrigger=PropertyChanged}"
                                         ToolTip="開始日。例: 2026/01/31、2026-01-31、31/Jan/2026" />
                             <TextBlock Grid.Column="2" Margin="10,0" VerticalAlignment="Center" Text="～" />
                             <DatePicker x:Name="HistoryToDatePicker"
@@ -957,8 +959,10 @@
                                         CalendarOpened="OnHistoryCalendarOpened"
                                         AutomationProperties.Name="終了日"
                                         DateValidationError="OnHistoryDateValidationError"
+                                        SelectedDate="{Binding HistoryToDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         SelectedDateFormat="Short"
-                                        Text="{Binding HistoryTo}"
+                                        TextBoxBase.TextChanged="OnHistoryDateTextChanged"
+                                        Text="{Binding HistoryTo, UpdateSourceTrigger=PropertyChanged}"
                                         ToolTip="終了日。この日を含みます。" />
                             <Button x:Name="HistoryPeriodClearButton"
                                     Grid.Column="4"
