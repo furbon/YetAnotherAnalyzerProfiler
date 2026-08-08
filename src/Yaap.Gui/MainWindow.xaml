@@ -15,12 +15,29 @@
         ExtendsContentIntoTitleBar="True"
         WindowBackdropType="None"
         WindowStartupLocation="CenterScreen">
+    <ui:FluentWindow.CommandBindings>
+        <CommandBinding CanExecute="OnCopyAnalyzerResultCanExecute"
+                        Command="{x:Static local:MainWindow.CopyAnalyzerResultCommand}"
+                        Executed="OnCopyAnalyzerResultExecuted" />
+    </ui:FluentWindow.CommandBindings>
     <ui:FluentWindow.Resources>
+        <local:WidthAdjustmentConverter x:Key="AnalyzerTreeRowWidthConverter" Adjustment="55" />
         <Style x:Key="NumericCellTextStyle" TargetType="{x:Type TextBlock}">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="TextAlignment" Value="Right" />
             <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
             <Setter Property="Typography.NumeralStyle" Value="Lining" />
+        </Style>
+        <Style x:Key="ResultColumnHeaderStyle"
+               BasedOn="{StaticResource {x:Type DataGridColumnHeader}}"
+               TargetType="{x:Type DataGridColumnHeader}">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="ToolTip" Value="境界をドラッグして列幅を変更" />
         </Style>
         <Style x:Key="NumericColumnHeaderStyle"
                BasedOn="{StaticResource {x:Type DataGridColumnHeader}}"
@@ -30,6 +47,83 @@
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
             <Setter Property="HorizontalContentAlignment" Value="Right" />
         </Style>
+        <Style x:Key="AnalyzerNumericColumnHeaderStyle"
+               BasedOn="{StaticResource ResultColumnHeaderStyle}"
+               TargetType="{x:Type DataGridColumnHeader}">
+            <Setter Property="HorizontalContentAlignment" Value="Right" />
+        </Style>
+        <Style x:Key="AnalyzerResultSurfaceStyle" TargetType="{x:Type Border}">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+        </Style>
+        <Style x:Key="AnalyzerIdentityCellTextStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="ToolTip" Value="{Binding Identity}" />
+        </Style>
+        <Style x:Key="AnalyzerAssemblyCellTextStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="ToolTip" Value="{Binding Assembly}" />
+        </Style>
+        <Style x:Key="AnalyzerEmptyStateStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="Text" Value="表示する Analyzer 結果がありません" />
+            <Setter Property="Visibility" Value="Collapsed" />
+        </Style>
+        <Style x:Key="AnalyzerTreeItemStyle"
+               BasedOn="{StaticResource {x:Type TreeViewItem}}"
+               TargetType="{x:Type TreeViewItem}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="4,1" />
+        </Style>
+        <Style x:Key="AnalyzerTreeNameStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="ToolTip" Value="{Binding ClipboardText}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsAnalyzerMetric}" Value="False">
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="AnalyzerTreeGroupDetailStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <Setter Property="Margin" Value="12,0,0,0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsAnalyzerMetric}" Value="True">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="AnalyzerTreeLeafFieldStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsAnalyzerMetric}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="AnalyzerTreeNumericFieldStyle"
+               BasedOn="{StaticResource AnalyzerTreeLeafFieldStyle}"
+               TargetType="{x:Type TextBlock}">
+            <Setter Property="TextAlignment" Value="Right" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+            <Setter Property="Typography.NumeralStyle" Value="Lining" />
+        </Style>
+        <ContextMenu x:Key="AnalyzerResultContextMenu" x:Shared="False">
+            <MenuItem AutomationProperties.Name="選択した Analyzer の詳細をコピー"
+                      Command="{x:Static local:MainWindow.CopyAnalyzerResultCommand}"
+                      CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                      Header="詳細をコピー"
+                      InputGestureText="Ctrl+C" />
+        </ContextMenu>
         <Style x:Key="ScrollableDataGridStyle"
                BasedOn="{StaticResource {x:Type ui:DataGrid}}"
                TargetType="{x:Type ui:DataGrid}">
@@ -779,42 +873,165 @@
                                 Margin="8,0,8,8"
                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}">
                         <TabItem Header="表形式">
-                            <ui:DataGrid x:Name="AnalyzerGrid"
-                                         Style="{StaticResource ScrollableDataGridStyle}"
-                                         ItemsSource="{Binding Analyzers}"
-                                         AutoGenerateColumns="False"
-                                         EnableRowVirtualization="True"
-                                         EnableColumnVirtualization="True"
-                                         IsReadOnly="True"
-                                         VirtualizingPanel.IsVirtualizing="True"
-                                         VirtualizingPanel.VirtualizationMode="Recycling">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Width="110" Binding="{Binding Kind}" Header="種別" />
-                                    <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Analyzer／診断" />
-                                    <DataGridTextColumn Width="220" Binding="{Binding Assembly}" Header="アセンブリ" />
-                                    <DataGridTextColumn Width="100" Binding="{Binding MeanMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="平均 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                                    <DataGridTextColumn Width="100" Binding="{Binding MinimumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最小 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                                    <DataGridTextColumn Width="100" Binding="{Binding MaximumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最大 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                                </DataGrid.Columns>
-                            </ui:DataGrid>
+                            <Border x:Name="AnalyzerTableSurface"
+                                    AutomationProperties.Name="Analyzer 結果（表形式）"
+                                    Style="{StaticResource AnalyzerResultSurfaceStyle}">
+                                <Grid>
+                                    <ui:DataGrid x:Name="AnalyzerGrid"
+                                                 Style="{StaticResource ScrollableDataGridStyle}"
+                                                 ItemsSource="{Binding Analyzers}"
+                                                 AutoGenerateColumns="False"
+                                                 Background="Transparent"
+                                                 BorderThickness="0"
+                                                 CanUserResizeColumns="True"
+                                                 CanUserSortColumns="True"
+                                                 ColumnHeaderStyle="{StaticResource ResultColumnHeaderStyle}"
+                                                 EnableRowVirtualization="True"
+                                                 EnableColumnVirtualization="True"
+                                                 GridLinesVisibility="None"
+                                                 HeadersVisibility="Column"
+                                                 IsReadOnly="True"
+                                                 RowHeight="34"
+                                                 SelectionMode="Single"
+                                                 SelectionUnit="FullRow"
+                                                 ContextMenu="{StaticResource AnalyzerResultContextMenu}"
+                                                 ContextMenuOpening="OnAnalyzerResultContextMenuOpening"
+                                                 PreviewMouseRightButtonDown="OnAnalyzerGridPreviewMouseRightButtonDown"
+                                                 VirtualizingPanel.IsVirtualizing="True"
+                                                 VirtualizingPanel.VirtualizationMode="Recycling">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Width="110" MinWidth="88" Binding="{Binding Kind}" Header="種別" />
+                                            <DataGridTextColumn Width="550" MinWidth="260" Binding="{Binding Identity}" ElementStyle="{StaticResource AnalyzerIdentityCellTextStyle}" Header="Analyzer／診断" />
+                                            <DataGridTextColumn Width="220" MinWidth="160" Binding="{Binding Assembly}" ElementStyle="{StaticResource AnalyzerAssemblyCellTextStyle}" Header="アセンブリ" />
+                                            <DataGridTextColumn Width="100" MinWidth="84" Binding="{Binding MeanMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="平均 ms" HeaderStyle="{StaticResource AnalyzerNumericColumnHeaderStyle}" />
+                                            <DataGridTextColumn Width="100" MinWidth="84" Binding="{Binding MinimumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最小 ms" HeaderStyle="{StaticResource AnalyzerNumericColumnHeaderStyle}" />
+                                            <DataGridTextColumn Width="100" MinWidth="84" Binding="{Binding MaximumMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="最大 ms" HeaderStyle="{StaticResource AnalyzerNumericColumnHeaderStyle}" />
+                                        </DataGrid.Columns>
+                                    </ui:DataGrid>
+                                    <TextBlock x:Name="AnalyzerTableEmptyMessage">
+                                        <TextBlock.Style>
+                                            <Style BasedOn="{StaticResource AnalyzerEmptyStateStyle}" TargetType="{x:Type TextBlock}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasItems, ElementName=AnalyzerGrid}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </Border>
                         </TabItem>
                         <TabItem Header="ツリー形式">
-                            <TreeView x:Name="AnalyzerTreeView"
-                                      Style="{StaticResource VirtualizedTreeViewStyle}"
-                                      ItemsSource="{Binding AnalyzerTree}"
-                                      VirtualizingPanel.IsVirtualizing="True"
-                                      VirtualizingPanel.VirtualizationMode="Recycling">
-                                <TreeView.ItemTemplate>
-                                    <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                                            <TextBlock Margin="12,0,0,0"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                                       Text="{Binding Detail}" />
-                                        </StackPanel>
-                                    </HierarchicalDataTemplate>
-                                </TreeView.ItemTemplate>
-                            </TreeView>
+                            <Border x:Name="AnalyzerTreeSurface"
+                                    AutomationProperties.Name="Analyzer 結果（ツリー形式）"
+                                    Style="{StaticResource AnalyzerResultSurfaceStyle}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <Grid x:Name="AnalyzerTreeHeader"
+                                          Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                          MinHeight="36">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" MinWidth="260" />
+                                            <ColumnDefinition Width="110" />
+                                            <ColumnDefinition Width="100" />
+                                            <ColumnDefinition Width="100" />
+                                            <ColumnDefinition Width="100" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
+                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="アセンブリ／Analyzer／診断" ToolTip="アセンブリ別の階層" />
+                                        </Border>
+                                        <Border Grid.Column="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
+                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="種別" />
+                                        </Border>
+                                        <Border Grid.Column="2" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
+                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" TextAlignment="Right" Text="平均 ms" />
+                                        </Border>
+                                        <Border Grid.Column="3" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,1,1" Padding="12,0">
+                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" TextAlignment="Right" Text="最小 ms" />
+                                        </Border>
+                                        <Border Grid.Column="4" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="12,0">
+                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" TextAlignment="Right" Text="最大 ms" />
+                                        </Border>
+                                    </Grid>
+                                    <TreeView x:Name="AnalyzerTreeView"
+                                              Grid.Row="1"
+                                              Style="{StaticResource VirtualizedTreeViewStyle}"
+                                              ItemsSource="{Binding AnalyzerTree}"
+                                              AutomationProperties.HelpText="アセンブリを展開して Analyzer と診断の測定値を確認します"
+                                              Background="Transparent"
+                                              BorderThickness="0"
+                                              ContextMenu="{StaticResource AnalyzerResultContextMenu}"
+                                              ContextMenuOpening="OnAnalyzerResultContextMenuOpening"
+                                              HorizontalContentAlignment="Stretch"
+                                              ItemContainerStyle="{StaticResource AnalyzerTreeItemStyle}"
+                                              PreviewMouseRightButtonDown="OnAnalyzerTreePreviewMouseRightButtonDown"
+                                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                              VirtualizingPanel.IsVirtualizing="True"
+                                              VirtualizingPanel.VirtualizationMode="Recycling">
+                                        <TreeView.ItemTemplate>
+                                            <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                                <Grid Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type TreeView}}, Converter={StaticResource AnalyzerTreeRowWidthConverter}}"
+                                                      MinHeight="30"
+                                                      AutomationProperties.Name="{Binding ClipboardText}"
+                                                      ToolTip="{Binding ClipboardText}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" MinWidth="220" />
+                                                        <ColumnDefinition Width="110" />
+                                                        <ColumnDefinition Width="100" />
+                                                        <ColumnDefinition Width="100" />
+                                                        <ColumnDefinition Width="100" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid Margin="8,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock VerticalAlignment="Center"
+                                                                   Style="{StaticResource AnalyzerTreeNameStyle}"
+                                                                   Text="{Binding Name}" />
+                                                        <TextBlock Grid.Column="1"
+                                                                   VerticalAlignment="Center"
+                                                                   Style="{StaticResource AnalyzerTreeGroupDetailStyle}"
+                                                                   Text="{Binding Detail}" />
+                                                    </Grid>
+                                                    <TextBlock Grid.Column="1"
+                                                               VerticalAlignment="Center"
+                                                               Style="{StaticResource AnalyzerTreeLeafFieldStyle}"
+                                                               Text="{Binding Kind}"
+                                                               ToolTip="{Binding Kind}" />
+                                                    <TextBlock Grid.Column="2"
+                                                               VerticalAlignment="Center"
+                                                               Style="{StaticResource AnalyzerTreeNumericFieldStyle}"
+                                                               Text="{Binding MeanMilliseconds, StringFormat={}{0:N3}}" />
+                                                    <TextBlock Grid.Column="3"
+                                                               VerticalAlignment="Center"
+                                                               Style="{StaticResource AnalyzerTreeNumericFieldStyle}"
+                                                               Text="{Binding MinimumMilliseconds, StringFormat={}{0:N3}}" />
+                                                    <TextBlock Grid.Column="4"
+                                                               VerticalAlignment="Center"
+                                                               Style="{StaticResource AnalyzerTreeNumericFieldStyle}"
+                                                               Text="{Binding MaximumMilliseconds, StringFormat={}{0:N3}}" />
+                                                </Grid>
+                                            </HierarchicalDataTemplate>
+                                        </TreeView.ItemTemplate>
+                                    </TreeView>
+                                    <TextBlock x:Name="AnalyzerTreeEmptyMessage" Grid.Row="1">
+                                        <TextBlock.Style>
+                                            <Style BasedOn="{StaticResource AnalyzerEmptyStateStyle}" TargetType="{x:Type TextBlock}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasItems, ElementName=AnalyzerTreeView}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </Border>
                         </TabItem>
                     </TabControl>
                 </Grid>

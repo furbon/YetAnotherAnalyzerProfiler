@@ -15,6 +15,15 @@ namespace Yaap.Gui;
 
 public partial class MainWindow : FluentWindow
 {
+    public static RoutedUICommand CopyAnalyzerResultCommand { get; } = new(
+        "Analyzer の詳細をコピー",
+        nameof(CopyAnalyzerResultCommand),
+        typeof(MainWindow),
+        new InputGestureCollection
+        {
+            new KeyGesture(Key.C, ModifierKeys.Control),
+        });
+
     private readonly ConditionalWeakTable<System.Windows.Controls.Button, object> _configuredCalendarButtons = new();
     private bool _scrollBarRefreshPending;
     private bool _shutdownInProgress;
@@ -605,9 +614,187 @@ public partial class MainWindow : FluentWindow
         }
     }
 
+    private void OnAnalyzerGridPreviewMouseRightButtonDown(
+        object sender,
+        MouseButtonEventArgs eventArgs)
+    {
+        if (sender is not System.Windows.Controls.DataGrid grid)
+        {
+            return;
+        }
+
+        DependencyObject? source = eventArgs.OriginalSource as DependencyObject;
+        DataGridRow? row = source is null
+            ? null
+            : ItemsControl.ContainerFromElement(grid, source) as DataGridRow;
+        if (row is null)
+        {
+            grid.UnselectAll();
+            return;
+        }
+
+        grid.SelectedItem = row.Item;
+        row.Focus();
+    }
+
+    private void OnAnalyzerTreePreviewMouseRightButtonDown(
+        object sender,
+        MouseButtonEventArgs eventArgs)
+    {
+        if (sender is not TreeView tree)
+        {
+            return;
+        }
+
+        System.Windows.Controls.TreeViewItem? item =
+            FindAncestor<System.Windows.Controls.TreeViewItem>(eventArgs.OriginalSource as DependencyObject);
+        if (item is null)
+        {
+            System.Windows.Controls.TreeViewItem? selectedItem =
+                FindVisualDescendants<System.Windows.Controls.TreeViewItem>(tree)
+                .FirstOrDefault(candidate => candidate.IsSelected);
+            if (selectedItem is not null)
+            {
+                selectedItem.IsSelected = false;
+            }
+
+            return;
+        }
+
+        item.IsSelected = true;
+        item.Focus();
+    }
+
+    private void OnAnalyzerResultContextMenuOpening(object sender, ContextMenuEventArgs eventArgs)
+    {
+        bool hasSelection = sender switch
+        {
+            System.Windows.Controls.DataGrid grid => grid.SelectedItem is StatisticalMetric,
+            TreeView tree => tree.SelectedItem is ResultTreeNode,
+            _ => false,
+        };
+        eventArgs.Handled = !hasSelection;
+    }
+
+    private void OnCopyAnalyzerResultCanExecute(object sender, CanExecuteRoutedEventArgs eventArgs)
+    {
+        eventArgs.CanExecute = ResolveAnalyzerResultClipboardText(eventArgs.Source) is not null;
+        eventArgs.Handled = true;
+    }
+
+    private void OnCopyAnalyzerResultExecuted(object sender, ExecutedRoutedEventArgs eventArgs)
+    {
+        string? text = ResolveAnalyzerResultClipboardText(eventArgs.Source);
+        if (text is null)
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(text);
+        }
+        catch (System.Runtime.InteropServices.ExternalException exception)
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                $"クリップボードを使用できませんでした。ほかのアプリが使用中でないことを確認して、もう一度お試しください。\n\n{exception.Message}",
+                "コピーできません",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+        }
+
+        eventArgs.Handled = true;
+    }
+
+    public static string? GetAnalyzerResultClipboardText(object? selectedItem) => selectedItem switch
+    {
+        StatisticalMetric metric => AnalyzerResultClipboardFormatter.Format(metric),
+        ResultTreeNode { ClipboardText.Length: > 0 } node => node.ClipboardText,
+        _ => null,
+    };
+
+    private string? ResolveAnalyzerResultClipboardText(object? commandSource)
+    {
+        if (IsSourceWithin(commandSource, AnalyzerGrid) || AnalyzerGrid.IsKeyboardFocusWithin)
+        {
+            return GetAnalyzerResultClipboardText(AnalyzerGrid.SelectedItem);
+        }
+
+        if (IsSourceWithin(commandSource, AnalyzerTreeView) || AnalyzerTreeView.IsKeyboardFocusWithin)
+        {
+            return GetAnalyzerResultClipboardText(AnalyzerTreeView.SelectedItem);
+        }
+
+        return null;
+    }
+
+    private static bool IsSourceWithin(object? source, DependencyObject ancestor) =>
+        source is DependencyObject dependencyObject &&
+        (ReferenceEquals(dependencyObject, ancestor) || FindAncestor<DependencyObject>(dependencyObject, ancestor));
+
+    private static T? FindAncestor<T>(DependencyObject? source)
+        where T : DependencyObject
+    {
+        for (DependencyObject? current = source; current is not null; current = GetParent(current))
+        {
+            if (current is T match)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool FindAncestor<T>(DependencyObject source, T expectedAncestor)
+        where T : DependencyObject
+    {
+        for (DependencyObject? current = source; current is not null; current = GetParent(current))
+        {
+            if (ReferenceEquals(current, expectedAncestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static DependencyObject? GetParent(DependencyObject source)
+    {
+        if (source is Visual)
+        {
+            return VisualTreeHelper.GetParent(source);
+        }
+
+        return source is FrameworkContentElement contentElement
+            ? contentElement.Parent
+            : LogicalTreeHelper.GetParent(source);
+    }
+
     private static string[] GetDroppedPaths(DragEventArgs eventArgs) =>
         eventArgs.Data.GetDataPresent(DataFormats.FileDrop) &&
         eventArgs.Data.GetData(DataFormats.FileDrop) is string[] paths
             ? paths
             : Array.Empty<string>();
+}
+
+public sealed class WidthAdjustmentConverter : System.Windows.Data.IValueConverter
+{
+    public double Adjustment { get; set; }
+
+    public object Convert(
+        object value,
+        Type targetType,
+        object parameter,
+        System.Globalization.CultureInfo culture) =>
+        value is double width ? Math.Max(0, width - Adjustment) : 0d;
+
+    public object ConvertBack(
+        object value,
+        Type targetType,
+        object parameter,
+        System.Globalization.CultureInfo culture) =>
+        System.Windows.Data.Binding.DoNothing;
 }

@@ -2276,7 +2276,41 @@ public sealed record HistoryChoice(Guid Id, string DisplayText)
 public sealed record ResultTreeNode(
     string Name,
     string Detail,
-    IReadOnlyList<ResultTreeNode> Children);
+    IReadOnlyList<ResultTreeNode> Children)
+{
+    public MetricKind? Kind { get; init; }
+
+    public string Assembly { get; init; } = string.Empty;
+
+    public double? MeanMilliseconds { get; init; }
+
+    public double? MinimumMilliseconds { get; init; }
+
+    public double? MaximumMilliseconds { get; init; }
+
+    public string ClipboardText { get; init; } = string.Empty;
+
+    public bool IsAnalyzerMetric => MeanMilliseconds.HasValue;
+}
+
+public static class AnalyzerResultClipboardFormatter
+{
+    public static string Format(StatisticalMetric metric)
+    {
+        ArgumentNullException.ThrowIfNull(metric);
+        return string.Join(
+            '\t',
+            $"種別: {metric.Kind}",
+            $"Analyzer／診断: {metric.Identity}",
+            $"アセンブリ: {metric.Assembly}",
+            $"平均: {metric.MeanMilliseconds:N3} ms",
+            $"最小: {metric.MinimumMilliseconds:N3} ms",
+            $"最大: {metric.MaximumMilliseconds:N3} ms");
+    }
+
+    public static string FormatAssembly(string assembly, int itemCount) =>
+        $"アセンブリ: {assembly}\t項目数: {itemCount:N0}";
+}
 
 public static class ResultTreeBuilder
 {
@@ -2306,9 +2340,21 @@ public static class ResultTreeBuilder
                             item.DiagnosticId is null
                                 ? item.Identity
                                 : $"{item.DiagnosticId}: {item.Identity}",
-                            $"{item.Kind}、平均 {item.MeanMilliseconds:N3} ms",
-                            Array.Empty<ResultTreeNode>()), cancellationToken))
-                        .ToArray()), cancellationToken))
+                            $"{item.Kind}、平均 {item.MeanMilliseconds:N3} ms、最小 {item.MinimumMilliseconds:N3} ms、最大 {item.MaximumMilliseconds:N3} ms",
+                            Array.Empty<ResultTreeNode>())
+                        {
+                            Kind = item.Kind,
+                            Assembly = item.Assembly,
+                            MeanMilliseconds = item.MeanMilliseconds,
+                            MinimumMilliseconds = item.MinimumMilliseconds,
+                            MaximumMilliseconds = item.MaximumMilliseconds,
+                            ClipboardText = AnalyzerResultClipboardFormatter.Format(item),
+                        }, cancellationToken))
+                        .ToArray())
+                {
+                    Assembly = group.Key,
+                    ClipboardText = AnalyzerResultClipboardFormatter.FormatAssembly(group.Key, group.Count()),
+                }, cancellationToken))
                 .ToArray();
         }
         catch (InvalidOperationException exception) when (
