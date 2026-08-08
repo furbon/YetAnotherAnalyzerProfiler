@@ -14,6 +14,10 @@ public sealed record ProcessResult(
     IReadOnlyList<string> StandardOutputTail,
     IReadOnlyList<string> StandardErrorTail)
 {
+    public bool StandardOutputTruncated { get; init; }
+
+    public bool StandardErrorTruncated { get; init; }
+
     public string CombinedTail => string.Join(
         Environment.NewLine,
         StandardOutputTail.Concat(StandardErrorTail));
@@ -94,7 +98,11 @@ public sealed class ProcessRunner : IProcessRunner
             process.ExitCode,
             stopwatch.Elapsed,
             stdout.Snapshot(),
-            stderr.Snapshot());
+            stderr.Snapshot())
+        {
+            StandardOutputTruncated = stdout.WasTruncated,
+            StandardErrorTruncated = stderr.WasTruncated,
+        };
     }
 
     private static async Task WaitForCancellationExitAsync(
@@ -193,6 +201,7 @@ public sealed class ProcessRunner : IProcessRunner
         private readonly int _capacity;
         private readonly Queue<string> _lines;
         private readonly object _sync = new();
+        private long _lineCount;
 
         public BoundedLineBuffer(int capacity)
         {
@@ -204,6 +213,7 @@ public sealed class ProcessRunner : IProcessRunner
         {
             lock (_sync)
             {
+                _lineCount++;
                 if (_lines.Count == _capacity)
                 {
                     _lines.Dequeue();
@@ -218,6 +228,17 @@ public sealed class ProcessRunner : IProcessRunner
             lock (_sync)
             {
                 return _lines.ToArray();
+            }
+        }
+
+        public bool WasTruncated
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _lineCount > _lines.Count;
+                }
             }
         }
     }

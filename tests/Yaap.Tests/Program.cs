@@ -10,6 +10,17 @@ if (args is ["--child-wait"])
     return 0;
 }
 
+if (args is ["--child-output"])
+{
+    for (int index = 1; index <= 250; index++)
+    {
+        Console.WriteLine($"stdout-{index:D3}");
+        Console.Error.WriteLine($"stderr-{index:D3}");
+    }
+
+    return 7;
+}
+
 List<TestCase> tests = new()
 {
     new("unit.mode-defaults", ModeDefaultsAsync),
@@ -31,6 +42,10 @@ List<TestCase> tests = new()
     new("functional.generated-output-manifest-streaming", GeneratedOutputManifestAsync),
     new("functional.profile-isolated", ProfileIsolatedAsync),
     new("functional.profile-normal-output", ProfileNormalAsync),
+    new("failure.process-output-tail-bounded", ProcessOutputTailAsync),
+    new("failure.profile-warmup-build-record", ProfileWarmupFailureAsync),
+    new("failure.profile-clean-record", ProfileCleanFailureAsync),
+    new("failure.profile-clean-partial-after-success", ProfileCleanPartialAsync),
     new("failure.profile-partial-record", ProfileFailureAsync),
     new("failure.profile-partial-after-success", ProfilePartialAsync),
     new("cancellation.profile-record", ProfileCancellationAsync),
@@ -692,17 +707,198 @@ static async Task ProfilePrefersSdkCaptureAsync()
         SearchOption.AllDirectories).Any());
 }
 
+static async Task ProcessOutputTailAsync()
+{
+    string assembly = Assembly.GetExecutingAssembly().Location;
+    ProcessResult result = await new ProcessRunner().RunAsync(new ProcessInvocation(
+        "dotnet",
+        new[] { assembly, "--child-output" },
+        FindRepositoryRoot()));
+    Assert.Equal(7, result.ExitCode);
+    Assert.Equal(200, result.StandardOutputTail.Count);
+    Assert.Equal(200, result.StandardErrorTail.Count);
+    Assert.Equal("stdout-051", result.StandardOutputTail[0]);
+    Assert.Equal("stdout-250", result.StandardOutputTail[^1]);
+    Assert.Equal("stderr-051", result.StandardErrorTail[0]);
+    Assert.Equal("stderr-250", result.StandardErrorTail[^1]);
+    Assert.True(result.StandardOutputTruncated);
+    Assert.True(result.StandardErrorTruncated);
+}
+
+static async Task ProfileWarmupFailureAsync()
+{
+    using TemporaryDirectory target = new();
+    using TemporaryDirectory historyPath = new();
+    string project = await WriteProjectAsync(target.Path);
+    RecordingProcessRunner process = new((invocation, onLine, _) =>
+    {
+        if (invocation.Arguments.FirstOrDefault() == "build")
+        {
+            onLine?.Invoke("warm-up build fixture failure", true);
+            return Task.FromResult(new ProcessResult(
+                9,
+                TimeSpan.FromMilliseconds(1),
+                Array.Empty<string>(),
+                new[] { "warm-up build fixture failure" }));
+        }
+
+        return Task.FromResult(SuccessfulProcess(invocation));
+    });
+    ProfileRun run = await new ProfileRunner(process, new FakeBinlogAnalyzer(), new EnvironmentDetector(process))
+        .RunAsync(new ProfileOptions
+        {
+            TargetPath = project,
+            WarmupCount = 1,
+            IterationCount = 2,
+            CleanBeforeEach = true,
+            HistoryPath = historyPath.Path,
+        });
+    Assert.Equal(RunStatus.Failed, run.Status);
+    Assert.Equal(0, run.Measurements.Count);
+    Assert.False(process.Invocations.Any(invocation =>
+        invocation.Arguments.FirstOrDefault() == "clean"));
+    RunDiagnostic diagnostic = Assert.Single(run.Diagnostics);
+    Assert.Contains("ウォームアップ用 dotnet build", diagnostic.Message);
+    Assert.Contains("実行コマンド: dotnet build", diagnostic.Detail);
+    Assert.Contains("warm-up build fixture failure", diagnostic.Detail);
+    Assert.Contains("ビルド構成", diagnostic.SuggestedAction);
+    string log = Assert.Single(Directory.EnumerateFiles(
+        System.IO.Path.Combine(new HistoryStore(historyPath.Path).GetRunDirectory(run.Id), "logs"),
+        "warm-up-*.log").ToArray());
+    Assert.Contains("[stderr] warm-up build fixture failure", await File.ReadAllTextAsync(log));
+}
+
+static async Task ProfileCleanFailureAsync()
+{
+    using TemporaryDirectory target = new();
+    using TemporaryDirectory historyPath = new();
+    string targetDirectory = System.IO.Path.Combine(target.Path, "target with spaces");
+    Directory.CreateDirectory(targetDirectory);
+    string project = await WriteProjectAsync(targetDirectory);
+    RecordingProcessRunner process = new((invocation, onLine, _) =>
+    {
+        if (invocation.Arguments.FirstOrDefault() == "clean")
+        {
+            for (int index = 1; index <= 230; index++)
+            {
+                onLine?.Invoke($"clean stdout {index:D3}", false);
+            }
+
+            onLine?.Invoke("clean stderr fixture failure", true);
+            return Task.FromResult(new ProcessResult(
+                17,
+                TimeSpan.FromMilliseconds(1),
+                Enumerable.Range(31, 200).Select(index => $"clean stdout {index:D3}").ToArray(),
+                new[] { "clean stderr fixture failure" })
+            {
+                StandardOutputTruncated = true,
+            });
+        }
+
+        return Task.FromResult(SuccessfulProcess(invocation));
+    });
+    ProfileRun run = await new ProfileRunner(process, new FakeBinlogAnalyzer(), new EnvironmentDetector(process))
+        .RunAsync(new ProfileOptions
+        {
+            TargetPath = project,
+            WarmupCount = 0,
+            IterationCount = 3,
+            CleanBeforeEach = true,
+            HistoryPath = historyPath.Path,
+        });
+    Assert.Equal(RunStatus.Failed, run.Status);
+    Assert.Equal(0, run.Measurements.Count);
+    Assert.False(process.Invocations.Any(invocation =>
+        invocation.Arguments.FirstOrDefault() == "build"));
+    RunDiagnostic diagnostic = Assert.Single(run.Diagnostics);
+    Assert.Equal("YAAP2001", diagnostic.Code);
+    Assert.Contains("測定前の dotnet clean", diagnostic.Message);
+    Assert.Contains("終了コード 17", diagnostic.Message);
+    Assert.Contains("実行コマンド: dotnet clean", diagnostic.Detail);
+    Assert.Contains($"\"{project}\"", diagnostic.Detail);
+    Assert.Contains($"作業ディレクトリ: {targetDirectory}", diagnostic.Detail);
+    Assert.Contains("完全ログ:", diagnostic.Detail);
+    Assert.Contains("前方の行は完全ログにのみ記録", diagnostic.Detail);
+    Assert.Contains("clean stdout 230", diagnostic.Detail);
+    Assert.Contains("clean stderr fixture failure", diagnostic.Detail);
+    Assert.Contains("bin／obj", diagnostic.SuggestedAction);
+    Assert.Contains("Clean target", diagnostic.SuggestedAction);
+
+    string log = Assert.Single(Directory.EnumerateFiles(
+        System.IO.Path.Combine(new HistoryStore(historyPath.Path).GetRunDirectory(run.Id), "logs"),
+        "*.log").ToArray());
+    string logText = await File.ReadAllTextAsync(log);
+    Assert.Contains("実行コマンド: dotnet clean", logText);
+    Assert.Contains("[stdout] clean stdout 001", logText);
+    Assert.Contains("[stdout] clean stdout 230", logText);
+    Assert.Contains("[stderr] clean stderr fixture failure", logText);
+
+    ProfileRun retained = await new HistoryStore(historyPath.Path).LoadAsync(run.Id);
+    Assert.Equal(RunStatus.Failed, retained.Status);
+    Assert.Equal(diagnostic, Assert.Single(retained.Diagnostics));
+}
+
+static async Task ProfileCleanPartialAsync()
+{
+    using TemporaryDirectory target = new();
+    using TemporaryDirectory historyPath = new();
+    string project = await WriteProjectAsync(target.Path);
+    int cleanCount = 0;
+    RecordingProcessRunner process = new((invocation, onLine, _) =>
+    {
+        if (invocation.Arguments.FirstOrDefault() == "clean" && ++cleanCount == 2)
+        {
+            onLine?.Invoke("second clean failed", true);
+            return Task.FromResult(new ProcessResult(
+                5,
+                TimeSpan.FromMilliseconds(1),
+                Array.Empty<string>(),
+                new[] { "second clean failed" }));
+        }
+
+        CreateFakeBuildOutputs(invocation);
+        return Task.FromResult(SuccessfulProcess(invocation));
+    });
+    ProfileRun run = await new ProfileRunner(process, new FakeBinlogAnalyzer(), new EnvironmentDetector(process))
+        .RunAsync(new ProfileOptions
+        {
+            TargetPath = project,
+            WarmupCount = 0,
+            IterationCount = 3,
+            CleanBeforeEach = true,
+            HistoryPath = historyPath.Path,
+        });
+    Assert.Equal(RunStatus.Partial, run.Status);
+    Assert.Equal(1, run.Measurements.Count);
+    Assert.True(run.Analyzers.Count > 0);
+    RunDiagnostic diagnostic = Assert.Single(run.Diagnostics);
+    Assert.Contains("測定前の dotnet clean", diagnostic.Message);
+    Assert.Contains("second clean failed", diagnostic.Detail);
+    string log = Assert.Single(Directory.EnumerateFiles(
+        System.IO.Path.Combine(new HistoryStore(historyPath.Path).GetRunDirectory(run.Id), "logs"),
+        "clean-002.log").ToArray());
+    Assert.Contains("[stderr] second clean failed", await File.ReadAllTextAsync(log));
+    ProfileRun retained = await new HistoryStore(historyPath.Path).LoadAsync(run.Id);
+    Assert.Equal(RunStatus.Partial, retained.Status);
+    Assert.Equal(1, retained.Measurements.Count);
+}
+
 static async Task ProfileFailureAsync()
 {
     using TemporaryDirectory target = new();
     using TemporaryDirectory historyPath = new();
     string project = await WriteProjectAsync(target.Path);
-    RecordingProcessRunner process = new((invocation, _) =>
+    RecordingProcessRunner process = new((invocation, onLine, _) =>
     {
         if (invocation.Arguments.FirstOrDefault() == "build")
         {
-            CreateFakeBuildOutputs(invocation);
-            return Task.FromResult(new ProcessResult(1, TimeSpan.FromMilliseconds(1), Array.Empty<string>(), new[] { "fixture failure" }));
+            onLine?.Invoke("build stdout context", false);
+            onLine?.Invoke("build stderr fixture failure", true);
+            return Task.FromResult(new ProcessResult(
+                1,
+                TimeSpan.FromMilliseconds(1),
+                new[] { "build stdout context" },
+                new[] { "build stderr fixture failure" }));
         }
 
         return Task.FromResult(SuccessfulProcess(invocation));
@@ -718,9 +914,22 @@ static async Task ProfileFailureAsync()
         });
     Assert.Equal(RunStatus.Failed, run.Status);
     Assert.Equal(1, run.Measurements.Count);
-    Assert.True(run.Diagnostics.Any(item => item.Code == "YAAP2001"));
+    RunDiagnostic diagnostic = Assert.Single(run.Diagnostics.Where(item => item.Code == "YAAP2001").ToArray());
+    Assert.Contains("測定用 dotnet build", diagnostic.Message);
+    Assert.Contains("実行コマンド: dotnet build", diagnostic.Detail);
+    Assert.Contains($"作業ディレクトリ: {target.Path}", diagnostic.Detail);
+    Assert.Contains("build stdout context", diagnostic.Detail);
+    Assert.Contains("build stderr fixture failure", diagnostic.Detail);
+    Assert.Contains("対象フレームワーク", diagnostic.SuggestedAction);
+    string log = Assert.Single(Directory.EnumerateFiles(
+        System.IO.Path.Combine(new HistoryStore(historyPath.Path).GetRunDirectory(run.Id), "logs"),
+        "build-*.log").ToArray());
+    string logText = await File.ReadAllTextAsync(log);
+    Assert.Contains("[stdout] build stdout context", logText);
+    Assert.Contains("[stderr] build stderr fixture failure", logText);
     ProfileRun retained = await new HistoryStore(historyPath.Path).LoadAsync(run.Id);
     Assert.Equal(RunStatus.Failed, retained.Status);
+    Assert.Equal(diagnostic, retained.Diagnostics.Single(item => item.Code == "YAAP2001"));
 }
 
 static async Task ProfileNormalAsync()
@@ -866,6 +1075,53 @@ static async Task CliAsync()
         Assert.Equal(CliApplication.UsageError, result);
         Assert.True(error.ToString().Length > 0);
     }
+
+    ProfileRun failedRun = Run("Sample.csproj");
+    failedRun.Status = RunStatus.Failed;
+    failedRun.Diagnostics = new[]
+    {
+        YaapErrors.ProcessFailed(
+            ProcessOperation.Clean,
+            17,
+            "実行コマンド: dotnet clean Sample.csproj\n作業ディレクトリ: fixture\n完全ログ: history/logs/clean-001.log\n標準エラー出力末尾:\n  fixture failure"),
+    };
+    StubProfileRunner failedRunner = new((_, _, _) => Task.FromResult(failedRun));
+    output.GetStringBuilder().Clear();
+    error.GetStringBuilder().Clear();
+    int failed = await CliApplication.RunAsync(
+        new[] { "profile", "Sample.csproj", "--mode", "custom", "--warmups", "0", "--iterations", "1" },
+        output,
+        error,
+        profileRunner: failedRunner);
+    Assert.Equal(CliApplication.ProfileFailed, failed);
+    Assert.Contains("YAAP2001: 測定前の dotnet clean", output.ToString());
+    Assert.Contains("詳細:", output.ToString());
+    Assert.Contains("実行コマンド: dotnet clean Sample.csproj", output.ToString());
+    Assert.Contains("完全ログ: history/logs/clean-001.log", output.ToString());
+    Assert.Contains("対処:", output.ToString());
+    Assert.Contains("カスタム Clean target", output.ToString());
+    Assert.Equal(string.Empty, error.ToString());
+
+    using TemporaryDirectory failedHistory = new();
+    await new HistoryStore(failedHistory.Path).SaveAsync(failedRun);
+    output.GetStringBuilder().Clear();
+    int failedJson = await CliApplication.RunAsync(
+        new[]
+        {
+            "profile", "Sample.csproj", "--mode", "custom", "--warmups", "0", "--iterations", "1",
+            "--json", "--history", failedHistory.Path,
+        },
+        output,
+        error,
+        profileRunner: failedRunner);
+    Assert.Equal(CliApplication.ProfileFailed, failedJson);
+    using System.Text.Json.JsonDocument failedDocument =
+        System.Text.Json.JsonDocument.Parse(output.ToString());
+    System.Text.Json.JsonElement failedJsonRun = failedDocument.RootElement.GetProperty("run");
+    Assert.Equal("failed", failedJsonRun.GetProperty("status").GetString());
+    Assert.Contains(
+        "実行コマンド: dotnet clean",
+        failedJsonRun.GetProperty("diagnostics")[0].GetProperty("detail").GetString()!);
 }
 
 static Task ScaleAsync()
@@ -1101,9 +1357,15 @@ internal sealed class TemporaryDirectory : IDisposable
 
 internal sealed class RecordingProcessRunner : IProcessRunner
 {
-    private readonly Func<ProcessInvocation, CancellationToken, Task<ProcessResult>> _behavior;
+    private readonly Func<ProcessInvocation, Action<string, bool>?, CancellationToken, Task<ProcessResult>> _behavior;
 
     public RecordingProcessRunner(Func<ProcessInvocation, CancellationToken, Task<ProcessResult>> behavior)
+    {
+        _behavior = (invocation, _, cancellationToken) => behavior(invocation, cancellationToken);
+    }
+
+    public RecordingProcessRunner(
+        Func<ProcessInvocation, Action<string, bool>?, CancellationToken, Task<ProcessResult>> behavior)
     {
         _behavior = behavior;
     }
@@ -1116,8 +1378,24 @@ internal sealed class RecordingProcessRunner : IProcessRunner
         CancellationToken cancellationToken = default)
     {
         Invocations.Add(invocation);
-        return _behavior(invocation, cancellationToken);
+        return _behavior(invocation, onLine, cancellationToken);
     }
+}
+
+internal sealed class StubProfileRunner : IProfileRunner
+{
+    private readonly Func<ProfileOptions, IProgress<ProfileProgress>?, CancellationToken, Task<ProfileRun>> _run;
+
+    public StubProfileRunner(
+        Func<ProfileOptions, IProgress<ProfileProgress>?, CancellationToken, Task<ProfileRun>> run)
+    {
+        _run = run;
+    }
+
+    public Task<ProfileRun> RunAsync(
+        ProfileOptions options,
+        IProgress<ProfileProgress>? progress = null,
+        CancellationToken cancellationToken = default) => _run(options, progress, cancellationToken);
 }
 
 internal sealed class FakeBinlogAnalyzer : IBinlogAnalyzer

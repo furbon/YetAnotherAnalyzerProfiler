@@ -41,6 +41,16 @@ public enum ProfileStage
     Completed,
 }
 
+public enum ProcessOperation
+{
+    Restore,
+    WarmupBuild,
+    Clean,
+    MeasuredBuild,
+    CompilerReplay,
+    Profile,
+}
+
 public sealed record ProfileOptions
 {
     public required string TargetPath { get; init; }
@@ -297,11 +307,14 @@ public static class YaapErrors
         detail,
         "存在する .sln、.slnx、または .csproj を指定してください。");
 
-    public static RunDiagnostic ProcessFailed(string phase, int exitCode, string detail) => new(
-        "YAAP2001",
-        $"{phase} に失敗しました (終了コード {exitCode})。",
-        detail,
-        "対象を dotnet コマンドで直接ビルドし、NuGet 設定とエラーを確認してください。");
+    public static RunDiagnostic ProcessFailed(
+        ProcessOperation operation,
+        int exitCode,
+        string detail) => new(
+            "YAAP2001",
+            $"{GetOperationLabel(operation)} に失敗しました（終了コード {exitCode}）。",
+            detail,
+            GetProcessSuggestedAction(operation));
 
     public static RunDiagnostic BinlogFailed(string detail) => new(
         "YAAP3001",
@@ -332,4 +345,30 @@ public static class YaapErrors
         "認識できない Analyzer レポート行があります。",
         detail,
         "SDK と YAAP を更新するか、binlog を保持して問題を報告してください。");
+
+    private static string GetOperationLabel(ProcessOperation operation) => operation switch
+    {
+        ProcessOperation.Restore => "dotnet restore",
+        ProcessOperation.WarmupBuild => "ウォームアップ用 dotnet build",
+        ProcessOperation.Clean => "測定前の dotnet clean",
+        ProcessOperation.MeasuredBuild => "測定用 dotnet build",
+        ProcessOperation.CompilerReplay => "Analyzer 計測用コンパイラー再実行",
+        _ => "測定プロセス",
+    };
+
+    private static string GetProcessSuggestedAction(ProcessOperation operation) => operation switch
+    {
+        ProcessOperation.Restore =>
+            "記録された作業ディレクトリで同じコマンドを再実行し、NuGet.Config、パッケージソース、認証、ネットワーク接続、および対象 SDK を確認してください。",
+        ProcessOperation.WarmupBuild =>
+            "記録された作業ディレクトリで同じコマンドを再実行し、ログの先頭のエラー、ビルド構成、対象フレームワーク、SDK、およびカスタム MSBuild target を確認してください。",
+        ProcessOperation.Clean =>
+            "記録された作業ディレクトリで同じコマンドを再実行し、bin／obj または分離出力先を使用中のプロセス、アクセス権、読み取り専用ファイル、およびカスタム Clean target を確認してください。",
+        ProcessOperation.MeasuredBuild =>
+            "記録された作業ディレクトリで同じコマンドを再実行し、ログの先頭のエラー、ビルド構成、対象フレームワーク、SDK、参照、パッケージ、およびカスタム MSBuild target を確認してください。",
+        ProcessOperation.CompilerReplay =>
+            "ログのコンパイラーエラーを確認し、通常の dotnet build が成功すること、Analyzer／Source Generator と対象 SDK の互換性、および応答ファイルの引数を確認してください。",
+        _ =>
+            "実行コマンド、作業ディレクトリ、およびログを確認し、同じ条件で再実行してください。dotnet を起動できない場合は PATH、対象 SDK、アクセス権も確認してください。",
+    };
 }
