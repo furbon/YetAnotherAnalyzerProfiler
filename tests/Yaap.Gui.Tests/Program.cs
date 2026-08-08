@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -10,6 +11,7 @@ using System.Windows.Threading;
 using Wpf.Ui.Appearance;
 using Yaap.Core;
 using Yaap.Gui;
+using ShapePath = System.Windows.Shapes.Path;
 
 List<(string Name, Func<Task> Body)> tests = new()
 {
@@ -423,14 +425,77 @@ static async Task WindowStartupSmokeAsync()
                         PumpUntil(window.Dispatcher, () => visualPeriodRefresh.IsCompleted, TimeSpan.FromSeconds(5));
                         visualPeriodRefresh.GetAwaiter().GetResult();
                         Ensure(historyPeriodClearButton.IsEnabled, "A populated history period must expose an enabled clear action.");
+                        historyPeriodClearButton.ApplyTemplate();
+                        ShapePath clearIcon = FindVisualDescendant<ShapePath>(historyPeriodClearButton) ??
+                            throw new InvalidOperationException("The history period clear icon was not rendered.");
+                        EnsureCenteredWithin(clearIcon, historyPeriodClearButton, 1.0, "History period clear icon");
+                        EnsureTemplateInteractionTriggers(
+                            historyPeriodClearButton.Template,
+                            "History period clear button");
                         CaptureWindow(
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-history-period-filled");
+                        SetReadOnlyBooleanState(
+                            historyPeriodClearButton,
+                            typeof(UIElement),
+                            "IsMouseOverPropertyKey",
+                            true);
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-clear-hover");
+                        SetReadOnlyBooleanState(
+                            historyPeriodClearButton,
+                            typeof(ButtonBase),
+                            "IsPressedPropertyKey",
+                            true);
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                        Border clearSurface = FindVisualDescendants<Border>(historyPeriodClearButton)
+                            .First(item => item.Name.Equals("ActionSurface", StringComparison.Ordinal));
+                        EnsureContrast(
+                            clearIcon.Stroke,
+                            clearSurface.Background,
+                            $"{mode} history period clear pressed state");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-clear-pressed");
+                        SetReadOnlyBooleanState(
+                            historyPeriodClearButton,
+                            typeof(ButtonBase),
+                            "IsPressedPropertyKey",
+                            false);
+                        SetReadOnlyBooleanState(
+                            historyPeriodClearButton,
+                            typeof(UIElement),
+                            "IsMouseOverPropertyKey",
+                            false);
+                        SetReadOnlyBooleanState(
+                            historyPeriodClearButton,
+                            typeof(UIElement),
+                            "IsKeyboardFocusedPropertyKey",
+                            true);
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-clear-focus");
+                        SetReadOnlyBooleanState(
+                            historyPeriodClearButton,
+                            typeof(UIElement),
+                            "IsKeyboardFocusedPropertyKey",
+                            false);
                         viewModel.ClearHistoryPeriodCommand.Execute(null);
                         Task visualPeriodClear = viewModel.WaitForHistoryRefreshAsync();
                         PumpUntil(window.Dispatcher, () => visualPeriodClear.IsCompleted, TimeSpan.FromSeconds(5));
                         visualPeriodClear.GetAwaiter().GetResult();
+                        Ensure(!historyPeriodClearButton.IsEnabled, "An empty history period must disable its clear action.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-history-clear-disabled");
 
                         historyMenu.PlacementTarget = historyGrid;
                         historyMenu.IsOpen = true;
@@ -461,13 +526,52 @@ static async Task WindowStartupSmokeAsync()
                         {
                             calendar.DisplayMode = displayMode;
                             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                            Button previousButton = FindVisualDescendants<Button>(calendar)
+                                .FirstOrDefault(item => item.Name.Equals("PART_PreviousButton", StringComparison.Ordinal)) ??
+                                throw new InvalidOperationException("The previous calendar navigation button was not rendered.");
+                            Button nextButton = FindVisualDescendants<Button>(calendar)
+                                .FirstOrDefault(item => item.Name.Equals("PART_NextButton", StringComparison.Ordinal)) ??
+                                throw new InvalidOperationException("The next calendar navigation button was not rendered.");
+                            Button headerButton = FindVisualDescendants<Button>(calendar)
+                                .FirstOrDefault(item => item.Name.Equals("PART_HeaderButton", StringComparison.Ordinal)) ??
+                                throw new InvalidOperationException("The calendar header button was not rendered.");
+                            foreach ((Button button, string automationName) in new[]
+                                     {
+                                         (previousButton, "前の期間へ移動"),
+                                         (nextButton, "次の期間へ移動"),
+                                     })
+                            {
+                                button.ApplyTemplate();
+                                ShapePath glyph = FindVisualDescendants<ShapePath>(button)
+                                    .FirstOrDefault(item => item.Name.Equals("CalendarNavigationGlyph", StringComparison.Ordinal)) ??
+                                    throw new InvalidOperationException(
+                                        "A calendar navigation glyph was not rendered. " +
+                                        $"Name={button.Name}; Style={button.Style}; Template={button.Template}; " +
+                                        $"LocalStyle={button.ReadLocalValue(FrameworkElement.StyleProperty)}; " +
+                                        $"ExpectedStyle={ReferenceEquals(button.Style, window.FindResource("CalendarNavigationButtonStyle"))}; " +
+                                        $"LocalTemplate={button.ReadLocalValue(Control.TemplateProperty)}; " +
+                                        $"Content={button.Content?.GetType().FullName ?? "<null>"}.");
+                                Ensure(button.ActualWidth >= 31 && button.ActualHeight >= 31,
+                                    "Calendar navigation buttons must provide a practical pointer target.");
+                                EnsureCenteredWithin(glyph, button, 1.0, automationName);
+                                EnsureContrast(glyph.Stroke, calendar.Background, $"{mode} {suffix} {automationName}");
+                                Ensure(
+                                    AutomationProperties.GetName(button).Equals(automationName, StringComparison.Ordinal),
+                                    $"Calendar navigation automation name was not configured: {automationName}.");
+                                EnsureTemplateInteractionTriggers(button.Template, automationName);
+                            }
+
+                            Ensure(
+                                AutomationProperties.GetName(headerButton).Equals("表示期間を切り替え", StringComparison.Ordinal),
+                                "The calendar header must explain its display-mode action.");
+                            EnsureTemplateInteractionTriggers(headerButton.Template, "Calendar header button");
                             foreach (TextBlock calendarText in
                                      FindVisualDescendants<TextBlock>(calendarPopupContent)
                                          .Where(item => item.IsVisible && !string.IsNullOrWhiteSpace(item.Text)))
                             {
                                 EnsureContrast(
                                     calendarText.Foreground,
-                                    calendar.Background,
+                                    GetCalendarTextBackground(calendarText, calendar),
                                     $"{mode} history {suffix} calendar text '{calendarText.Text}'");
                             }
 
@@ -475,6 +579,97 @@ static async Task WindowStartupSmokeAsync()
                                 calendarPopupContent,
                                 captureDirectory,
                                 $"{mode.ToString().ToLowerInvariant()}-history-calendar-{suffix}");
+
+                            ButtonBase calendarItem = displayMode == CalendarMode.Month
+                                ? FindVisualDescendants<CalendarDayButton>(calendar)
+                                    .First(item => item.IsVisible && item.IsEnabled && item.IsSelected == false)
+                                : FindVisualDescendants<CalendarButton>(calendar)
+                                    .First(item => item.IsVisible && item.IsEnabled);
+                            SetReadOnlyBooleanState(
+                                calendarItem,
+                                typeof(UIElement),
+                                "IsMouseOverPropertyKey",
+                                true);
+                            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                            Ensure(
+                                calendarItem.Background is SolidColorBrush,
+                                $"{mode} {suffix} calendar items must expose visible hover feedback.");
+                            Ensure(
+                                calendarItem.BorderBrush is SolidColorBrush && calendarItem.BorderThickness.Left >= 2,
+                                $"{mode} {suffix} calendar item hover state must expose an accent outline.");
+                            CaptureElement(
+                                calendarPopupContent,
+                                captureDirectory,
+                                $"{mode.ToString().ToLowerInvariant()}-history-calendar-{suffix}-item-hover");
+                            SetReadOnlyBooleanState(
+                                calendarItem,
+                                typeof(UIElement),
+                                "IsMouseOverPropertyKey",
+                                false);
+
+                            if (displayMode == CalendarMode.Month)
+                            {
+                                SetReadOnlyBooleanState(
+                                    previousButton,
+                                    typeof(UIElement),
+                                    "IsMouseOverPropertyKey",
+                                    true);
+                                window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                                CaptureElement(
+                                    calendarPopupContent,
+                                    captureDirectory,
+                                    $"{mode.ToString().ToLowerInvariant()}-history-calendar-navigation-hover");
+                                SetReadOnlyBooleanState(
+                                    previousButton,
+                                    typeof(UIElement),
+                                    "IsMouseOverPropertyKey",
+                                    false);
+                                SetReadOnlyBooleanState(
+                                    nextButton,
+                                    typeof(ButtonBase),
+                                    "IsPressedPropertyKey",
+                                    true);
+                                window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                                ShapePath pressedGlyph = FindVisualDescendants<ShapePath>(nextButton)
+                                    .First(item => item.Name.Equals("CalendarNavigationGlyph", StringComparison.Ordinal));
+                                Border pressedSurface = FindVisualDescendants<Border>(nextButton)
+                                    .First(item => item.Name.Equals("NavigationSurface", StringComparison.Ordinal));
+                                EnsureContrast(
+                                    pressedGlyph.Stroke,
+                                    pressedSurface.Background,
+                                    $"{mode} calendar navigation pressed state");
+                                CaptureElement(
+                                    calendarPopupContent,
+                                    captureDirectory,
+                                    $"{mode.ToString().ToLowerInvariant()}-history-calendar-navigation-pressed");
+                                SetReadOnlyBooleanState(
+                                    nextButton,
+                                    typeof(ButtonBase),
+                                    "IsPressedPropertyKey",
+                                    false);
+                                SetReadOnlyBooleanState(
+                                    previousButton,
+                                    typeof(UIElement),
+                                    "IsKeyboardFocusedPropertyKey",
+                                    true);
+                                window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                                CaptureElement(
+                                    calendarPopupContent,
+                                    captureDirectory,
+                                    $"{mode.ToString().ToLowerInvariant()}-history-calendar-navigation-focus");
+                                SetReadOnlyBooleanState(
+                                    previousButton,
+                                    typeof(UIElement),
+                                    "IsKeyboardFocusedPropertyKey",
+                                    false);
+                                previousButton.IsEnabled = false;
+                                window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                                CaptureElement(
+                                    calendarPopupContent,
+                                    captureDirectory,
+                                    $"{mode.ToString().ToLowerInvariant()}-history-calendar-navigation-disabled");
+                                previousButton.IsEnabled = true;
+                            }
                         }
                         historyFromDatePicker.IsDropDownOpen = false;
 
@@ -654,6 +849,66 @@ static void EnsureContrast(Brush foreground, Brush background, string name)
         $"background #{backgroundColor.R:X2}{backgroundColor.G:X2}{backgroundColor.B:X2}).");
 }
 
+static Brush GetCalendarTextBackground(TextBlock text, Calendar calendar)
+{
+    CalendarButton? calendarButton = null;
+    for (DependencyObject? current = VisualTreeHelper.GetParent(text);
+         current is not null;
+         current = VisualTreeHelper.GetParent(current))
+    {
+        if (current is CalendarButton)
+        {
+            calendarButton = (CalendarButton)current;
+            break;
+        }
+
+        if (ReferenceEquals(current, calendar))
+        {
+            break;
+        }
+    }
+
+    bool selected = calendarButton?.DataContext is DateTime date
+        ? calendar.DisplayMode switch
+        {
+            CalendarMode.Year => date.Year == calendar.DisplayDate.Year &&
+                date.Month == calendar.DisplayDate.Month,
+            CalendarMode.Decade => date.Year == calendar.DisplayDate.Year,
+            _ => false,
+        }
+        : calendarButton is not null && calendar.DisplayMode switch
+        {
+            CalendarMode.Year => text.Text.Equals($"{calendar.DisplayDate.Month}月", StringComparison.Ordinal),
+            CalendarMode.Decade => text.Text.Equals(
+                calendar.DisplayDate.Year.ToString(System.Globalization.CultureInfo.CurrentCulture),
+                StringComparison.Ordinal),
+            _ => false,
+        };
+    if (!selected)
+    {
+        return calendar.Background;
+    }
+
+    for (DependencyObject? current = VisualTreeHelper.GetParent(text);
+         current is not null && !ReferenceEquals(current, calendar);
+         current = VisualTreeHelper.GetParent(current))
+    {
+        Brush? background = current switch
+        {
+            Border border => border.Background,
+            Panel panel => panel.Background,
+            Control control => control.Background,
+            _ => null,
+        };
+        if (background is SolidColorBrush { Color.A: > 0 })
+        {
+            return background;
+        }
+    }
+
+    return calendar.Background;
+}
+
 static double RelativeLuminance(Color color)
 {
     static double Linearize(byte component)
@@ -665,6 +920,57 @@ static double RelativeLuminance(Color color)
     return (0.2126 * Linearize(color.R)) +
         (0.7152 * Linearize(color.G)) +
         (0.0722 * Linearize(color.B));
+}
+
+static void EnsureCenteredWithin(
+    FrameworkElement element,
+    FrameworkElement container,
+    double tolerance,
+    string name)
+{
+    Point elementTopLeft = element.TransformToAncestor(container).Transform(new Point());
+    double elementCenterX = elementTopLeft.X + (element.ActualWidth / 2);
+    double elementCenterY = elementTopLeft.Y + (element.ActualHeight / 2);
+    double containerCenterX = container.ActualWidth / 2;
+    double containerCenterY = container.ActualHeight / 2;
+    Ensure(
+        Math.Abs(elementCenterX - containerCenterX) <= tolerance &&
+        Math.Abs(elementCenterY - containerCenterY) <= tolerance,
+        $"{name} must be centered within its pointer target " +
+        $"(icon {elementCenterX:N2},{elementCenterY:N2}; target {containerCenterX:N2},{containerCenterY:N2}).");
+}
+
+static void EnsureTemplateInteractionTriggers(ControlTemplate template, string name)
+{
+    HashSet<DependencyProperty> triggerProperties = template.Triggers
+        .OfType<Trigger>()
+        .Select(trigger => trigger.Property)
+        .ToHashSet();
+    foreach (DependencyProperty required in new[]
+             {
+                 UIElement.IsMouseOverProperty,
+                 ButtonBase.IsPressedProperty,
+                 UIElement.IsKeyboardFocusedProperty,
+                 UIElement.IsEnabledProperty,
+             })
+    {
+        Ensure(triggerProperties.Contains(required), $"{name} must style {required.Name}.");
+    }
+}
+
+static void SetReadOnlyBooleanState(
+    DependencyObject element,
+    Type ownerType,
+    string propertyKeyField,
+    bool value)
+{
+    FieldInfo field = ownerType.GetField(
+        propertyKeyField,
+        BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.FlattenHierarchy) ??
+        throw new InvalidOperationException($"WPF state key was not found: {ownerType.Name}.{propertyKeyField}");
+    DependencyPropertyKey key = field.GetValue(null) as DependencyPropertyKey ??
+        throw new InvalidOperationException($"WPF state key was invalid: {ownerType.Name}.{propertyKeyField}");
+    element.SetValue(key, value);
 }
 
 static T? FindVisualDescendant<T>(DependencyObject root)
@@ -1479,6 +1785,11 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("Text=\"{Binding HistoryFrom}\"", StringComparison.Ordinal), "GUI history must expose the start-date filter.");
     Ensure(xaml.Contains("Text=\"{Binding HistoryTo}\"", StringComparison.Ordinal), "GUI history must expose the end-date filter.");
     Ensure(xaml.Contains("Command=\"{Binding ClearHistoryPeriodCommand}\"", StringComparison.Ordinal), "History period filters must provide one-step clearing.");
+    Ensure(xaml.Contains("x:Key=\"CalendarNavigationButtonStyle\"", StringComparison.Ordinal), "Calendar navigation must use an explicit theme-aware style.");
+    Ensure(xaml.Contains("x:Name=\"CalendarNavigationGlyph\"", StringComparison.Ordinal), "Calendar navigation must use centered vector glyphs.");
+    Ensure(xaml.Contains("x:Key=\"IconActionButtonStyle\"", StringComparison.Ordinal), "Compact icon actions must expose complete interaction states.");
+    Ensure(xaml.Contains("x:Name=\"HistoryPeriodClearIcon\"", StringComparison.Ordinal), "History period clearing must use a centered vector icon.");
+    Ensure(!xaml.Contains("Content=\"×\"", StringComparison.Ordinal), "History period clearing must not depend on a font multiplication glyph.");
     Ensure(xaml.Contains("x:Name=\"HistoryPeriodPanel\"", StringComparison.Ordinal) && xaml.Contains("x:Name=\"HistoryRefreshButton\"", StringComparison.Ordinal), "History period and refresh layout must remain testable.");
     Ensure(xaml.Contains("HistoryLimit, UpdateSourceTrigger=LostFocus", StringComparison.Ordinal), "The history display limit must live in Settings.");
     Ensure(xaml.Contains("Header=\"ラベル\"", StringComparison.Ordinal), "History labels must be visible.");

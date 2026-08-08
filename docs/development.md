@@ -53,7 +53,8 @@ skip-duplicateで扱い、draft releaseへ成果物を再添付してから公�
 
 ## ファイルと品質
 
-ソーステキストは UTF-8 BOM、CRLF、スペースインデントです。実行可能な `.sh` だけは
-UTF-8（BOMなし）とLFです。`AGENTS.md`、`.github/copilot-instructions.md`、
+ソーステキストは UTF-8 BOM、CRLF、スペースインデントです。実行可能な `.sh` と
+`.agents/skills/` 配下は UTF-8（BOMなし）とLF、NuGet が管理する `packages.lock.json` は
+UTF-8（BOMなし）とCRLFです。`AGENTS.md`、`.github/copilot-instructions.md`、
 `eng/agent-instructions.md` は完全一致させます。共通ハーネスがこれらとローカルパス、秘密情報、
 成果物混入、版番号重複を検査します。

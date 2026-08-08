@@ -2,7 +2,10 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
-    <AssemblyName>yaap</AssemblyName>
+    <AssemblyName>YetAnotherAnalyzerProfiler.Tool</AssemblyName>
+    <TargetName>yaap</TargetName>
+    <ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>
+    <ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>
     <RootNamespace>Yaap.Cli</RootNamespace>
     <Description>Cross-platform non-interactive CLI for YAAP.</Description>
     <PackAsTool>true</PackAsTool>
