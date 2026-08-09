@@ -652,6 +652,16 @@ static async Task WindowStartupSmokeAsync()
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-table-selected");
+                        EnsureFocusedResultViewTabAfterRepeatedSelection(
+                            window,
+                            analyzerViewTabs,
+                            analyzerTableViewTab,
+                            analyzerTreeViewTab,
+                            $"{mode} Analyzer table view tab",
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-table-focused");
+                        analyzerGrid.Focus();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
                         ContextMenu analyzerTableMenu = analyzerGrid.ContextMenu ??
                             throw new InvalidOperationException("The Analyzer table context menu was not created.");
                         analyzerTableMenu.PlacementTarget = analyzerGrid;
@@ -814,6 +824,16 @@ static async Task WindowStartupSmokeAsync()
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-selected");
+                        EnsureFocusedResultViewTabAfterRepeatedSelection(
+                            window,
+                            analyzerViewTabs,
+                            analyzerTreeViewTab,
+                            analyzerTableViewTab,
+                            $"{mode} Analyzer tree view tab",
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-focused");
+                        analyzerTreeView.Focus();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
                         window.Width = window.MinWidth;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                         CaptureWindow(
@@ -964,6 +984,16 @@ static async Task WindowStartupSmokeAsync()
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-generator-table-selected");
+                        EnsureFocusedResultViewTabAfterRepeatedSelection(
+                            window,
+                            generatorViewTabs,
+                            generatorTableViewTab,
+                            generatorTreeViewTab,
+                            $"{mode} Source Generator table view tab",
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-generator-table-focused");
+                        generatorGrid.Focus();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
 
                         generatorViewTabs.SelectedIndex = 1;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
@@ -1018,6 +1048,16 @@ static async Task WindowStartupSmokeAsync()
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-generator-tree-selected");
+                        EnsureFocusedResultViewTabAfterRepeatedSelection(
+                            window,
+                            generatorViewTabs,
+                            generatorTreeViewTab,
+                            generatorTableViewTab,
+                            $"{mode} Source Generator tree view tab",
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-generator-tree-focused");
+                        generatorTreeView.Focus();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
 
                         viewModel.ResultFilter = "__YAAP_NO_MATCH__";
                         Task generatorEmptyProjection = viewModel.WaitForResultFilterAsync();
@@ -1705,6 +1745,109 @@ static void EnsureNoPartiallyVisibleDataGridRows(DataGrid grid, string name)
             $"(row {bounds.Top:F1}..{bounds.Bottom:F1}, viewport ends at {viewportBounds.Bottom:F1}, " +
             $"row height {grid.RowHeight:F1}).");
     }
+}
+
+static void EnsureFocusedResultViewTabAfterRepeatedSelection(
+    Window window,
+    TabControl owner,
+    TabItem target,
+    TabItem alternate,
+    string name,
+    string? captureDirectory,
+    string captureName)
+{
+    for (int iteration = 0; iteration < 2; iteration++)
+    {
+        owner.SelectedItem = alternate;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        owner.SelectedItem = target;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+    }
+
+    Ensure(target.Focus(), $"{name} must accept keyboard focus after repeated selection.");
+    window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+    Ensure(target.IsSelected, $"{name} must remain selected after receiving keyboard focus.");
+    Ensure(target.IsKeyboardFocused, $"{name} must enter the keyboard-focused visual state.");
+    target.ApplyTemplate();
+    Border focusVisual = target.Template.FindName("ResultViewTabFocusVisual", target) as Border ??
+        throw new InvalidOperationException($"{name} did not render its dedicated focus visual.");
+    Ensure(
+        focusVisual.Visibility == Visibility.Visible,
+        $"{name} must show its dedicated focus visual while keyboard-focused.");
+    Ensure(
+        focusVisual.Margin.Left >= 2 &&
+        focusVisual.Margin.Top >= 2 &&
+        focusVisual.Margin.Right >= 2 &&
+        focusVisual.Margin.Bottom >= 2,
+        $"{name} focus visual must remain inset from every clipping boundary.");
+    EnsureFullCornerRadius(focusVisual.CornerRadius, $"{name} focus visual");
+    CaptureWindow(window, captureDirectory, captureName);
+    EnsureFocusedOutlinePixelsAtCommonScales(target, focusVisual, name);
+}
+
+static void EnsureFocusedOutlinePixelsAtCommonScales(
+    TabItem tab,
+    Border focusVisual,
+    string name)
+{
+    SolidColorBrush accentBrush = focusVisual.BorderBrush as SolidColorBrush ??
+        throw new InvalidOperationException($"{name} focus visual must use a solid accent brush.");
+    Rect boundsInTab = focusVisual.TransformToAncestor(tab)
+        .TransformBounds(new Rect(0, 0, focusVisual.ActualWidth, focusVisual.ActualHeight));
+    Ensure(
+        boundsInTab.Right <= tab.ActualWidth - 2.5,
+        $"{name} focus visual must retain an inset right edge ({boundsInTab.Right:F1} of {tab.ActualWidth:F1}).");
+    FrameworkElement renderRoot = VisualTreeHelper.GetParent(tab) as FrameworkElement ??
+        throw new InvalidOperationException($"{name} did not retain its visual tab-panel parent.");
+    Rect bounds = focusVisual.TransformToAncestor(renderRoot)
+        .TransformBounds(new Rect(0, 0, focusVisual.ActualWidth, focusVisual.ActualHeight));
+
+    (string Edge, Rect Region, bool Vertical)[] edgeRegions =
+    {
+        ("top", new Rect(bounds.Left + (bounds.Width * 0.2), bounds.Top - 1, bounds.Width * 0.6, 5), false),
+        ("left", new Rect(bounds.Left - 1, bounds.Top + (bounds.Height * 0.2), 5, bounds.Height * 0.6), true),
+        ("right", new Rect(bounds.Right - 4, bounds.Top + (bounds.Height * 0.2), 5, bounds.Height * 0.6), true),
+        ("bottom", new Rect(bounds.Left + (bounds.Width * 0.2), bounds.Bottom - 4, bounds.Width * 0.6, 5), false),
+    };
+    foreach (double scale in new[] { 1d, 1.25d, 1.5d, 2d })
+    {
+        RenderTargetBitmap bitmap = RenderElement(renderRoot, scale);
+        foreach ((string edge, Rect region, bool vertical) in edgeRegions)
+        {
+            int left = Math.Max(0, (int)Math.Floor(region.Left * scale));
+            int top = Math.Max(0, (int)Math.Floor(region.Top * scale));
+            int right = Math.Min(bitmap.PixelWidth, (int)Math.Ceiling(region.Right * scale));
+            int bottom = Math.Min(bitmap.PixelHeight, (int)Math.Ceiling(region.Bottom * scale));
+            int accentPixels = 0;
+            for (int y = top; y < bottom; y++)
+            {
+                for (int x = left; x < right; x++)
+                {
+                    Color candidate = GetBitmapPixel(bitmap, x, y);
+                    if (candidate.A > 0 && ColorDistance(candidate, accentBrush.Color) <= 48)
+                    {
+                        accentPixels++;
+                    }
+                }
+            }
+
+            int edgeLength = vertical ? bottom - top : right - left;
+            int minimumAccentPixels = Math.Max(2, (int)Math.Floor(edgeLength * 0.25));
+            Ensure(
+                accentPixels >= minimumAccentPixels,
+                $"{name} must render a continuous accent {edge} focus edge at {scale:P0} scale " +
+                $"({accentPixels} accent pixels, expected at least {minimumAccentPixels}).");
+        }
+    }
+}
+
+static Color GetBitmapPixel(BitmapSource bitmap, int x, int y)
+{
+    int pixelX = Math.Clamp(x, 0, bitmap.PixelWidth - 1);
+    int pixelY = Math.Clamp(y, 0, bitmap.PixelHeight - 1);
+    byte[] pixel = new byte[4];
+    bitmap.CopyPixels(new Int32Rect(pixelX, pixelY, 1, 1), pixel, 4, 0);
+    return Color.FromArgb(pixel[3], pixel[2], pixel[1], pixel[0]);
 }
 
 static void EnsureResultViewTabState(TabItem selected, TabItem unselected, string name)
@@ -3032,6 +3175,7 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("x:Key=\"MainTabCornerRadius\"", StringComparison.Ordinal), "Main navigation tabs must share top-only corner radii.");
     Ensure(xaml.Contains("x:Name=\"MainTabIndicator\"", StringComparison.Ordinal), "Main navigation tabs must expose the shared accent underline.");
     Ensure(xaml.Contains("x:Name=\"ResultViewTabChrome\"", StringComparison.Ordinal), "Result-view tabs must reserve unclipped visual chrome.");
+    Ensure(xaml.Contains("x:Name=\"ResultViewTabFocusVisual\"", StringComparison.Ordinal), "Result-view tabs must render keyboard focus through a dedicated inset overlay.");
     Ensure(xaml.Contains("x:Key=\"ResultColumnHeaderStyle\"", StringComparison.Ordinal), "Result table headers must expose restrained resize boundaries.");
     Ensure(xaml.Contains("Header=\"詳細をコピー    Ctrl+C\"", StringComparison.Ordinal), "Analyzer table and tree items must expose a shared copy action and visible shortcut.");
     Ensure(xaml.Contains("<KeyBinding Command=\"{x:Static local:MainWindow.CopyAnalyzerResultCommand}\"", StringComparison.Ordinal), "Analyzer copy menus must bind the displayed shortcut at the window level.");

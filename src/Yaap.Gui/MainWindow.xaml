@@ -103,6 +103,14 @@
                                                   RecognizesAccessKey="True"
                                                   TextElement.Foreground="{TemplateBinding Foreground}" />
                             </Border>
+                            <Border x:Name="ResultViewTabFocusVisual"
+                                    Margin="2"
+                                    BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+                                    BorderThickness="2"
+                                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                                    IsHitTestVisible="False"
+                                    SnapsToDevicePixels="True"
+                                    Visibility="Collapsed" />
                             <Border x:Name="ResultViewTabIndicator"
                                     Height="3"
                                     Margin="8,0"
@@ -125,8 +133,7 @@
                                 <Setter TargetName="ResultViewTabIndicator" Property="Visibility" Value="Visible" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
-                                <Setter Property="BorderThickness" Value="2" />
+                                <Setter TargetName="ResultViewTabFocusVisual" Property="Visibility" Value="Visible" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.55" />
