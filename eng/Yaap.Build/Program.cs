@@ -363,13 +363,32 @@ static async Task FormatAsync(string root)
         return;
     }
 
-    await RunAsync(root, "dotnet", new[]
+    // WPF workspace loading requires Windows targeting packs. Windows verifies the
+    // whole solution; other hosts verify every cross-platform workspace explicitly.
+    string[] workspaces = OperatingSystem.IsWindows()
+        ? new[] { Path.Combine(root, "YetAnotherAnalyzerProfiler.slnx") }
+        : new[]
+        {
+            Path.Combine(root, "eng", "Yaap.Build", "Yaap.Build.csproj"),
+            Path.Combine(root, "src", "Yaap.BuildLogger", "Yaap.BuildLogger.csproj"),
+            Path.Combine(root, "src", "Yaap.Core", "Yaap.Core.csproj"),
+            Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"),
+            Path.Combine(root, "tests", "Yaap.Tests", "Yaap.Tests.csproj"),
+            Path.Combine(root, "tests", "assets", "Fixture.Analyzers", "Fixture.Analyzers.csproj"),
+            Path.Combine(root, "tests", "assets", "Fixture.App", "Fixture.App.csproj"),
+            Path.Combine(root, "tests", "assets", "Local.Package", "Local.Package.csproj"),
+        };
+    foreach (string workspace in workspaces)
     {
-        "format",
-        Path.Combine(root, "YetAnotherAnalyzerProfiler.slnx"),
-        "--verify-no-changes",
-        "--no-restore",
-    });
+        await RunAsync(root, "dotnet", new[]
+        {
+            "format",
+            workspace,
+            "--verify-no-changes",
+            "--no-restore",
+        });
+    }
+
     NormalizePackageLockFiles(root);
 }
 
@@ -632,6 +651,7 @@ static async Task TestLocalFeedAsync(string root)
     string consumerObj = Path.Combine(root, "tests", "local-feed", "Consumer", "obj");
     string consumerPackages = Path.Combine(consumerObj, "local-feed-packages");
     string consumerLock = Path.Combine(consumerObj, "local-feed.packages.lock.json");
+    string consumerFramework = GetSdkMajor(root) >= 10 ? "net10.0" : "net8.0";
     Directory.CreateDirectory(feed);
     if (Directory.Exists(consumerPackages))
     {
@@ -659,6 +679,7 @@ static async Task TestLocalFeedAsync(string root)
         "-p:RestorePackagesWithLockFile=true",
         $"-p:NuGetLockFilePath={consumerLock}",
         $"-p:RestorePackagesPath={consumerPackages}",
+        $"-p:TargetFramework={consumerFramework}",
     });
     // A freshly packed archive has a host-specific content hash. Replay its disposable
     // lock in locked mode to test reproducibility without weakening tracked product locks.
@@ -670,6 +691,7 @@ static async Task TestLocalFeedAsync(string root)
         "--no-cache",
         $"-p:NuGetLockFilePath={consumerLock}",
         $"-p:RestorePackagesPath={consumerPackages}",
+        $"-p:TargetFramework={consumerFramework}",
     });
     await RunAsync(root, "dotnet", new[]
     {
@@ -679,6 +701,7 @@ static async Task TestLocalFeedAsync(string root)
         "Release",
         "--no-restore",
         $"-p:RestorePackagesPath={consumerPackages}",
+        $"-p:TargetFramework={consumerFramework}",
     });
 }
 
