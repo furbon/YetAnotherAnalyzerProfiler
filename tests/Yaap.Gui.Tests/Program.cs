@@ -126,8 +126,6 @@ static async Task WindowStartupSmokeAsync()
             window.Show();
             window.UpdateLayout();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
-            window.MinWidth = startupMinWidth;
-            window.MinHeight = startupMinHeight;
 
             TabControl mainTabs = (TabControl)window.FindName("MainTabs");
             TabControl analyzerViewTabs = (TabControl)window.FindName("AnalyzerViewTabs");
@@ -684,8 +682,7 @@ static async Task WindowStartupSmokeAsync()
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-table-context-menu");
                         analyzerTableMenu.IsOpen = false;
                         double analyzerNormalWidth = window.Width;
-                        window.Width = window.MinWidth;
-                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        SetWindowTestWidth(window, startupMinWidth);
                         Ensure(
                             analyzerScroll.ComputedHorizontalScrollBarVisibility == Visibility.Visible,
                             "A narrow Analyzer table must allow horizontally scrolling resized columns.");
@@ -693,8 +690,7 @@ static async Task WindowStartupSmokeAsync()
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-table-narrow");
-                        window.Width = analyzerNormalWidth;
-                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        SetWindowTestWidth(window, analyzerNormalWidth);
                         Ensure(
                             analyzerScroll.ComputedHorizontalScrollBarVisibility == Visibility.Collapsed,
                             "Restoring the Analyzer table width must remove unnecessary horizontal scrolling.");
@@ -841,14 +837,12 @@ static async Task WindowStartupSmokeAsync()
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-focused");
                         analyzerTreeView.Focus();
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
-                        window.Width = window.MinWidth;
-                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        SetWindowTestWidth(window, startupMinWidth);
                         CaptureWindow(
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-analyzer-tree-narrow");
-                        window.Width = analyzerNormalWidth;
-                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        SetWindowTestWidth(window, analyzerNormalWidth);
                         ScrollViewer treeScroll = FindVisualDescendants<ScrollViewer>(analyzerTreeView)
                             .OrderByDescending(viewer => viewer.ScrollableHeight)
                             .FirstOrDefault() ??
@@ -1408,8 +1402,7 @@ static async Task WindowStartupSmokeAsync()
                         historyFromDatePicker.IsDropDownOpen = false;
 
                         double normalWidth = window.Width;
-                        window.Width = window.MinWidth;
-                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        SetWindowTestWidth(window, startupMinWidth);
                         Ensure(
                             historyRefreshButton.TransformToAncestor(window).Transform(new Point()).X >=
                             historyPeriodPanel.TransformToAncestor(window).Transform(new Point(historyPeriodPanel.ActualWidth, 0)).X + 20,
@@ -1418,8 +1411,7 @@ static async Task WindowStartupSmokeAsync()
                             window,
                             captureDirectory,
                             $"{mode.ToString().ToLowerInvariant()}-history-narrow");
-                        window.Width = normalWidth;
-                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        SetWindowTestWidth(window, normalWidth);
                     }
                     else if (index == 3)
                     {
@@ -1465,8 +1457,7 @@ static async Task WindowStartupSmokeAsync()
                         captureDirectory,
                         $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
                     double fullWidth = window.Width;
-                    window.Width = window.MinWidth;
-                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                    SetWindowTestWidth(window, startupMinWidth);
                     EnsureElementWithin(
                         selectedContent,
                         mainTabs,
@@ -1482,8 +1473,7 @@ static async Task WindowStartupSmokeAsync()
                         window,
                         captureDirectory,
                         $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}-narrow");
-                    window.Width = fullWidth;
-                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                    SetWindowTestWidth(window, fullWidth);
                 }
 
                 SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualFailureRun(RunStatus.Partial));
@@ -1562,6 +1552,8 @@ static async Task WindowStartupSmokeAsync()
             Ensure(viewModel.TargetPath == recentTargetPath, "Clicking a recent target should select it.");
             Ensure(recentTargetsButton.IsChecked == false, "Selecting a recent target should reset the toggle button.");
             Ensure(!recentTargetsPopup.IsOpen, "Selecting a recent target should close the popup.");
+            window.MinWidth = startupMinWidth;
+            window.MinHeight = startupMinHeight;
             bool closed = false;
             window.Closed += (_, _) => closed = true;
             Stopwatch closeTimer = Stopwatch.StartNew();
@@ -2199,6 +2191,15 @@ static void EnsureAccessibleVerticalScrollBar(DependencyObject root, string name
     Ensure(thumb.ActualHeight >= 51, $"{name} scrollbar thumb must remain easy to grab with many items.");
     Ensure(thumbVisual.ActualWidth >= 11, $"{name} scrollbar thumb must be visibly wide enough to grab.");
     Ensure(thumbVisual.ActualHeight >= 47, $"{name} scrollbar thumb must be visibly tall enough to grab.");
+}
+
+static void SetWindowTestWidth(Window window, double width)
+{
+    window.MinWidth = Math.Min(window.MinWidth, width);
+    window.Width = width;
+    window.MinWidth = width;
+    window.UpdateLayout();
+    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
 }
 
 static void PumpUntil(Dispatcher dispatcher, Func<bool> condition, TimeSpan timeout)

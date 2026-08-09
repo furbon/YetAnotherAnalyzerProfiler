@@ -18,6 +18,8 @@ jobs:
     name: Verify Linux / ${{ matrix.framework }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      YAAP_REPOSITORY_ROOT: /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}
     strategy:
       fail-fast: false
       matrix:
@@ -33,11 +35,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Enable repository guards
         shell: sh
-        run: git -C "$GITHUB_WORKSPACE" config --local core.hooksPath .githooks
+        run: |
+          git -C "$YAAP_REPOSITORY_ROOT" config --local core.autocrlf false
+          git -C "$YAAP_REPOSITORY_ROOT" checkout-index --all --force
+          git -C "$YAAP_REPOSITORY_ROOT" config --local core.hooksPath .githooks
       - name: Verify
         shell: sh
         run: |
-          cd "$GITHUB_WORKSPACE"
+          cd "$YAAP_REPOSITORY_ROOT"
           sh ./eng/build.sh verify --framework "${{ matrix.framework }}"
 
   windows:
@@ -75,7 +80,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Enable repository guards
         shell: sh
-        run: git config --local core.hooksPath .githooks
+        run: |
+          git config --local core.autocrlf false
+          git checkout-index --all --force
+          git config --local core.hooksPath .githooks
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
@@ -105,6 +113,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Normalize non-Windows checkout
+        if: runner.os != 'Windows'
+        shell: pwsh
+        run: |
+          git config --local core.autocrlf false
+          git checkout-index --all --force
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1
