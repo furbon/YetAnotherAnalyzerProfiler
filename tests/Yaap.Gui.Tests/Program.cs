@@ -118,9 +118,16 @@ static async Task WindowStartupSmokeAsync()
             app = new App();
             app.InitializeComponent();
             MainWindow window = new(viewModel);
+            // Hosted runners can expose a virtual desktop narrower than the designed startup viewport.
+            double startupMinWidth = window.MinWidth;
+            double startupMinHeight = window.MinHeight;
+            window.MinWidth = window.Width;
+            window.MinHeight = window.Height;
             window.Show();
             window.UpdateLayout();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            window.MinWidth = startupMinWidth;
+            window.MinHeight = startupMinHeight;
 
             TabControl mainTabs = (TabControl)window.FindName("MainTabs");
             TabControl analyzerViewTabs = (TabControl)window.FindName("AnalyzerViewTabs");
