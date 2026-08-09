@@ -47,7 +47,6 @@ public partial class MainWindow : FluentWindow
         Closing += OnClosingAsync;
         Closed += (_, _) =>
         {
-            SystemThemeWatcher.UnWatch(this);
             viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             viewModel.Dispose();
         };
@@ -72,7 +71,16 @@ public partial class MainWindow : FluentWindow
         {
             await viewModel.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(20));
             _shutdownCompleted = true;
-            Close();
+            SystemThemeWatcher.UnWatch(this);
+            _ = Dispatcher.BeginInvoke(
+                () =>
+                {
+                    if (IsVisible)
+                    {
+                        Close();
+                    }
+                },
+                DispatcherPriority.Normal);
         }
         catch (TimeoutException exception)
         {
