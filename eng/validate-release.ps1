@@ -30,18 +30,27 @@ $releaseNotesPath = Join-Path $root $releaseNotesRelativePath
 if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
     throw "GitHub Release notes were not found for ${Tag}: $releaseNotesRelativePath"
 }
+$japaneseReleaseNotesRelativePath = ".github/release-notes/$Tag.ja.md"
+$japaneseReleaseNotesPath = Join-Path $root $japaneseReleaseNotesRelativePath
+if (-not (Test-Path -LiteralPath $japaneseReleaseNotesPath -PathType Leaf)) {
+    throw "Japanese Release notes were not found for ${Tag}: $japaneseReleaseNotesRelativePath"
+}
 
 $releaseNotes = Get-Content -LiteralPath $releaseNotesPath -Raw
 $escapedTag = [regex]::Escape($Tag)
 if ($releaseNotes -notmatch "(?m)^# YAAP $escapedTag\r?$") {
     throw "GitHub Release notes must start with the version heading '# YAAP $Tag'."
 }
+$japaneseReleaseNotes = Get-Content -LiteralPath $japaneseReleaseNotesPath -Raw
+if ($japaneseReleaseNotes -notmatch "(?m)^# YAAP $escapedTag\r?$") {
+    throw "Japanese Release notes must start with the version heading '# YAAP $Tag'."
+}
 
-if ($readme.Contains('はまだ公開されていません。')) {
+if ($readme.Contains('is not yet published.')) {
     throw 'README.md still describes the release as unpublished.'
 }
 
-if ($security.Contains('| 公開済みバージョン | なし |')) {
+if ($security.Contains('| Published version | None |')) {
     throw 'SECURITY.md still reports that no version is published.'
 }
 

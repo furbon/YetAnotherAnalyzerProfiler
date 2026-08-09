@@ -1,35 +1,30 @@
-﻿# 行動規範
+﻿# Code of Conduct
 
-YAAPプロジェクトは、経験、属性、立場にかかわらず、誰もが安全かつ建設的に参加できる場を目指します。
-Issue、レビュー、提案、チャット、イベントなど、プロジェクトに関係するすべての場でこの規範を適用します。
+The YAAP project is committed to providing a safe and constructive environment for everyone, regardless of experience, identity, or role. This code applies in every project-related space, including issues, reviews, proposals, chats, and events.
 
-## 期待する行動
+## Expected behavior
 
-- 技術ではなく人に向けた攻撃を避け、根拠と再現可能な事実を中心に議論する
-- 異なる経験、言語、利用環境、意見を尊重する
-- レビューでは問題、影響、改善案を具体的に示す
-- 間違いを認め、修正し、他者が学べる余地を作る
-- 秘密情報、個人情報、未公開の脆弱性を保護する
-- プロジェクトと利用者全体にとって最善の結果を優先する
+- Discuss evidence and reproducible facts; do not attack people.
+- Respect differences in experience, language, environment, and opinion.
+- Describe review concerns, impact, and possible improvements concretely.
+- Acknowledge and correct mistakes while leaving room for others to learn.
+- Protect confidential information, personal information, and undisclosed vulnerabilities.
+- Prefer outcomes that benefit the project and its users as a whole.
 
-## 許容しない行動
+## Unacceptable behavior
 
-- 差別、嫌がらせ、脅迫、侮辱、性的な言動
-- 個人情報、秘密情報、非公開の連絡内容を許可なく公開すること
-- 執拗な接触、議論の妨害、なりすまし
-- 脆弱性を、調整なく悪用または公開すること
-- その他、専門的な共同作業の場として不適切な行為
+- Discrimination, harassment, threats, insults, or sexualized conduct
+- Publishing personal, confidential, or private communications without permission
+- Persistent unwanted contact, disruption, or impersonation
+- Exploiting or disclosing a vulnerability without coordination
+- Other behavior inappropriate for a professional collaborative environment
 
-## 報告と対応
+## Reporting and enforcement
 
-問題行動は、行動規範専用の非公開連絡先
-[furbon.dev@gmail.com](mailto:furbon.dev@gmail.com)へ報告してください。公開Issueやセキュリティ脆弱性の
-窓口は使用しません。安全上の緊急性を伴う脆弱性は [セキュリティ方針](SECURITY.md) も参照してください。
+Report conduct concerns privately to [furbon.dev@gmail.com](mailto:furbon.dev@gmail.com). Do not use a public issue or the security-vulnerability channel for a conduct report. For vulnerabilities with immediate safety implications, also consult the [security policy](SECURITY.md).
 
-管理者は、報告者と対象者のプライバシーを尊重し、事実と影響を確認した上で、注意、コンテンツの修正・
-削除、一時的または恒久的な参加制限など、状況に応じた対応を行います。善意の報告への報復を認めません。
+Maintainers will respect the privacy of reporters and affected people, establish the facts and impact, and respond proportionally. Responses can include a warning, content correction or removal, and temporary or permanent participation restrictions. Retaliation against good-faith reports is not permitted.
 
-## 適用責任
+## Enforcement responsibility
 
-管理者とメンテナーは、自らこの規範を守り、一貫した判断を行う責任を負います。プロジェクトを代表する
-場での行動も同じ基準で扱います。
+Maintainers are responsible for following this code themselves and applying it consistently. The same standards apply when representing the project elsewhere.

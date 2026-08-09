@@ -7,7 +7,7 @@
     <ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>
     <ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>
     <RootNamespace>Yaap.Cli</RootNamespace>
-    <Description>C#のRoslyn Analyzer／Source Generatorをコンパイラー報告値で測定するクロスプラットフォームCLI。</Description>
+    <Description>Cross-platform CLI for profiling Roslyn analyzers and source generators from compiler-reported metrics.</Description>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>yaap</ToolCommandName>
     <PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>

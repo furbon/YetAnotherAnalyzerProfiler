@@ -1,56 +1,25 @@
-﻿# テスト方針
+﻿# Testing Policy
 
-`tests/Yaap.Tests` は外部テストフレームワークに依存しない実行型ハーネスで、統計、履歴、検索、
-保持、削除、比較、出力、入力検出、isolated 出力、失敗、部分結果、キャンセル、CLI、10万件集計を
-検証します。`tests/Yaap.Gui.Tests` は WPF 初期化、D&D、自動構成検出の競合とキャンセル、構成の
-履歴／Release／Debug／アルファベット順選択、空欄・未知構成の開始拒否、実行中を含む状態説明、
-WPF UIテーマ辞書とFluentWindowの統合、restoreを含む詳細設定、履歴の自動検索、ファジー日付、ラベルの
-自動保存とUndo／Redo、人間可読な比較選択、既存binlog解析、非同期コマンド、表示上のSource Generator制約、
-生成出力プレビューを切り詰めた場合の全件export案内を検証します。600件のAnalyzerと240件のGeneratorを
-実ウィンドウへ描画し、拘束されたビューポート、スクロール範囲、表示バー、マウスホイール、選択追従、
-全件より十分少ない実体化行・ツリーノード、つまみやすいスクロールバーの操作領域と表示サイズまで
-確認します。履歴読込み中も一覧の高さ、選択、スクロール位置が変わらないこと、不透明なカレンダーの
-月／年／年代表示、期間クリア、最小ウィンドウ幅、結果再読込み後のスクロールバーについても、
-ライト／ダーク両テーマの実ウィンドウで文字コントラストと操作領域を検証します。カレンダーの前後移動と
-期間クリアは通常、ホバー、押下、キーボードフォーカス、無効の各状態を描画し、アイコンのコントラスト、
-中央配置、32px以上の操作領域、アクセシビリティ名を確認します。
+`tests/Yaap.Tests` is an executable harness with no external test framework. It covers statistics, history, search, retention, deletion, comparison, export, target discovery, isolated output, failure, partial results, cancellation, CLI behavior, and aggregation of 100,000 records.
 
-失敗回帰では、cleanが非0終了した場合にbuildを開始せず失敗runを保存すること、測定buildの失敗と
-途中反復の部分結果を保存すること、実行コマンド、作業ディレクトリ、stdout／stderr末尾、切り詰め表示、
-完全ログ、工程別の対処を確認します。250行を出力する実プロセスでメモリ上の末尾200行制限を検証し、
-完全ログは行単位で欠落なく保存されることを確認します。CLIの通常表示／JSONとGUIの失敗／部分結果表示も
-同じ診断で検証し、GUIは失敗状態の全タブと部分結果のトラブルシュートをライト／ダークで描画します。
+`tests/Yaap.Gui.Tests` covers WPF initialization, drag and drop, automatic configuration discovery races/cancellation, history/Release/Debug/alphabetical selection, rejection of empty or unknown configurations, running-state descriptions, WPF UI theme/FluentWindow integration, advanced settings including restore, debounced history search, flexible dates, label autosave and Undo/Redo, readable comparison selection, existing-binlog analysis, asynchronous commands, source-generator display limits, and complete-export guidance after preview truncation.
 
-生成出力manifestの回帰試験では、各Generatorの決定的な先頭100件、全件の集計値、
-`OutputsTruncated`、NDJSONの全件ストリーム、読込みキャンセル、CSV／JSON／Markdownへの全件exportを
-検証します。
+The GUI harness renders 600 analyzers and 240 generators in real windows and verifies bounded viewports, scroll ranges, visible bars, mouse-wheel behavior, selection following, substantially fewer realized rows/tree nodes than total items, and usable scrollbar tracks/thumbs. It also checks that history loading preserves list height, selection, and scroll position; opaque calendar month/year/decade views; date clearing; minimum width; and post-reload scrollbars. Real light/dark windows verify contrast and hit areas. Calendar navigation and clear actions render normal, hover, pressed, keyboard-focus, and disabled states and verify icon contrast, centering, at least 32-pixel hit areas, and accessible names.
 
-反復checkpointの回帰試験では、最終保存後の完全な生サンプル復元、失敗反復の診断保持、成功サンプルだけの
-統計、最終成功時点の生成物、破損時のYAAP4001を確認します。scale試験は集約メモリが反復数ではなく
-一意な指標数に比例し、履歴の総書込みが反復データ量に対して線形であることを対象にします。
+Failure regressions verify that nonzero clean prevents build and stores a failed run; a measured-build failure and an interrupted iteration preserve partial results; and diagnostics contain command, working directory, stdout/stderr tail, truncation, complete log, and stage-specific advice. A real process emitting 250 lines verifies the in-memory final-200 limit while complete logs retain every line. CLI normal/JSON output and GUI failure/partial displays use the same diagnostics. GUI tests render all tabs in failure state and the partial-result Troubleshooting state in both themes.
 
-`tests/assets` の Analyzer／Source Generator fixture を実際に restore／build し、binlog 解析、
-コンパイラレポート、生成ファイルを通した統合回帰を実行します。`tests/local-feed` はパッケージを
-ローカルで生成し、`NuGet.Config` の `<clear />`、private-feed相当の相対 source、locked restore、
-完全オフライン restore を検証します。これらの hermetic fixture がCIの正本です。
+Generated-output manifest tests cover each generator's deterministic first 100, complete totals, `OutputsTruncated`, all-record NDJSON streaming, read cancellation, and complete CSV/JSON/Markdown export.
 
-.NET 10 SDKの検証レーンでは、YAAPのテスト実行体を `net8.0` として起動した統合試験も追加で
-実行します。これにより、新しいSDKが生成するbinlogを古いYAAPランタイムが直接読めない組合せでも、
-SDK側Loggerを使った測定が完了することを回帰検証します。
+Iteration-checkpoint tests cover reconstruction of all raw samples, failed-iteration diagnostics, statistics from successful samples only, final successful generated output, and YAAP4001 for corruption. Scale tests require aggregation memory to grow with unique metrics rather than iteration count and total history writes to remain linear in recorded data.
 
-GitHub Actions と GitLab CI は .NET 8／10、Windows、Linux、macOSを対象に同じ `eng` ハーネスを
-呼び出します。WPFはWindowsだけで、CLIの self-contained single-file 配布は対象OSで検証します。
-WindowsではGUIテストをDebugで両TFMに対して実行し、STAで `MainWindow` を生成、表示、レイアウト、
-終了します。GUIを変更した場合は[GUI視覚回帰テスト](gui-visual-testing.md)の専用コマンドで、
-ライト／ダーク両テーマの全タブと影響状態を比較します。publish検証は成果物の厳密な許可リスト、同梱文書、CLIのversion／help、
-Windows GUIの起動と終了まで確認します。
-NuGet tool packは両TFMの実行物、BuildLogger、README、第三者通知を検査し、ローカルfeedから実際に
-インストールして `version`／`help` を確認します。release workflowはタグと `eng/Version.props` の不一致を
-公開前に拒否します。
+Integration tests restore and build the analyzer/source-generator fixtures in `tests/assets` and exercise binlog parsing, compiler reports, and generated files. `tests/local-feed` builds a local package and verifies `<clear />`, a relative private-feed equivalent, locked restore, and fully offline restore. These hermetic fixtures are CI-authoritative.
 
-`verify` はlocked restoreに先立って通常の強制restore、Debugの暗黙restore付きrebuild、利用可能なWindowsでは
-Visual Studio同梱MSBuildによるlock file所有プロジェクトと参照グラフのrebuildも実行し、すべての `packages.lock.json` のSHA-256が
-復元前後で一致することを確認します。lock fileはNuGet自身の出力に合わせたUTF-8（BOMなし）／CRLFを
-正本とします。CLIの復元IDは評価時の`PackageId`である`YetAnotherAnalyzerProfiler.Tool`へ統一し、
-配布コマンド、アセンブリ出力名、deps／runtimeconfig名は`yaap`を維持します。復元ターゲット実行中に
-`PackageId`を変更してはいけません。Visual Studioの設計時復元はその変更を参照せず、lock fileが往復するためです。
+The .NET 10 lane also starts the YAAP test executable as `net8.0`. This verifies that SDK-hosted logging completes a profile when an older YAAP runtime cannot directly read a newer SDK's binlog.
+
+GitHub Actions and GitLab CI invoke the same `eng` harness on .NET 8/10 and Windows, Linux, and macOS. WPF is Windows-only; self-contained single-file CLI output is verified on its target OS. Windows runs GUI tests in Debug for both TFMs and creates, shows, lays out, and closes `MainWindow` on STA. GUI changes additionally require the [GUI visual regression command](gui-visual-testing.md) and manual comparison of every affected state in both themes.
+
+Publish verification enforces an exact artifact allowlist, bundled documentation, CLI version/help, and Windows GUI startup/close. NuGet pack checks both TFM payloads, BuildLogger, README, and notices, installs from a local feed, and runs `version` and `help`. The release workflow rejects a tag that differs from `eng/Version.props`.
+
+Before locked restore, `verify` runs ordinary forced restore, Debug rebuild with implicit restore, and—when available on Windows—Visual Studio MSBuild rebuild of every lock-owning project and its reference graph. Every `packages.lock.json` SHA-256 must remain unchanged. Lock files follow NuGet's UTF-8-without-BOM/CRLF output.
+
+The CLI restore identity is the evaluation-time `PackageId`, `YetAnotherAnalyzerProfiler.Tool`; executable, assembly, deps, and runtimeconfig use `yaap`. Do not mutate `PackageId` during a restore target because Visual Studio design-time restore will not observe it and lock files will churn.

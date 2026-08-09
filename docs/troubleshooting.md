@@ -1,84 +1,57 @@
-﻿# トラブルシュート
+﻿# Troubleshooting
 
-## 「測定開始」が無効
+[日本語](ja/troubleshooting.md)
 
-画面下部の状態表示を確認してください。対象の未指定、対象・構成の検出中、無効なパス、構成未選択を
-区別して、次に必要な操作を表示します。測定中はエラーではなく「測定中: `<構成>` 構成」と進捗を
-表示します。正常に検出できると構成が自動選択され、「測定可能: `<構成>` 構成」と表示されます。
+## Start profiling is disabled
 
-構成一覧を検出できない場合は、対象ファイルが存在する `.sln`、`.slnx`、`.csproj` であることと、
-`.sln` の構文、またはXML形式である `.slnx`／`.csproj` の構文が正しいことを確認してください。履歴場所や分離出力先を確認する場合は「詳細設定」を展開します。
+Read the bottom status. It distinguishes a missing target, target/configuration discovery, invalid path, empty configuration, and an active profile, and states the next required action. Successful discovery selects a configuration automatically and reports that profiling is ready.
 
-## YAAP1001: 入力が無効
+If configuration discovery fails, confirm that the input exists, has a `.sln`, `.slnx`, or `.csproj` extension, and contains valid solution syntax or XML. Expand Advanced settings to inspect history and isolated-output paths.
 
-対象が存在し、拡張子が `.sln`、`.slnx`、`.csproj` のいずれかであることを確認します。
-isolated 出力先は対象ディレクトリ外を指定してください。
+## YAAP1001: Invalid input
 
-## YAAP1002: 条件が無効
+Confirm that the target exists and is a `.sln`, `.slnx`, or `.csproj`. An isolated-output path must be outside the target directory.
 
-回数や保持件数の範囲、開始日と終了日の順序、比較対象、出力拡張子などを確認します。YAAP1001は
-対象ファイルを開けない場合、YAAP1002は開いた後の選択・値・組合せが無効な場合に使用します。
+## YAAP1002: Invalid conditions
 
-## YAAP2001: restore／clean／build／profile が失敗
+Check iteration and retention ranges, date ordering, comparison selections, and output extensions. YAAP1001 means the target file cannot be opened; YAAP1002 means a selection, value, or combination is invalid after opening it.
 
-CLIは診断コードと概要に続けて、実行コマンド、作業ディレクトリ、完全ログ、標準出力／標準エラー出力の
-末尾、推奨する対処を表示します。GUIは画面下部を失敗時は赤、部分結果時は黄で表示し、失敗した
-`dotnet clean` または `dotnet build` を示します。「トラブルシュート」タブで診断を選ぶと、推奨する
-対処の全文と、選択してコピーできる詳細・ログ欄を確認できます。
+## YAAP2001: restore, clean, build, or profile failed
 
-完全ログは履歴のrunディレクトリにある `logs` 配下へ、`restore.log`、`clean-001.log`、
-`build-001.log` などの名前で出力中に逐次保存されます。失敗またはキャンセルされたコマンドのログを保持し、診断内の
-出力は標準出力／標準エラー出力それぞれ末尾200行までです。「前方の行は完全ログにのみ記録」と表示された
-場合、最初のエラーを完全ログで確認してください。ログを記録できなかった場合も、その理由を診断に残します。
+The CLI prints the diagnostic code and summary followed by the command, working directory, complete log, stdout/stderr tail, and suggested action. The GUI shows failure in red and partial results in yellow, including the failed `dotnet clean` or `dotnet build` stage. Select the diagnostic in Troubleshooting to read complete suggested action and copy details or logs.
 
-まず、診断に記録された作業ディレクトリで、記録されたコマンドをそのまま再実行します。restore失敗は
-private feed の資格情報プロバイダー、`NuGet.Config`、パッケージソース、lock file、ネットワーク接続、
-選択SDKを確認してください。YAAP はこれらを置き換えず、通常の dotnet 動作を尊重します。
+Complete logs stream under `logs` in the history run as `restore.log`, `clean-001.log`, `build-001.log`, and similar names. Failed and canceled commands retain complete logs. Diagnostic stdout and stderr are limited to their final 200 lines. When earlier lines are available only in the complete log, inspect it for the first error. A log-write failure is itself retained in diagnostics.
 
-clean失敗は、`bin`／`obj` または分離出力先をIDE、テストランナー、別のbuildが使用していないか、
-ファイルが読み取り専用でないか、削除権限と空き容量があるか、カスタム `Clean` targetが失敗していないかを
-確認します。原因を取り除いてから、記録された `dotnet clean` を再実行します。
+First rerun the recorded command from its recorded working directory. For restore failures, check private-feed credential providers, `NuGet.Config`, package sources, lock files, network access, and selected SDK. YAAP does not replace them; it preserves ordinary dotnet behavior.
 
-build失敗は、完全ログの最初の `error` またはMSBuildエラーコードから確認します。記録された構成と
-対象フレームワークが存在するか、`global.json` とインストール済みSDKが一致するか、restore済みの参照と
-パッケージが有効か、カスタムMSBuild targetが失敗していないかを確認します。測定用buildは
-`--no-restore` なので、パッケージが原因なら先に記録された条件で `dotnet restore` を成功させます。
+For clean failures, check whether an IDE, test runner, or another build holds `bin`, `obj`, or the isolated path. Check read-only attributes, delete permissions, free space, and custom `Clean` targets. Remove the cause before rerunning the recorded `dotnet clean`.
 
-## YAAP2002: キャンセル後も子プロセスが終了しない
+For build failures, locate the first error or MSBuild code in the complete log. Verify the recorded configuration and target framework, `global.json` and installed SDK, restored references, packages, and custom targets. Measured builds use `--no-restore`; when packages are the cause, first complete restore under the recorded conditions.
 
-YAAPはプロセスツリーを停止して終了を待ち、再試行しても終了しない場合はこの診断を保存します。GUIは
-安全に終了したと誤認せず、ウィンドウを閉じません。診断のプロセスIDをOSの管理ツールで確認して終了し、
-対象がファイルや別プロセスを保持し続ける原因を取り除いてください。
+If only isolated mode fails, check custom targets for fixed `bin` or `obj` assumptions. Make the target support `--artifacts-path` or use normal output only in an environment where target writes are acceptable.
 
-isolated モードだけ失敗する場合、カスタム target が `bin`／`obj` を固定参照していないか確認し、
-対象側を `--artifacts-path` 対応にするか、変更を許容できる環境で通常モードを選択します。
+## YAAP2002: Child process remained after cancellation
 
-## YAAP3001: binlog／レポートを解析できない
+YAAP terminates the process tree and waits. If repeated termination cannot stop it, YAAP stores YAAP2002 and the GUI does not falsely report a safe exit or close. Use operating-system tools to inspect and terminate the recorded process ID, then remove the target behavior that keeps files or processes alive.
 
-C# コンパイルが実行されたか、利用SDKが `/reportanalyzer` をサポートするか確認します。壊れた
-binlog は再測定してください。レポート形式が未知の場合は部分結果と該当行が診断に残ります。
-通常の測定は対象SDK内のLoggerからコンパイラ情報を取得するため、YAAPを .NET 8 で起動して
-.NET 10 SDKの対象を測定する場合も、binlog形式の差には依存しません。`yaap analyze` で既存の
-binlogだけを直接読む場合は、生成元と同じか新しい世代のYAAPを使用してください。
+## YAAP3001: Could not parse binlog or report
 
-## YAAP5001: キャンセル
+Confirm that C# compilation occurred and the SDK supports `/reportanalyzer`. Recreate a damaged binlog. Unknown report rows produce a partial result and retain the affected line.
 
-キャンセルは子プロセスツリーを停止し、取得済み測定を履歴に保持します。次回の測定は新しい
-run IDで開始されます。
+Normal profiling obtains compiler data through a logger hosted by the target SDK, so a YAAP process on .NET 8 can measure a target built with the .NET 10 SDK without parsing that SDK's binlog. Direct `yaap analyze` of an existing binlog should use the same or a newer YAAP generation than the SDK that created it.
 
-## YAAP4001: 履歴を読み書きできない
+## YAAP5001: Canceled
 
-測定中のrunは削除できません。測定の完了またはキャンセル後に再実行してください。履歴ディレクトリの
-アクセス権、空き容量、他プロセスによるロックも確認します。保持件数の自動整理は実行中のrunを除外し、
-完了したrunの件数として数えます。
+Cancellation terminates the child process tree and preserves collected measurements in history. A later profile uses a new run ID.
 
-## YAAP6001: エクスポートできない
+## YAAP4001: Could not read or write history
 
-出力先ディレクトリの存在、アクセス権、空き容量、他アプリによるファイルロックを確認します。
-エクスポートは同じディレクトリの一時ファイルへ書いてから置換するため、失敗またはキャンセル時に
-既存ファイルを途中までの内容で上書きしません。
+An active run cannot be deleted. Retry after it completes or is canceled. Check history-directory permissions, free space, and locks held by other processes. Retention cleanup excludes active runs and counts completed runs.
 
-## 比較警告
+## YAAP6001: Could not export
 
-SDK、OS、CPU、構成、TFMが異なる結果は参考値です。同じマシン、SDK、構成、反復条件で再測定
-すると、並列 Analyzer によるばらつきを抑えた比較になります。
+Check that the output directory exists and has permissions and free space, and that another application does not lock the destination. Export writes a temporary file in the same directory and replaces the destination, so failure or cancellation does not overwrite an existing file with partial content.
+
+## Comparison warnings
+
+Results with different SDK, operating system, CPU, configuration, or TFM are advisory. Reprofile on the same machine with the same SDK, configuration, and iteration conditions to reduce variation from concurrent analyzer execution.

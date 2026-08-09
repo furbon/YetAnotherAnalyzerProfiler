@@ -1,19 +1,15 @@
-﻿# 利用ガイド
+﻿# Usage Guide
+
+[日本語](ja/usage.md)
 
 > [!WARNING]
-> YAAP はサンドボックスではありません。対象のMSBuild task、Analyzer、Source Generatorを実行し、
-> 測定レポート取得のためコンパイラー呼び出しも再実行します。信頼できない対象を測定しないでください。
-> `--isolated` は標準出力場所を分けますが、任意の書込みや通信を防止しません。詳しくは
-> [セキュリティ方針](../SECURITY.md#測定対象との信頼境界)を参照してください。
+> YAAP is not a sandbox. It runs target MSBuild tasks, analyzers, and source generators and replays compiler invocations to obtain reports. Do not profile an untrusted target. `--isolated` separates standard output locations but cannot prevent arbitrary writes or communication. See the [security policy](../SECURITY.md#trust-boundary-for-profiled-targets).
 
-## 対応環境
+## Supported environment
 
-CLI は Windows、macOS、Linux の .NET 8／10 で動作します。GUI は Windows の WPF
-アプリケーションです。入力は、通常の C# アプリケーションを含む `.sln`、`.slnx`、
-`.csproj` です。
+The CLI runs on .NET 8 or .NET 10 on Windows, macOS, and Linux. The GUI is a Windows WPF application. Inputs are `.sln`, `.slnx`, and `.csproj` files containing ordinary C# applications.
 
-.NET 8 SDK は `.slnx` を直接ビルドできないため、YAAP は履歴の作業領域に一時的な互換
-`.sln` を生成して同じ C# プロジェクト群を測定します。対象リポジトリには書き込みません。
+The .NET 8 SDK cannot build `.slnx` directly. YAAP creates a temporary compatibility `.sln` in the history workspace containing the same C# projects. It does not write this compatibility solution into the target repository.
 
 ## CLI
 
@@ -30,75 +26,38 @@ yaap analyze <binlog>
 yaap version
 ```
 
-`warm` はウォームアップ1回、測定3回、各測定前の clean が既定です。`cold` は
-ウォームアップなし、測定3回、各測定前の clean です。`custom` では回数を指定します。
-restore が有効な場合は最初に一度だけ実行され、対象の `NuGet.Config` 階層、認証プロバイダー、
-private feed、lock file を通常の `dotnet restore` と同じ方法で利用します。
+Warm mode defaults to one warmup, three measured iterations, and a clean before every measurement. Cold mode uses no warmup, three measurements, and a clean before each. Custom mode configures the counts. When restore is enabled, it runs once before profiling and uses the target's normal `NuGet.Config` hierarchy, credential providers, private feeds, and lock files.
 
-分離出力は既定で有効です。`--isolated` は明示的に有効化し、`--no-isolated` は無効化します。
-有効な場合は restore、clean、build のすべてに .NET の `--artifacts-path` を渡します。
-出力先は対象ディレクトリ外でなければなりません。カスタム target が従来の `bin`／`obj`
-を固定参照する場合はエラーになり、通常出力へ暗黙に切り替わることはありません。
+Isolated output is enabled by default. `--isolated` enables it explicitly; `--no-isolated` disables it. YAAP passes .NET's `--artifacts-path` to restore, clean, and build. The output must be outside the target directory. A custom target that assumes fixed `bin` or `obj` paths fails explicitly; YAAP does not silently fall back to normal output.
 
-終了コードは、成功 `0`、使用方法 `2`、失敗 `3`、部分結果 `4`、キャンセル `130` です。
-通常表示で失敗または部分結果になった場合は、各診断のコード、概要、実行コマンド、作業ディレクトリ、
-完全ログ、出力末尾、推奨する対処を標準出力へ表示します。`--json` では同じ情報をrunの `diagnostics` に
-出力します。完全ログは指定した履歴場所のrunディレクトリに残るため、後から `history show` でも
-診断とログパスを確認できます。
+Exit codes are success `0`, usage `2`, failure `3`, partial result `4`, and cancellation `130`. For a failure or partial result, normal output includes each diagnostic's code, summary, command, working directory, complete-log path, output tail, and suggested action. `--json` includes the same information in the run's `diagnostics`. Complete logs remain under the configured history run and are available through `history show`.
 
-## 履歴と比較
+## History and comparison
 
-履歴は既定でユーザーのローカルアプリケーションデータ配下に保存されます。`--history`
-で変更できます。`history list` は文字列、状態、開始・終了日時で絞り込みでき、詳細は
-`history show` のときに遅延読み込みされます。削除には `--force` が必要です。
+History is stored under the user's local application-data directory by default and can be changed with `--history`. `history list` filters by text, status, and start/end time; `history show` loads details lazily. Deletion requires `--force`.
 
-比較では Analyzer／Generator の増減、追加・削除、生成ファイル数・バイト数の差を表示し、
-SDK、OS、CPU、構成、対象フレームワークが異なる場合は比較可能性の警告を出します。
+Comparison reports analyzer/generator changes, additions/removals, and generated-file count/byte differences. It warns when SDK, operating system, CPU, configuration, or target frameworks differ.
 
-保存済み履歴のCSV／JSON／Markdown exportは、ディスク上の生成出力manifestを逐次読み、生成ファイルを
-全件出力します。メモリ上のrunデータに含まれる生成ファイル一覧は各Generatorの決定的な先頭100件に
-制限されますが、ファイル数、バイト数、行数の集計値は常に全件を表します。
+CSV, JSON, and Markdown export of stored history streams the on-disk generated-output manifest and includes every generated file. In-memory run data limits each generator's file list to a deterministic first 100, while its count, bytes, and line totals always cover all files.
 
 ## GUI
 
-GUI では対象選択、構成の自動検出、測定モード、isolated 出力、進捗、キャンセル、履歴検索、
-結果の読込み、比較、削除、CSV／JSON／Markdown 出力を操作できます。大量データ用の行・列・ツリー
-仮想化とRecyclingを有効にし、表とツリーはマウスホイール、スクロールバー、方向キー、Page Up／Downで
-移動できます。ビルドや解析、履歴I/OはUIスレッド外で実行します。
+The GUI provides target selection, automatic configuration discovery, profiling mode, isolated output, progress, cancellation, history search/load, comparison, deletion, and CSV/JSON/Markdown export. Row, column, and tree virtualization use recycling for large data. Tables and trees support the mouse wheel, scrollbars, arrow keys, and Page Up/Down. Build, parsing, and history I/O run outside the UI thread.
 
-対象欄へ `.sln`、`.slnx`、`.csproj` を1つドロップするか、参照ボタンまたは文字入力で指定
-すると、変更後に構成を自動検出します。入力途中の検出は短時間待機し、次の変更があれば古い
-検出をキャンセルするため、手動の検出操作は不要です。
+Drop one `.sln`, `.slnx`, or `.csproj` onto the target field, choose Browse, or type a path. Configuration discovery starts automatically after a short debounce and cancels obsolete discovery when the input changes.
 
-構成は、同じ対象の最新履歴で使った構成が現在も存在すればそれを選びます。該当する履歴が
-なければ `Release`、`Debug`、その他の構成名のアルファベット順で自動選択します。検出一覧にない
-カスタム構成も直接入力して開始でき、その場合は未検出であることを明示して入力名のままビルドします。
-空欄では開始できません。画面下部には「測定可能」、準備に必要な操作、または「測定中」と、検出・測定
-処理の進捗を常に表示します。
+If available, selection prefers the configuration used by the latest history for the same target, then Release, Debug, and alphabetical order. A custom configuration not in the discovered list can be typed and is built by that exact name after an explicit warning. An empty configuration cannot start. The bottom status always shows Ready to profile, the required preparation, or Profiling plus discovery/profile progress.
 
-外観はWPF UIのFluentテーマを使用し、起動時とWindows側の変更時にシステムテーマへ自動追従します。
-上部のテーマ選択で「自動」、「ライト」、「ダーク」をいつでも切り替えられ、ウィンドウ全体と
-ポップアップを含むコントロールへ一貫して反映されます。履歴場所、保持件数、restore、clean、分離出力、
-分離出力先は「詳細設定」を展開した場合だけ表示します。
+The GUI uses WPF UI's Fluent theme. Auto follows the system theme at startup and on Windows changes; Light and Dark can be selected at any time and apply consistently to the complete window and popups. History location, retention, restore, clean, isolated output, and artifacts path appear only when Advanced settings is expanded.
 
-Source Generator の表示時間は Generator アセンブリ／型全体の値です。生成ファイルには
-件数、サイズ、行数、相対パスだけを表示し、Roslyn が提供しないファイル単位時間は表示しません。
-各Generatorの生成ファイル一覧は先頭100件のプレビューです。全件がある場合はその旨を行詳細に表示し、
-全件はCSV／JSON／Markdown exportで確認できます。
+Source-generator time represents the complete generator assembly/type. Generated files display only count, size, lines, and relative path because Roslyn does not report per-file time. The first 100 generated files form the preview; complete CSV/JSON/Markdown export is identified when more exist.
 
-GUIの履歴タブは、検索文字や状態を変更すると短い待機後に自動で絞り込みます。開始日と終了日は
-不透明なカレンダーから選択でき、`2026/01/31`、`2026-01-31`、`31/Jan/2026` などの入力も受け付けます。
-履歴をダブルクリックするか右クリックメニューの「読み込み」を選ぶと、一覧の位置や選択を変えずに結果を
-表示します。削除も右クリックメニューから行います。
-任意のラベルは入力後に自動保存され、この起動中に行ったラベル編集だけをCtrl+Z／Ctrl+Yで元に戻す／やり直すことができます。別のYAAPから同じ履歴を編集した場合は、一覧を更新して最新値を確認してから編集してください。内部IDは
-画面に表示せず、比較タブではラベル、日時、対象、構成で2つの履歴を選択します。
+The History tab debounces text/status filters. Start and end dates can be selected from an opaque calendar or entered in forms such as `2026/01/31`, `2026-01-31`, and `31/Jan/2026`. Double-click a run or choose Load without disturbing list position and selection. Delete is available from the context menu.
 
-履歴一覧の表示上限は設定タブにあり、1～10000件、既定500件です。同じ場所から履歴フォルダーを開くか、
-確認後にすべての履歴を削除できます。「出力」タブは標準ダイアログでJSON、CSV、Markdownと保存先を
-同時に選びます。手入力する場合も、`.json`、`.csv`、`.md`、`.markdown`の拡張子が必須です。
-既存binlog解析と診断一覧は独立した「トラブルシュート」タブにあります。
-測定が失敗すると画面下部に失敗工程と診断コードを赤で、部分結果は黄で表示します。トラブルシュートでは
-診断一覧から項目を選び、折り返して表示される推奨する対処と、スクロール・選択・コピー可能な詳細／ログを
-確認できます。
-GUIのキャンセルボタンは、測定、履歴I/O、binlog解析、比較、exportのうち実行中の処理を停止できます。
-CLIとGUIの表示媒体に応じた操作差は [機能対応表](index.md#cliとguiの機能対応表)を参照してください。
+Optional labels save automatically. Ctrl+Z/Ctrl+Y undo or redo only label edits made in the current application session. If another YAAP instance edits the same history, refresh before editing. Internal IDs are hidden; Comparison selects two runs by label, time, target, and configuration.
+
+The history display limit is 1–10000 in Settings and defaults to 500. Settings can also open the history directory or, after confirmation, delete all history. Export chooses JSON, CSV, or Markdown and the destination in one standard dialog; manually typed destinations require `.json`, `.csv`, `.md`, or `.markdown`.
+
+Existing-binlog analysis and diagnostics live in the Troubleshooting tab. A failed operation displays its stage and diagnostic code in red at the bottom; a partial result uses yellow. Selecting a diagnostic shows wrapped suggested action plus scrollable, selectable, copyable details and logs.
+
+The GUI Cancel button can stop the active profile, history I/O, binlog analysis, comparison, or export. See the [feature matrix](index.md#cli-and-gui-feature-matrix) for medium-specific differences.

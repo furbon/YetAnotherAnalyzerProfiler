@@ -1,1 +1,5 @@
 ﻿blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/furbon/YetAnotherAnalyzerProfiler/security/advisories/new
+    about: Use the private reporting route. Do not disclose vulnerabilities in a public issue.

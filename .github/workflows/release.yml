@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Release tag matching eng/Version.props (for example, v0.1.0)
+        description: Release tag matching eng/Version.props (for example, v1.2.3)
         required: true
         type: string
       confirm_publish:

@@ -1,23 +1,21 @@
-﻿# YAAPへの貢献
+﻿# Contributing to YAAP
 
-バグ報告、文書改善、テスト追加、実装提案を歓迎します。セキュリティ上の問題は公開Issueへ書かず、
-[セキュリティ方針](SECURITY.md)に従ってください。
+Bug reports, documentation improvements, tests, and implementation proposals are welcome. Submissions may be written in English or Japanese. Do not disclose security issues in public issues; follow the [security policy](SECURITY.md).
 
-## 変更を始める前に
+## Before starting a change
 
-1. [行動規範](CODE_OF_CONDUCT.md)を確認します。
-2. 既存のIssueと [CHANGELOG](CHANGELOG.md) を確認します。
-3. 大きな仕様変更、互換性変更、新しい依存関係は、実装前にIssueで目的と代替案を相談します。
-4. リポジトリの `AGENTS.md` と、存在する場合はローカルの `.docs_agent/WORKFLOW.md` を確認します。
+1. Read the [Code of Conduct](CODE_OF_CONDUCT.md).
+2. Search existing issues and the [changelog](CHANGELOG.md).
+3. Discuss large specification changes, compatibility changes, and new dependencies in an issue before implementation, including the goal and alternatives.
+4. Read the repository's `AGENTS.md` and, when present, the local `.docs_agent/WORKFLOW.md`.
 
-ホスティング先のURLがこのリポジトリに設定されていない環境では、架空のIssue／連絡先を推測せず、
-リポジトリ管理者が指定した経路を使用してください。
+When a local copy does not identify its hosting URL, do not invent an issue tracker or contact. Use the route specified by the repository maintainer.
 
-## 開発環境
+## Development environment
 
-- .NET SDK 8.0.423 と 10.0.302（`global.json` とCIで固定）
+- .NET SDK 8.0.423 and 10.0.302, pinned by `global.json` and CI
 - Git
-- GUIのビルド、テスト、目視確認にはWindows
+- Windows for GUI builds, tests, and visual inspection
 
 ```powershell
 ./eng/install-git-hooks.ps1
@@ -28,37 +26,33 @@
 sh ./eng/build.sh verify
 ```
 
-詳しくは [開発ガイド](docs/development.md) と [テスト方針](docs/testing.md) を参照してください。
+See the [development guide](docs/development.md) and [testing policy](docs/testing.md) for details.
 
-## ブランチと変更範囲
+## Branches and scope
 
-- すべての変更は、管理者が準備した最新の `develop/v...` から `agent/<変更名>` を作成します。`agent` は自動化専用という意味ではなく、pre-commit guard が許可する作業ブランチ接頭辞です。
-- `main`、`master`、`develop/*` へ直接コミットしません。
-- 関係のない整形、生成物、ローカルパス、binlog、履歴、秘密情報を変更へ含めません。
-- コミットメッセージはConventional Commitsを使用します。
-- pushやmergeはリポジトリ管理者の手順と承認に従います。
+- Create `agent/<change-name>` from the latest maintainer-prepared `develop/v...` branch. The `agent` prefix is the work-branch prefix accepted by the pre-commit guard; it does not mean that only automation may contribute.
+- Do not commit directly to `main`, `master`, or `develop/*`.
+- Do not include unrelated formatting, generated output, local paths, binlogs, history, or secrets.
+- Use Conventional Commits.
+- Follow the maintainer's authorization and procedure for pushes and merges.
 
-## 実装と文書
+## Implementation and documentation
 
-- `Yaap.Core` と `Yaap.Cli` はクロスプラットフォームを維持し、WPF依存は `Yaap.Gui` に限定します。
-- .NET 8と.NET 10の両方を維持します。
-- ビルド、解析、履歴、比較、exportは非同期・キャンセル可能にします。
-- 大きなbinlogや生成出力を全件メモリへ読み込みません。
-- 計測仕様、CLI help、GUI、README、利用ガイド、CHANGELOGを同じ変更で同期します。
-- 人が読む文書とGUI文言は日本語、コード識別子とエージェント指示は英語を使用します。
-- ソース形式はリポジトリの `.editorconfig` と `AGENTS.md` に従います。
+- Keep `Yaap.Core` and `Yaap.Cli` cross-platform and keep WPF dependencies in `Yaap.Gui`.
+- Preserve both .NET 8 and .NET 10.
+- Keep build, parsing, history, comparison, and export operations asynchronous and cancelable.
+- Do not load large binlogs or generated-output trees completely into memory.
+- Update measurement documentation, CLI help, GUI text, README, usage guidance, and CHANGELOG with the behavior they describe.
+- English documentation is authoritative. Update an official Japanese translation in the same change whenever its English source changes. GUI text remains Japanese; code identifiers and agent instructions are English.
+- Follow `.editorconfig` and `AGENTS.md` for source formatting.
 
-新しいNuGetパッケージを提案する場合は、提供元、保守状況、利用実績、ライセンス、既知の脆弱性、
-推移依存、対象フレームワーク、代替案を作業計画へ記録してください。バージョンは
-`Directory.Packages.props` で一元管理します。
+Before proposing a new NuGet package, record its source, maintenance, adoption, license, known vulnerabilities, transitive dependencies, target-framework support, and alternatives in the task plan. Package versions are centralized in `Directory.Packages.props`.
 
-## テスト
+## Tests
 
-変更に比例した回帰テストを追加してください。正常系だけでなく、入力不正、失敗、部分結果、
-キャンセル、cleanup、大規模入力、対象OS／TFMを確認します。GUI変更ではWindows上で
-`Yaap.Gui.Tests`、STA起動smoke、影響する全状態のライト／ダーク表示確認が必要です。
+Add regression coverage proportional to the change. Test invalid input, failure, partial results, cancellation, cleanup, scale, and applicable operating systems and TFMs, not only the success path. GUI changes require `Yaap.Gui.Tests` on Windows, the STA startup smoke test, and rendered inspection of every affected state in light and dark themes.
 
-提出前に次を確認します。
+Before submitting:
 
 ```powershell
 ./eng/build.ps1 verify
@@ -67,15 +61,16 @@ git diff --check
 git status --short
 ```
 
-macOS／Linuxでは `./eng/build.sh verify` を使用します。
+Use `./eng/build.sh verify` on macOS or Linux.
 
-## レビュー時に含める情報
+## Review information
 
-通常レビューを超える、複数の独立した敵対的レビューと改善の反復が必要な場合だけ、
-明示的に [DeepReview](docs/deep-review.md) を起動します。通常のレビュー依頼から自動では起動しません。
+Invoke [DeepReview](docs/deep-review.md) explicitly only when the change needs repeated independent adversarial reviews beyond an ordinary review. A normal review request does not start DeepReview.
 
-- 変更の目的と利用者への影響
-- 互換性、データ形式、セキュリティ、性能への影響
-- 実行したテストと結果
-- GUI変更時のライト／ダーク表示確認
-- 残る制約がある場合は、その理由と文書化場所
+Include:
+
+- The purpose and user impact
+- Compatibility, data-format, security, and performance effects
+- Tests run and their results
+- Light and dark visual inspection for GUI changes
+- Any remaining limitation, its reason, and where it is documented
