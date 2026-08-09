@@ -2173,12 +2173,21 @@ static void EnsureToolchainManifest(string root)
     string github = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
     string release = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
     string gitlab = File.ReadAllText(Path.Combine(root, ".gitlab-ci.yml"));
-    foreach (string required in new[] { sdk8, sdk10, image8, image10 })
+    foreach (string required in new[] { sdk8, sdk10 })
     {
         if (!github.Contains(required, StringComparison.Ordinal) ||
             !gitlab.Contains(required, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"CI toolchains are out of sync with eng/toolchain.json: {required}");
+        }
+    }
+
+    foreach (string required in new[] { image8, image10 })
+    {
+        if (!gitlab.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"GitLab CI toolchains are out of sync with eng/toolchain.json: {required}");
         }
     }
 
@@ -2217,10 +2226,19 @@ static void EnsureReleaseWorkflow(string root)
     if (Regex.Matches(
             ci,
             Regex.Escape("DOTNET_INSTALL_DIR="),
-            RegexOptions.CultureInvariant).Count != 3)
+            RegexOptions.CultureInvariant).Count != 4)
     {
         throw new InvalidOperationException(
             "Each host-based GitHub CI job must isolate its requested .NET SDK installation.");
+    }
+
+    if (Regex.Matches(
+            ci,
+            Regex.Escape("./eng/normalize-checkout.ps1"),
+            RegexOptions.CultureInvariant).Count != 3)
+    {
+        throw new InvalidOperationException(
+            "Each non-Windows GitHub CI job must normalize its checkout line endings.");
     }
 
     string release = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
