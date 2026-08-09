@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 on:
   push:
@@ -41,7 +41,7 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Validate trigger, version, source commit, and tag state
@@ -137,7 +137,7 @@ jobs:
             sdk: "10.0.302"
             framework: net10.0
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare verification branch
         if: runner.os != 'Windows'
         shell: sh
@@ -152,7 +152,7 @@ jobs:
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ matrix.sdk }}
       - name: Verify tag matches the canonical version
@@ -163,7 +163,7 @@ jobs:
         run: ./eng/build.ps1 verify --framework "${{ matrix.framework }}"
       - name: Preserve validated NuGet tool package
         if: matrix.package == true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nuget-package
           path: artifacts/packages/*.nupkg
@@ -171,7 +171,7 @@ jobs:
           retention-days: 7
       - name: Attest the package at its producer
         if: matrix.package == true
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/packages/*.nupkg
 
@@ -197,7 +197,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Normalize non-Windows checkout
         if: runner.os != 'Windows'
         shell: pwsh
@@ -208,7 +208,7 @@ jobs:
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.302
       - name: Verify tag matches the canonical version
@@ -232,10 +232,10 @@ jobs:
             & artifacts/archive-smoke/cli/yaap version
           }
       - name: Attest the archive at its producer
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/yaap-${{ matrix.runtime }}.zip
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: binary-${{ matrix.runtime }}
           path: artifacts/yaap-${{ matrix.runtime }}.zip
@@ -254,13 +254,13 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.302
       - name: Verify tag matches the canonical version
@@ -358,7 +358,7 @@ jobs:
             }
           }
       - name: Attest release artifacts
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             artifacts/release/**/*.zip
@@ -367,7 +367,7 @@ jobs:
       - name: Authenticate to NuGet with a short-lived credential
         if: env.YAAP_NUGET_EXISTS != 'true'
         id: nuget-login
-        uses: NuGet/login@ebc737b6fc418a6ca0073cf116ec8dc156d8b81e # v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
         with:
           user: ${{ secrets.NUGET_USER }}
       - name: Publish NuGet tool after digest validation

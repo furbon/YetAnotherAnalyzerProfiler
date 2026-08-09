@@ -28,10 +28,11 @@ These rules apply to every repository change made by Codex or GitHub Copilot.
   in `README.ja.md` and `docs/ja/` in the same task as their English sources; each translation
   must link to its source and state that English prevails. GUI text remains Japanese. Code
   identifiers and agent instructions are English.
-- Source text is UTF-8 with BOM, CRLF, and space indentation. `.github/dependabot.yml`
-  is UTF-8 without BOM and CRLF because GitHub's Dependabot parser rejects its BOM. Shell scripts and
-  open-agent skill files under `.agents/skills/` are portable UTF-8 without BOM and
-  LF exceptions. NuGet-owned `packages.lock.json` files are UTF-8 without BOM and
+- Source text is UTF-8 with BOM, CRLF, and space indentation. GitHub workflow YAML,
+  shell scripts, and open-agent skill files under `.agents/skills/` are portable UTF-8
+  without BOM and LF exceptions so platform automation can update or execute them.
+  `.github/dependabot.yml` is UTF-8 without BOM and CRLF because GitHub's Dependabot
+  parser rejects its BOM. NuGet-owned `packages.lock.json` files are UTF-8 without BOM and
   CRLF so an ordinary restore never dirties the worktree.
 - Package versions are centralized. Before adding a package, record provenance, maintenance, adoption, license, vulnerabilities, transitive dependencies, compatibility, and alternatives in the active plan.
 - Do not commit machine-specific paths, credentials, local smoke-test names/results, build outputs, histories, packages, binlogs, or temporary files.
