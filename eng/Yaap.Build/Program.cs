@@ -2411,6 +2411,24 @@ static void EnsureReleaseWorkflow(string root)
             "Each host-based GitHub release job must isolate its requested .NET SDK installation.");
     }
 
+    if (Regex.Matches(
+            release,
+            Regex.Escape("./eng/normalize-checkout.ps1"),
+            RegexOptions.CultureInvariant).Count != 2)
+    {
+        throw new InvalidOperationException(
+            "Release validation and binary jobs must normalize non-Windows checkouts.");
+    }
+
+    if (Regex.Matches(
+            release,
+            Regex.Escape("git switch -c agent/release-verification"),
+            RegexOptions.CultureInvariant).Count != 1)
+    {
+        throw new InvalidOperationException(
+            "The non-Windows release verification matrix must use an agent branch.");
+    }
+
     string githubSetup = File.ReadAllText(Path.Combine(root, "docs", "github-setup.md"));
     foreach (string required in new[]
              {

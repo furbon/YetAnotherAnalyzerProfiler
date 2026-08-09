@@ -107,6 +107,14 @@ jobs:
             framework: net10.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prepare verification branch
+        if: runner.os != 'Windows'
+        shell: sh
+        run: git switch -c agent/release-verification
+      - name: Normalize non-Windows checkout
+        if: runner.os != 'Windows'
+        shell: pwsh
+        run: ./eng/normalize-checkout.ps1
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1
@@ -159,6 +167,10 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Normalize non-Windows checkout
+        if: runner.os != 'Windows'
+        shell: pwsh
+        run: ./eng/normalize-checkout.ps1
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1
