@@ -31,3 +31,7 @@ charset = utf-8
 [.github/dependabot.yml]
 end_of_line = crlf
 charset = utf-8
+
+[.github/workflows/*.{yml,yaml}]
+end_of_line = lf
+charset = utf-8

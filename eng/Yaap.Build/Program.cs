@@ -1576,16 +1576,22 @@ static void CheckRepository(string root)
 
         byte[] bytes = File.ReadAllBytes(path);
         bool shell = relative.EndsWith(".sh", StringComparison.OrdinalIgnoreCase);
-        bool agentSkill = relative.Replace('\\', '/').StartsWith(
+        string normalizedRelative = relative.Replace('\\', '/');
+        bool agentSkill = normalizedRelative.StartsWith(
             ".agents/skills/",
             StringComparison.OrdinalIgnoreCase);
         bool nugetLock = Path.GetFileName(relative).Equals(
             "packages.lock.json",
             StringComparison.OrdinalIgnoreCase);
-        bool dependabotConfig = relative.Replace('\\', '/').Equals(
+        bool dependabotConfig = normalizedRelative.Equals(
             ".github/dependabot.yml",
             StringComparison.OrdinalIgnoreCase);
-        bool portableLf = shell || agentSkill;
+        bool githubWorkflow = normalizedRelative.StartsWith(
+                ".github/workflows/",
+                StringComparison.OrdinalIgnoreCase) &&
+            (normalizedRelative.EndsWith(".yml", StringComparison.OrdinalIgnoreCase) ||
+             normalizedRelative.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase));
+        bool portableLf = shell || agentSkill || githubWorkflow;
         bool hasBom = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
         string text;
         try
@@ -1602,7 +1608,7 @@ static void CheckRepository(string root)
             if (hasBom || text.Contains("\r\n", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Shell scripts and agent skills must be UTF-8 without BOM and LF: {relative}");
+                    $"Shell scripts, agent skills, and GitHub workflows must be UTF-8 without BOM and LF: {relative}");
             }
         }
         else if (nugetLock || dependabotConfig)
@@ -2030,7 +2036,9 @@ static void EnsureCheckoutLineEndingPolicy(string root)
     if (!attributes.Contains("* text=auto eol=crlf", StringComparer.Ordinal) ||
         !attributes.Contains("*.sh text eol=lf", StringComparer.Ordinal) ||
         !attributes.Contains(".githooks/* text eol=lf", StringComparer.Ordinal) ||
-        !attributes.Contains(".agents/skills/** text eol=lf", StringComparer.Ordinal))
+        !attributes.Contains(".agents/skills/** text eol=lf", StringComparer.Ordinal) ||
+        !attributes.Contains(".github/workflows/*.yml text eol=lf", StringComparer.Ordinal) ||
+        !attributes.Contains(".github/workflows/*.yaml text eol=lf", StringComparer.Ordinal))
     {
         throw new InvalidOperationException(
             ".gitattributes must enforce CRLF for repository text and retain the portable LF exceptions.");
@@ -2532,8 +2540,42 @@ static void EnsureToolchainManifest(string root)
     }
 }
 
+static void EnsureWorkflowActionsAreShaPinned(string root)
+{
+    string workflows = Path.Combine(root, ".github", "workflows");
+    foreach (string path in Directory.EnumerateFiles(workflows, "*.y*ml", SearchOption.TopDirectoryOnly))
+    {
+        string relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+        string text = File.ReadAllText(path);
+        foreach (Match match in Regex.Matches(
+                     text,
+                     @"(?m)^\s*(?:-\s*)?uses:\s*(?<reference>[^\s#]+)",
+                     RegexOptions.CultureInvariant))
+        {
+            string reference = match.Groups["reference"].Value;
+            if (reference.StartsWith("./", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            int separator = reference.LastIndexOf('@');
+            string revision = separator >= 0 ? reference[(separator + 1)..] : string.Empty;
+            if (separator <= 0 || !Regex.IsMatch(
+                    revision,
+                    @"\A[0-9a-fA-F]{40}\z",
+                    RegexOptions.CultureInvariant))
+            {
+                throw new InvalidOperationException(
+                    $"GitHub Actions must use a full-length commit SHA: {relative}: {reference}");
+            }
+        }
+    }
+}
+
 static void EnsureReleaseWorkflow(string root)
 {
+    EnsureWorkflowActionsAreShaPinned(root);
+
     string ci = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
     foreach (string required in new[]
              {
@@ -2592,7 +2634,7 @@ static void EnsureReleaseWorkflow(string root)
         "pull_request:",
         "contents: read",
         "timeout-minutes: 10",
-        "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0",
+        "actions/dependency-review-action@",
         "fail-on-severity: moderate",
     })
     {
@@ -2624,7 +2666,7 @@ static void EnsureReleaseWorkflow(string root)
                  "./eng/build.ps1 verify",
                  "./eng/build.ps1 publish",
                  "environment: release",
-                 "NuGet/login@ebc737b6fc418a6ca0073cf116ec8dc156d8b81e",
+                 "NuGet/login@",
                  "secrets.NUGET_USER",
                  "steps.nuget-login.outputs.NUGET_API_KEY",
                  "dotnet nuget push",
@@ -2832,6 +2874,20 @@ static void EnsureReleaseWorkflow(string root)
     {
         throw new InvalidOperationException(
             $"Dependabot updates must target the active development branch twice: {expectedTargetBranch}");
+    }
+
+    foreach (string required in new[]
+             {
+                 "dependency-name: Microsoft.CodeAnalysis.CSharp",
+                 "update-types: [\"version-update:semver-major\"]",
+                 "github-actions:",
+                 "patterns: [\"*\"]",
+             })
+    {
+        if (!dependabot.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Dependabot maintenance policy is missing: {required}");
+        }
     }
 
     foreach (string template in new[] { "bug.yml", "feature.yml", "question.yml", "config.yml" })
