@@ -1554,7 +1554,16 @@ static async Task WindowStartupSmokeAsync()
             Ensure(viewModel.TargetPath == recentTargetPath, "Clicking a recent target should select it.");
             Ensure(recentTargetsButton.IsChecked == false, "Selecting a recent target should reset the toggle button.");
             Ensure(!recentTargetsPopup.IsOpen, "Selecting a recent target should close the popup.");
+            bool closed = false;
+            window.Closed += (_, _) => closed = true;
+            Stopwatch closeTimer = Stopwatch.StartNew();
             window.Close();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            closeTimer.Stop();
+            Ensure(closed, "MainWindow.Close must complete without Application.Shutdown forcing it closed.");
+            Ensure(
+                closeTimer.Elapsed < TimeSpan.FromSeconds(2),
+                $"MainWindow.Close took too long: {closeTimer.Elapsed.TotalMilliseconds:N0} ms.");
             completion.TrySetResult(null);
         }
         catch (Exception exception)
