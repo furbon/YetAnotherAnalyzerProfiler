@@ -62,9 +62,18 @@ jobs:
             throw 'The release commit must be reachable from main.'
           }
 
-          $existingCommit = git rev-parse -q --verify "refs/tags/$env:ReleaseTag^{commit}" 2>$null
-          if ($LASTEXITCODE -eq 0 -and $existingCommit -cne $env:GITHUB_SHA) {
-            throw "Release tag $env:ReleaseTag already points to a different commit."
+          $existingTag = git tag --list -- "$env:ReleaseTag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to inspect release tag $env:ReleaseTag."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($existingTag)) {
+            $existingCommit = git rev-parse "$env:ReleaseTag^{commit}"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to resolve release tag $env:ReleaseTag."
+            }
+            if ($existingCommit -cne $env:GITHUB_SHA) {
+              throw "Release tag $env:ReleaseTag already points to a different commit."
+            }
           }
 
   validate:
