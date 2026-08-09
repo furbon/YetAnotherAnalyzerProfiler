@@ -327,13 +327,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public DateTime? HistoryFromDate
     {
         get => TryParseHistoryDateText(_historyFrom, out DateTime date) ? date.Date : null;
-        set => HistoryFrom = FormatHistoryDate(value);
+        set
+        {
+            if (!RepresentsHistoryDate(_historyFrom, value))
+            {
+                HistoryFrom = FormatHistoryDate(value);
+            }
+        }
     }
 
     public DateTime? HistoryToDate
     {
         get => TryParseHistoryDateText(_historyTo, out DateTime date) ? date.Date : null;
-        set => HistoryTo = FormatHistoryDate(value);
+        set
+        {
+            if (!RepresentsHistoryDate(_historyTo, value))
+            {
+                HistoryTo = FormatHistoryDate(value);
+            }
+        }
     }
 
     public string HistoryLimit
@@ -1947,6 +1959,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private static string FormatHistoryDate(DateTime? value) => value?.ToString(
         "yyyy/MM/dd",
         CultureInfo.InvariantCulture) ?? string.Empty;
+
+    private static bool RepresentsHistoryDate(string text, DateTime? value)
+    {
+        if (value is null)
+        {
+            return string.IsNullOrWhiteSpace(text);
+        }
+
+        return TryParseHistoryDateText(text, out DateTime parsed) &&
+            parsed.Date == value.Value.Date;
+    }
 
     private static DateTimeOffset? ParseOptionalDateTime(
         string value,
