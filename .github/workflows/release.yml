@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 on:
   push:
@@ -163,7 +163,7 @@ jobs:
         run: ./eng/build.ps1 verify --framework "${{ matrix.framework }}"
       - name: Preserve validated NuGet tool package
         if: matrix.package == true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nuget-package
           path: artifacts/packages/*.nupkg
@@ -235,7 +235,7 @@ jobs:
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: artifacts/yaap-${{ matrix.runtime }}.zip
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: binary-${{ matrix.runtime }}
           path: artifacts/yaap-${{ matrix.runtime }}.zip
