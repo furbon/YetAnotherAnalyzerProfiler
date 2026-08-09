@@ -33,9 +33,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Enable repository guards
         shell: sh
+        working-directory: ${{ github.workspace }}
         run: git config --local core.hooksPath .githooks
       - name: Verify
         shell: sh
+        working-directory: ${{ github.workspace }}
         run: sh ./eng/build.sh verify --framework "${{ matrix.framework }}"
 
   windows:
