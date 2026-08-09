@@ -1209,16 +1209,17 @@ static async Task ProfileCancellationAsync()
     using TemporaryDirectory target = new();
     using TemporaryDirectory historyPath = new();
     string project = await WriteProjectAsync(target.Path);
+    using CancellationTokenSource cancellation = new();
     RecordingProcessRunner process = new(async (invocation, cancellationToken) =>
     {
         if (invocation.Arguments.FirstOrDefault() == "restore")
         {
+            cancellation.Cancel();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
 
         return SuccessfulProcess(invocation);
     });
-    using CancellationTokenSource cancellation = new(TimeSpan.FromMilliseconds(100));
     ProfileRun run = await new ProfileRunner(process, new FakeBinlogAnalyzer(), new EnvironmentDetector(process))
         .RunAsync(new ProfileOptions
         {
