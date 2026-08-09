@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 on:
   push:
@@ -171,7 +171,7 @@ jobs:
           retention-days: 7
       - name: Attest the package at its producer
         if: matrix.package == true
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/packages/*.nupkg
 
@@ -232,7 +232,7 @@ jobs:
             & artifacts/archive-smoke/cli/yaap version
           }
       - name: Attest the archive at its producer
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/yaap-${{ matrix.runtime }}.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -358,7 +358,7 @@ jobs:
             }
           }
       - name: Attest release artifacts
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             artifacts/release/**/*.zip
