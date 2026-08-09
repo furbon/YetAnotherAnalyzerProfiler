@@ -1474,6 +1474,7 @@ static void CheckRepository(string root)
     EnsureGuiStartupSmokeGuard(root);
     EnsureGuiVisualRegressionHarness(root);
     EnsureThirdPartyNoticeSync(root);
+    EnsureCheckoutLineEndingPolicy(root);
 
     string[] files = GetRepositoryFiles(root);
     foreach (string relative in files)
@@ -1775,6 +1776,19 @@ static void EnsureAgentBranchGuardrailFiles(string root)
     {
         throw new InvalidOperationException(
             "The Git hook installer must configure the tracked .githooks directory.");
+    }
+}
+
+static void EnsureCheckoutLineEndingPolicy(string root)
+{
+    string[] attributes = File.ReadAllLines(Path.Combine(root, ".gitattributes"));
+    if (!attributes.Contains("* text=auto eol=crlf", StringComparer.Ordinal) ||
+        !attributes.Contains("*.sh text eol=lf", StringComparer.Ordinal) ||
+        !attributes.Contains(".githooks/* text eol=lf", StringComparer.Ordinal) ||
+        !attributes.Contains(".agents/skills/** text eol=lf", StringComparer.Ordinal))
+    {
+        throw new InvalidOperationException(
+            ".gitattributes must enforce CRLF for repository text and retain the portable LF exceptions.");
     }
 }
 
