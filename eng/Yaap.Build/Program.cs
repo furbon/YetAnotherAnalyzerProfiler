@@ -45,6 +45,13 @@ try
             EnsureSdkVersion(root, framework);
             await PackAsync(root);
             break;
+        case "start-version":
+            StartVersion(
+                root,
+                GetOption(args, "--version") ?? throw new InvalidOperationException(
+                    "start-version requires --version <MAJOR.MINOR.PATCH>."),
+                args.Any(argument => argument.Equals("--dry-run", StringComparison.OrdinalIgnoreCase)));
+            break;
         case "verify":
             {
                 Dictionary<string, string> expectedPackageLocks = CapturePackageLockHashes(root);
@@ -70,7 +77,7 @@ try
             }
         default:
             throw new InvalidOperationException(
-                "Task must be check, restore, format, build, test, visual, pack, publish, or verify.");
+                "Task must be check, restore, format, build, test, visual, pack, publish, start-version, or verify.");
     }
 
     Console.WriteLine($"YAAP '{task}' completed for {framework}.");
@@ -1065,9 +1072,10 @@ static async Task PublishDistributionAsync(
         executableName,
         "Yaap.BuildLogger.dll",
         "Yaap.Core.xml",
-        "LICENSE",
-        "README.md",
-        "CHANGELOG.md",
+         "LICENSE",
+         "README.md",
+         "README.ja.md",
+         "CHANGELOG.md",
         "THIRD-PARTY-NOTICES.txt",
         "CODE_OF_CONDUCT.md",
         "CONTRIBUTING.md",
@@ -1108,9 +1116,10 @@ static async Task PublishDistributionAsync(
             "yaap-gui.exe",
             "Yaap.BuildLogger.dll",
             "Yaap.Core.xml",
-            "LICENSE",
-            "README.md",
-            "CHANGELOG.md",
+             "LICENSE",
+             "README.md",
+             "README.ja.md",
+             "CHANGELOG.md",
             "THIRD-PARTY-NOTICES.txt",
             "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",
@@ -1142,6 +1151,7 @@ static void CopyReleaseDocuments(string root, string output)
     {
         "LICENSE",
         "README.md",
+        "README.ja.md",
         "CHANGELOG.md",
         "THIRD-PARTY-NOTICES.txt",
         "CODE_OF_CONDUCT.md",
@@ -1548,6 +1558,8 @@ static void CheckRepository(string root)
     }
 
     EnsureDeepReviewHarness(root, canonical);
+    EnsureDocumentationLocalization(root);
+    EnsureVersionMaintenanceWorkflow(root);
     EnsureGuiStartupSmokeGuard(root);
     EnsureGuiVisualRegressionHarness(root);
     EnsureThirdPartyNoticeSync(root);
@@ -1570,6 +1582,9 @@ static void CheckRepository(string root)
         bool nugetLock = Path.GetFileName(relative).Equals(
             "packages.lock.json",
             StringComparison.OrdinalIgnoreCase);
+        bool dependabotConfig = relative.Replace('\\', '/').Equals(
+            ".github/dependabot.yml",
+            StringComparison.OrdinalIgnoreCase);
         bool portableLf = shell || agentSkill;
         bool hasBom = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
         string text;
@@ -1590,13 +1605,13 @@ static void CheckRepository(string root)
                     $"Shell scripts and agent skills must be UTF-8 without BOM and LF: {relative}");
             }
         }
-        else if (nugetLock)
+        else if (nugetLock || dependabotConfig)
         {
             if (hasBom || (text.Contains('\n') && !text.Contains("\r\n", StringComparison.Ordinal)) ||
                 text.Replace("\r\n", string.Empty, StringComparison.Ordinal).Contains('\n'))
             {
                 throw new InvalidOperationException(
-                    $"NuGet lock files must be UTF-8 without BOM and CRLF: {relative}");
+                    $"NuGet lock files and Dependabot configuration must be UTF-8 without BOM and CRLF: {relative}");
             }
         }
         else if (!hasBom || (text.Contains('\n') && !text.Contains("\r\n", StringComparison.Ordinal)) ||
@@ -1650,7 +1665,7 @@ static void EnsureCliRestoreIdentity(string root)
                  "<AssemblyName>yaap</AssemblyName>",
                  "<PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>",
                  "<TargetName>yaap</TargetName>",
-                 "<Description>C#のRoslyn Analyzer／Source Generatorをコンパイラー報告値で測定するクロスプラットフォームCLI。</Description>",
+                 "<Description>Cross-platform CLI for profiling Roslyn analyzers and source generators from compiler-reported metrics.</Description>",
                  "<ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>",
                  "<ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>",
                  "<ToolCommandName>yaap</ToolCommandName>",
@@ -1771,11 +1786,11 @@ static void EnsureDeepReviewHarness(string root, string canonicalAgentInstructio
     }
 
     string humanGuide = File.ReadAllText(humanGuidePath);
-    if (!humanGuide.Contains("自動・暗黙には起動しません", StringComparison.Ordinal) ||
+    if (!humanGuide.Contains("never starts automatically or implicitly", StringComparison.Ordinal) ||
         !humanGuide.Contains("$deep-review", StringComparison.Ordinal) ||
         !humanGuide.Contains("deep-review-plan-template.md", StringComparison.Ordinal))
     {
-        throw new InvalidOperationException("The Japanese DeepReview guide must explain invocation and resources.");
+        throw new InvalidOperationException("The English DeepReview guide must explain invocation and resources.");
     }
 
     foreach ((string path, string link) in new[]
@@ -1787,6 +1802,159 @@ static void EnsureDeepReviewHarness(string root, string canonicalAgentInstructio
         if (!File.ReadAllText(path).Contains(link, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"DeepReview documentation is not indexed from {path}.");
+        }
+    }
+}
+
+static void EnsureDocumentationLocalization(string root)
+{
+    foreach ((string relative, string heading) in new[]
+    {
+        ("README.md", "# YetAnotherAnalyzerProfiler (YAAP)"),
+        ("CONTRIBUTING.md", "# Contributing to YAAP"),
+        ("CODE_OF_CONDUCT.md", "# Code of Conduct"),
+        ("CHANGELOG.md", "# Changelog"),
+        ("SECURITY.md", "# Security Policy"),
+        ("SUPPORT.md", "# Support Policy"),
+        ("docs/index.md", "# YAAP Documentation Guide"),
+        ("docs/usage.md", "# Usage Guide"),
+        ("docs/measurement.md", "# Measurement Model"),
+        ("docs/troubleshooting.md", "# Troubleshooting"),
+        ("docs/architecture.md", "# Architecture"),
+        ("docs/development.md", "# Development Guide"),
+        ("docs/testing.md", "# Testing Policy"),
+        ("docs/gui-visual-testing.md", "# GUI Visual Regression Testing"),
+        ("docs/github-setup.md", "# GitHub Setup and Operations"),
+        ("docs/release-checklist.md", "# Release Checklist"),
+        ("docs/deep-review.md", "# DeepReview Guide"),
+        ("docs/nuget-readme.md", "# YetAnotherAnalyzerProfiler CLI"),
+    })
+    {
+        string path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(path) || !File.ReadAllText(path).StartsWith(heading, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Canonical human documentation must start in English: {relative} / {heading}");
+        }
+    }
+
+    foreach ((string source, string sourceLink, string translation, string canonicalLink) in new[]
+    {
+        ("README.md", "README.ja.md", "README.ja.md", "README.md"),
+        ("docs/index.md", "ja/index.md", "docs/ja/index.md", "../index.md"),
+        ("docs/usage.md", "ja/usage.md", "docs/ja/usage.md", "../usage.md"),
+        ("docs/measurement.md", "ja/measurement.md", "docs/ja/measurement.md", "../measurement.md"),
+        ("docs/troubleshooting.md", "ja/troubleshooting.md", "docs/ja/troubleshooting.md", "../troubleshooting.md"),
+        ("SECURITY.md", "docs/ja/security.md", "docs/ja/security.md", "../../SECURITY.md"),
+        ("SUPPORT.md", "docs/ja/support.md", "docs/ja/support.md", "../../SUPPORT.md"),
+    })
+    {
+        string sourcePath = Path.Combine(root, source.Replace('/', Path.DirectorySeparatorChar));
+        string translationPath = Path.Combine(root, translation.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(translationPath) ||
+            !File.ReadAllText(sourcePath).Contains(sourceLink, StringComparison.Ordinal) ||
+            !File.ReadAllText(translationPath).Contains(canonicalLink, StringComparison.Ordinal) ||
+            !File.ReadAllText(translationPath).Contains("英語版を正本", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Official Japanese translation contract is incomplete: {source} -> {translation}");
+        }
+    }
+
+    string readme = File.ReadAllText(Path.Combine(root, "README.md"));
+    foreach (string badge in new[]
+    {
+        "actions/workflows/ci.yml/badge.svg?branch=main&event=push",
+        "img.shields.io/nuget/v/YetAnotherAnalyzerProfiler.Tool",
+        "img.shields.io/github/v/release/furbon/YetAnotherAnalyzerProfiler",
+    })
+    {
+        if (!readme.Contains(badge, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"README badge is missing: {badge}");
+        }
+    }
+
+    if (readme.Contains("github/license", StringComparison.OrdinalIgnoreCase) ||
+        readme.Contains("nuget/dt", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException("README must not add redundant license or download-count badges.");
+    }
+
+    foreach (string relative in new[]
+    {
+        ".github/ISSUE_TEMPLATE/bug.yml",
+        ".github/ISSUE_TEMPLATE/feature.yml",
+        ".github/ISSUE_TEMPLATE/question.yml",
+        ".github/pull_request_template.md",
+    })
+    {
+        string text = File.ReadAllText(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+        if (!text.Contains("English or Japanese", StringComparison.Ordinal) ||
+            !text.Contains("英語または日本語", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"GitHub contribution intake must explicitly accept English and Japanese: {relative}");
+        }
+    }
+
+    string packageReadme = File.ReadAllText(Path.Combine(root, "docs", "nuget-readme.md"));
+    foreach (string required in new[]
+    {
+        "YAAP is not a sandbox.",
+        "https://github.com/furbon/YetAnotherAnalyzerProfiler",
+        "NuGet.org does not fetch later repository changes",
+    })
+    {
+        if (!packageReadme.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"NuGet readme is missing English package guidance: {required}");
+        }
+    }
+}
+
+static void EnsureVersionMaintenanceWorkflow(string root)
+{
+    string buildSource = File.ReadAllText(Path.Combine(root, "eng", "Yaap.Build", "Program.cs"));
+    foreach (string contract in new[]
+    {
+        "case \"start-version\":",
+        "start-version requires --version <MAJOR.MINOR.PATCH>",
+        "start-version must run on agent/*",
+        "start-version requires a clean tracked worktree",
+        "target-branch: {developBranch}",
+        "Curated follow-up: add the CHANGELOG entry",
+    })
+    {
+        if (!buildSource.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Version-start workflow is missing contract: {contract}");
+        }
+    }
+
+    string development = File.ReadAllText(Path.Combine(root, "docs", "development.md"));
+    foreach (string command in new[]
+    {
+        "./eng/build.ps1 start-version --version <major.minor.patch>",
+        "./eng/build.sh start-version --version <major.minor.patch>",
+    })
+    {
+        if (!development.Contains(command, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Development guide is missing version command: {command}");
+        }
+    }
+
+    foreach (string relative in new[] { "README.md", "README.ja.md", "docs/nuget-readme.md" })
+    {
+        string text = File.ReadAllText(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+        if (Regex.IsMatch(
+                text,
+                @"dotnet tool install[^\r\n]*--version\s+\d+\.\d+\.\d+",
+                RegexOptions.CultureInvariant))
+        {
+            throw new InvalidOperationException(
+                $"Evergreen installation guidance must not pin the current version: {relative}");
         }
     }
 }
@@ -1923,10 +2091,10 @@ static void EnsureGuiVisualRegressionHarness(string root)
     foreach (string contract in new[]
     {
         "./eng/build.ps1 visual --output artifacts/gui-visuals",
-        "ライトとダーク",
-        "通常幅と最小幅",
-        "全7メインタブ",
-        "変更箇所だけでなく画面全体",
+        "light and dark",
+        "normal and minimum widths",
+        "all seven main tabs",
+        "entire window, not only the changed control",
     })
     {
         if (!guide.Contains(contract, StringComparison.Ordinal))
@@ -2184,6 +2352,92 @@ static string? GetOption(IReadOnlyList<string> arguments, string name)
     return null;
 }
 
+static void StartVersion(string root, string version, bool dryRun)
+{
+    if (!Regex.IsMatch(
+            version,
+            @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$",
+            RegexOptions.CultureInvariant))
+    {
+        throw new InvalidOperationException(
+            $"Version '{version}' must be a stable MAJOR.MINOR.PATCH value without leading zeroes.");
+    }
+
+    string branch = GetGitOutput(root, "branch", "--show-current").Trim();
+    if (!branch.StartsWith("agent/", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            $"start-version must run on agent/* after creating develop/v{version}; current branch: {branch}.");
+    }
+
+    string developBranch = $"develop/v{version}";
+    _ = GetGitOutput(root, "rev-parse", "--verify", developBranch);
+    _ = GetGitOutput(root, "merge-base", "--is-ancestor", developBranch, "HEAD");
+
+    string trackedStatus = GetGitOutput(root, "status", "--porcelain=v1", "--untracked-files=no");
+    if (!string.IsNullOrWhiteSpace(trackedStatus))
+    {
+        throw new InvalidOperationException(
+            "start-version requires a clean tracked worktree so it cannot overwrite in-progress changes.");
+    }
+
+    string versionPath = Path.Combine(root, "eng", "Version.props");
+    string versionText = File.ReadAllText(versionPath);
+    MatchCollection versionMatches = Regex.Matches(
+        versionText,
+        @"<VersionPrefix>\d+\.\d+\.\d+</VersionPrefix>",
+        RegexOptions.CultureInvariant);
+    if (versionMatches.Count != 1)
+    {
+        throw new InvalidOperationException(
+            "eng/Version.props must contain exactly one stable VersionPrefix before starting a version.");
+    }
+
+    string dependabotPath = Path.Combine(root, ".github", "dependabot.yml");
+    string dependabotText = File.ReadAllText(dependabotPath);
+    MatchCollection targetMatches = Regex.Matches(
+        dependabotText,
+        @"target-branch: develop/v\d+\.\d+\.\d+",
+        RegexOptions.CultureInvariant);
+    if (targetMatches.Count != 2)
+    {
+        throw new InvalidOperationException(
+            ".github/dependabot.yml must contain exactly two versioned target branches.");
+    }
+
+    string updatedVersion = Regex.Replace(
+        versionText,
+        @"<VersionPrefix>\d+\.\d+\.\d+</VersionPrefix>",
+        $"<VersionPrefix>{version}</VersionPrefix>",
+        RegexOptions.CultureInvariant);
+    string updatedDependabot = Regex.Replace(
+        dependabotText,
+        @"target-branch: develop/v\d+\.\d+\.\d+",
+        $"target-branch: {developBranch}",
+        RegexOptions.CultureInvariant);
+
+    if (!dryRun)
+    {
+        UTF8Encoding bomEncoding = new(encoderShouldEmitUTF8Identifier: true);
+        UTF8Encoding noBomEncoding = new(encoderShouldEmitUTF8Identifier: false);
+        File.WriteAllText(versionPath, NormalizeCrlf(updatedVersion), bomEncoding);
+        File.WriteAllText(dependabotPath, NormalizeCrlf(updatedDependabot), noBomEncoding);
+    }
+
+    string prefix = dryRun ? "Would start" : "Started";
+    Console.WriteLine($"{prefix} YAAP {version} on {developBranch}.");
+    Console.WriteLine("Curated follow-up: add the CHANGELOG entry, English and Japanese release notes, " +
+        "and update the supported series in SECURITY.md when it changes.");
+}
+
+static string NormalizeCrlf(string value)
+{
+    return value
+        .Replace("\r\n", "\n", StringComparison.Ordinal)
+        .Replace("\r", "\n", StringComparison.Ordinal)
+        .Replace("\n", "\r\n", StringComparison.Ordinal);
+}
+
 static int GetSdkMajor(string root)
 {
     string version = GetDotnetSdkVersion(root);
@@ -2327,6 +2581,34 @@ static void EnsureReleaseWorkflow(string root)
             "Each non-Windows GitHub verify job must isolate normalized files on an agent branch.");
     }
 
+    string dependencyReview = File.ReadAllText(Path.Combine(
+        root,
+        ".github",
+        "workflows",
+        "dependency-review.yml"));
+    foreach (string required in new[]
+    {
+        "name: Dependency Review",
+        "pull_request:",
+        "contents: read",
+        "timeout-minutes: 10",
+        "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0",
+        "fail-on-severity: moderate",
+    })
+    {
+        if (!dependencyReview.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GitHub dependency review is missing: {required}");
+        }
+    }
+
+    if (dependencyReview.Contains("pull-requests: write", StringComparison.Ordinal) ||
+        dependencyReview.Contains("pull_request_target", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "Dependency review must use read-only pull_request permissions for untrusted contributions.");
+    }
+
     string release = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
     foreach (string required in new[]
              {
@@ -2463,17 +2745,18 @@ static void EnsureReleaseWorkflow(string root)
     foreach (string required in new[]
              {
                  "git remote add origin",
-                 "git push -u origin develop/v0.1.0",
+                 "git push -u origin develop/v<version>",
                  "git push -u origin main",
-                 "一時default",
+                 "temporarily require the current `develop/v<version>` as default",
                  "Require actions to be pinned to a full-length commit SHA",
                  "Verify Linux / net8.0",
-                 "release` Environment",
+                 "release` environment",
                  "Trusted Publishing",
                  "NUGET_USER",
-                 "## 7. v0.1.0公開前",
-                 "## 8. 公開操作",
-                 "## 9. 公開後",
+                 "## 7. Start the next version",
+                 "## 9. Publication",
+                 "## 10. Post-publication verification",
+                 "Dependency Review",
              })
     {
         if (!githubSetup.Contains(required, StringComparison.Ordinal))
@@ -2491,10 +2774,11 @@ static void EnsureReleaseWorkflow(string root)
                  "SECURITY.md",
                  "CHANGELOG.md",
                  "releaseNotesPath",
+                 "japaneseReleaseNotesPath",
                  ".github/release-notes/",
                  "# YAAP",
-                 "はまだ公開されていません。",
-                 "公開済みバージョン | なし",
+                 "is not yet published.",
+                 "Published version | None",
                  "supportedSeries",
              })
     {
@@ -2526,6 +2810,20 @@ static void EnsureReleaseWorkflow(string root)
             $"The current version must have curated GitHub Release notes: {releaseNotesPath}");
     }
 
+    string japaneseReleaseNotesPath = Path.Combine(
+        root,
+        ".github",
+        "release-notes",
+        $"v{releaseVersion}.ja.md");
+    if (!File.Exists(japaneseReleaseNotesPath) ||
+        !File.ReadAllText(japaneseReleaseNotesPath).StartsWith(
+            $"# YAAP v{releaseVersion}",
+            StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            $"The current version must have Japanese Release notes: {japaneseReleaseNotesPath}");
+    }
+
     string expectedTargetBranch = $"target-branch: develop/v{version.Groups["value"].Value}";
     if (!version.Success || Regex.Matches(
             dependabot,
@@ -2542,6 +2840,14 @@ static void EnsureReleaseWorkflow(string root)
         {
             throw new InvalidOperationException($"GitHub issue template is missing: {template}");
         }
+    }
+
+    string issueConfig = File.ReadAllText(Path.Combine(root, ".github", "ISSUE_TEMPLATE", "config.yml"));
+    if (!issueConfig.Contains("security/advisories/new", StringComparison.Ordinal) ||
+        !issueConfig.Contains("blank_issues_enabled: false", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "GitHub issue configuration must route vulnerabilities privately and disable blank issues.");
     }
 
     string gitlab = File.ReadAllText(Path.Combine(root, ".gitlab-ci.yml"));

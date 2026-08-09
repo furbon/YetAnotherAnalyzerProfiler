@@ -1,83 +1,66 @@
-﻿# セキュリティ方針
+﻿# Security Policy
 
-## 対応バージョン
+[日本語](docs/ja/security.md)
 
-| バージョン | セキュリティ修正 |
+## Supported versions
+
+| Version | Security fixes |
 | --- | --- |
-| 0.1.x | サポート中 |
-| 0.0.x以前 | 非対応 |
+| 0.1.x | Supported |
+| Earlier than 0.1.x | Not supported |
 
-サポート状況は最新の [CHANGELOG](CHANGELOG.md) でも確認してください。
+Consult the latest [changelog](CHANGELOG.md) for current support information.
 
-## 脆弱性の報告
+## Reporting a vulnerability
 
-脆弱性、秘密情報の露出、任意コード実行の拡大、配布物の改ざんなどを発見した場合は、公開Issueへ
-詳細を書かないでください。GitHubでは、このリポジトリの
-[Private vulnerability reporting](https://github.com/furbon/YetAnotherAnalyzerProfiler/security/advisories/new)を使用してください。
-GitLab上で公開されている場合は、プロジェクトの非公開セキュリティ報告先、または機密Issueを使用してください。
+Do not disclose vulnerability details, exposed secrets, expanded arbitrary-code execution, or release tampering in a public issue. For GitHub, use this repository's [Private vulnerability reporting](https://github.com/furbon/YetAnotherAnalyzerProfiler/security/advisories/new). If an authorized mirror is hosted elsewhere, use that host's verified private security-reporting route.
 
-プライベート報告機能や管理者指定の非公開窓口が見つからない場合は、公開Issueへ再現手順や秘密情報を
-載せず、「非公開のセキュリティ報告経路を確認したい」とだけ連絡してください。この文書は、存在を
-確認できないメールアドレスやURLを窓口として記載しません。
+If no private route can be found, open a public issue containing only a request for a private security contact. Do not include reproduction steps, secrets, or vulnerability details. This document does not name an unverified email address or URL as a security route.
 
-公開前にリポジトリ管理者は、ホスティング先で検証済みの非公開報告経路を有効化し、この節と
-パッケージメタデータから到達できることを確認します。非公開経路がない状態では公開しません。
+Repository maintainers must enable and verify a private reporting route before publication and ensure that this policy and package metadata reach it. A release must not be published without that route.
 
-報告には、可能な範囲で次を含めてください。
+Include as much of the following as practical:
 
-- 影響するYAAPバージョン、OS、TFM、RID
-- 問題の種類と想定される影響
-- 最小の再現手順または無害化したfixture
-- 回避策の有無
-- 公開可能になるまで秘匿すべき情報
+- Affected YAAP version, operating system, TFM, and RID
+- Vulnerability category and expected impact
+- Minimal reproduction steps or a sanitized fixture
+- Known mitigations
+- Information that must remain private until coordinated disclosure
 
-受領後は影響範囲、再現性、修正方針、公開時期を確認します。調整が完了するまで、脆弱性や修正を
-公開しないようお願いします。
+Maintainers will assess impact, reproducibility, remediation, and disclosure timing. Please keep the vulnerability and its fix private until coordination is complete.
 
-## 測定対象との信頼境界
+## Trust boundary for profiled targets
 
-YAAPはセキュリティサンドボックスではありません。測定時には対象に対して次を実行します。
+YAAP is not a security sandbox. Profiling runs:
 
-- `dotnet restore`、`dotnet clean`、`dotnet build`
-- 対象が定義したMSBuild taskとtarget
-- 対象が参照するAnalyzerとSource Generator
-- コンパイラー報告値を取得するためのC#コンパイラー呼び出しの再実行
+- `dotnet restore`, `dotnet clean`, and `dotnet build`
+- MSBuild tasks and targets defined by the target
+- Analyzers and source generators referenced by the target
+- Replayed C# compiler invocations used to obtain compiler-reported metrics
 
-これらはYAAPと同じユーザー権限で動作し、任意のファイル読み書き、プロセス起動、環境変数や資格情報への
-アクセス、ネットワーク通信などを行えます。Analyzer／Source Generatorの再実行により、通常のbuildより
-副作用が多く発生する場合があります。信頼できないリポジトリをYAAPで測定しないでください。
+These processes run with the same user permissions as YAAP. They can read and write arbitrary files, start processes, access environment variables or credentials, communicate over the network, and cause other side effects. Replaying analyzers and source generators can cause more side effects than an ordinary build. Do not profile an untrusted repository with YAAP.
 
-`--isolated` とGUIの分離出力は、.NETの `--artifacts-path` を使って標準のbuild出力先を対象外へ
-移す機能です。対象コードの動作を制限せず、カスタムtargetの書込み、通信、秘密情報へのアクセスを
-防止しません。隔離が必要な場合は、利用者が管理する破棄可能なVM、コンテナー、低権限アカウント、
-ネットワーク制御など、YAAPの外側にセキュリティ境界を用意してください。
+`--isolated` and the GUI's isolated-output option use .NET's `--artifacts-path` to move standard build outputs away from the target. They do not restrict target code, custom-target writes, communication, or credential access. When isolation is required, create an external security boundary such as a disposable VM or container, a low-privilege account, and network controls.
 
-## オフライン動作の意味
+## Meaning of offline operation
 
-YAAP自身にはテレメトリ、更新確認、外部APIクライアントを実装していません。ただし、対象のrestoreは
-構成されたfeed、資格情報プロバイダーへ接続できます。build、MSBuild task、Analyzer、Source Generatorも
-その実装により通信できます。「オフライン」は対象コードの通信を遮断する保証ではありません。
+YAAP itself implements no telemetry, update check, or external API client. The target's restore can still contact configured feeds and credential providers. Its build, MSBuild tasks, analyzers, and source generators can also communicate according to their implementation. “Offline” does not guarantee that target code is disconnected.
 
-完全に通信を禁止する必要がある場合は、OS、VM、コンテナー、ファイアウォールなどでネットワークを
-制限し、必要なSDKとパッケージを事前に用意してください。
+To prohibit communication, enforce network isolation at the operating-system, VM, container, or firewall layer and provision required SDKs and packages in advance.
 
-## 履歴、binlog、export
+## History, binlogs, and exports
 
-YAAPの履歴はローカルに保存され、YAAP自身から送信しません。次の情報を含む可能性があります。
+YAAP stores history locally and does not transmit it. History can contain:
 
-- 対象ファイルの絶対パスと生成ファイルの相対パス
-- Git commit、branch、dirty状態
-- OS、CPU数、SDK、対象フレームワーク
-- コンパイラー引数、MSBuild情報、診断、対象由来のログ
-- 失敗またはキャンセルしたrestore／clean／buildなどの完全な標準出力／標準エラー出力ログ
-- private feed名、ユーザー名、環境情報などが含まれ得るbinlog
+- Absolute target paths and relative generated-file paths
+- Git commit, branch, and dirty state
+- Operating system, CPU count, SDK, and target frameworks
+- Compiler arguments, MSBuild data, diagnostics, and target-originated logs
+- Complete standard-output and standard-error logs from failed or canceled restore, clean, and build processes
+- Binlogs that can expose private-feed names, user names, environment data, and other confidential information
 
-履歴ディレクトリ、binlog、JSON／CSV／Markdown exportを共有する前に内容を確認し、秘密情報と
-個人情報を削除してください。履歴場所は、他のユーザーから読めないアクセス権を持つ場所に設定し、
-保持件数と不要データを定期的に見直してください。
+Inspect history directories, binlogs, and JSON, CSV, or Markdown exports before sharing them. Remove confidential and personal information. Store history in a location that other users cannot read, and review retention and obsolete data regularly.
 
-## セキュリティ修正の要件
+## Requirements for security fixes
 
-修正では、再現テスト、失敗／キャンセル時のcleanup、対応するTFMとOS、配布物、文書を同時に確認します。
-安全策、警告、検証、lock file、warnings-as-errors、プラットフォーム対応を弱めて合格させる変更は
-受け入れません。
+A security fix must cover reproduction, failure and cancellation cleanup, affected TFMs and operating systems, release artifacts, and documentation. Do not weaken safeguards, warnings, validation, lock files, warnings-as-errors, or platform coverage to make a change pass.

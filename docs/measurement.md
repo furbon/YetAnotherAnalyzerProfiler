@@ -1,29 +1,17 @@
-﻿# 測定設計
+﻿# Measurement Model
 
-既定は Release、restore 1回、ウォームアップ1回、測定3回、各測定前の clean です。Analyzer の
-並列実行は無効化せず、平均・最小・最大・標準偏差と環境情報を保存します。cold はウォームアップを
-省略し、custom は回数と clean 方針を指定できます。
+[日本語](ja/measurement.md)
 
-ビルド経過時間は通常の測定 build の時間です。Analyzer／Source Generator 時間は、その build を
-実行するMSBuild内のストリーミングLoggerが記録した同一 C# コンパイラ呼び出しを再実行し、Roslyn
-自身が報告した値です。再実行の所要時間を build 時間に加算しません。Loggerは生成側SDKで動くため、
-YAAP本体と対象SDKのbinlogリーダー世代が異なっても測定できます。
+The default profile uses Release, one restore, one warmup, three measured iterations, and a clean before every measured iteration. Analyzer concurrency remains enabled. YAAP stores the mean, minimum, maximum, population standard deviation, and environment information. Cold mode omits the warmup; custom mode configures counts and the clean policy.
 
-Source Generator の時間はアセンブリ／型単位です。生成ファイルの件数、バイト数、行数、一覧は
-別指標です。ファイル単位の時間配分、推定、按分は行いません。
+Elapsed build time is the duration of the ordinary measured build. Analyzer and source-generator time comes from Roslyn itself: a streaming logger running inside the target build records each C# compiler invocation, then YAAP faithfully replays that invocation to obtain Roslyn reports. Replay duration is not added to build duration. Because the logger runs with the target SDK, measurement does not depend on YAAP's binlog-reader generation matching the target SDK.
 
-## 値の階層と集計
+Source-generator time is reported per assembly/type. Generated-file count, bytes, lines, and paths are separate metrics. YAAP never estimates, apportions, or assigns time to an individual generated file.
 
-`Analyzer` は解析器の時間、`Diagnostic` はその解析器が報告した診断ID別の内訳、`Generator` は
-Source Generatorの時間です。コンパイラーがアセンブリ合計行と型／診断の内訳行を同時に返す場合、
-これらは親子関係であり、単純に加算できません。履歴の「合計平均 ms」は、アセンブリごとに合計行を
-優先し、合計行がないアセンブリだけ型行を合計したうえで、成功サンプル間の平均を表示します。
+## Metric hierarchy and aggregation
 
-たとえば `A.dll` の合計が10 msで、その型内訳が6 msと4 msなら、履歴値は20 msではなく10 msです。
-別の `B.dll` に合計行がなく型行3 msだけがあれば、全体は13 msです。失敗した反復の値は診断とログに
-保存しますが統計へ混ぜません。「要求反復数」「記録済み反復数」「成功サンプル数」は異なる場合があります。
+`Analyzer` represents analyzer time, `Diagnostic` is its per-diagnostic-ID breakdown, and `Generator` is source-generator time. When the compiler returns both an assembly total and type/diagnostic detail, those rows form a hierarchy and must not be added together. History's total mean milliseconds prefer the assembly total; only assemblies without a total contribute the sum of their type rows. The resulting total is averaged across successful samples.
 
-コンパイラー報告値を得る追加パスでは、対象のAnalyzerとSource Generatorも再実行されます。
-通常のbuild回数とは別に副作用が発生し得るため、測定対象は信頼でき、反復実行して安全なものに
-限定してください。`--isolated` はこの実行を隔離するセキュリティ機能ではありません。詳しくは
-[セキュリティ方針](../SECURITY.md#測定対象との信頼境界)を参照してください。
+For example, if `A.dll` reports a 10 ms total and type details of 6 ms and 4 ms, its history value is 10 ms, not 20 ms. If `B.dll` has no total and one 3 ms type row, the overall value is 13 ms. Failed iterations retain metrics, diagnostics, and logs but do not enter statistics. Requested iterations, recorded iterations, and successful samples can differ.
+
+The additional compiler-reporting pass runs target analyzers and source generators again. It can therefore cause side effects beyond the normal build count. Profile only trusted targets that are safe to execute repeatedly. `--isolated` does not provide security isolation. See the [security policy](../SECURITY.md#trust-boundary-for-profiled-targets).

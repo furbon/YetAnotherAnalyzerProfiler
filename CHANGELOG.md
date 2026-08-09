@@ -1,35 +1,55 @@
-﻿# 変更履歴
+﻿# Changelog
 
-このファイルには、YAAPの利用者に影響する変更を記録します。形式は
-[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/)を参考にし、バージョンはSemantic Versioningに従います。
+This file records changes to YAAP that materially affect users. Its structure is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow Semantic Versioning.
+
+## [0.1.1] - 2026-08-09
+
+### Documentation and support
+
+- Made English the authoritative language for repository documentation, NuGet package information, release notes, and contribution templates.
+- Added official Japanese translations for onboarding, usage, measurement, troubleshooting, security, and support guidance.
+- Explicitly accepts GitHub issue and pull-request submissions in English or Japanese.
+
+### Compatibility
+
+- No CLI commands, GUI behavior, history format, measurement semantics, supported operating systems, or target frameworks changed.
+- Existing v0.1.0 command lines and histories remain compatible.
+
+### Security and privacy
+
+- Preserved the existing trust boundary: YAAP is not a sandbox, and profiled targets can communicate or cause side effects.
+- Made the same trust-boundary and sensitive-data guidance available from the English canonical documents and selected Japanese translations.
+
+### Known limitations
+
+- Japanese documentation intentionally covers the main user and safety journeys rather than mirroring every developer and maintainer document. English prevails if translations differ.
 
 ## [0.1.0] - 2026-08-09
 
-YAAPの最初の公開版です。
+YAAP's first public release.
 
-### 主な機能
+### Major capabilities
 
-- `.sln`、`.slnx`、`.csproj`を対象としたAnalyzer／Source Generator測定と、既存binlogの解析
-- .NET 8／10対応のクロスプラットフォームCLI、.NETグローバルツール配布、ライト／ダークテーマを備えたWindows向けWPF GUI
-- warm、cold、custom測定モード、反復統計、restore切替、Analyzer／Generator別のコンパイラー報告時間
-- 生成ファイルの件数、バイト数、行数、相対パス、Generatorのアセンブリ／型を含むディスク上manifestとプレビュー
-- ラベル、検索、期間フィルター、保持件数を備えたローカル履歴と、2履歴の比較および比較可能性の警告
-- CSV、JSON、Markdownへの結果出力と、生成出力全件のexport
-- 長時間処理のキャンセル、失敗／部分結果の保存、安定した診断コード
+- Analyzer and source-generator profiling for `.sln`, `.slnx`, and `.csproj` inputs, plus existing-binlog analysis
+- Cross-platform CLI for .NET 8 and .NET 10, .NET global-tool distribution, and a Windows WPF GUI with light and dark themes
+- Warm, cold, and custom profiling modes; repeated-run statistics; restore control; and compiler-reported analyzer/generator time
+- An on-disk manifest and preview with generated-file counts, bytes, lines, relative paths, and generator assembly/type
+- Local history with labels, search, date filters, retention, two-run comparison, and comparability warnings
+- CSV, JSON, and Markdown result export plus complete generated-output export
+- Cancellation for long operations, preservation of failed and partial runs, and stable diagnostic codes
 
-### セキュリティとプライバシー
+### Security and privacy
 
-- YAAP自身にはテレメトリ、更新確認、外部API通信を実装していません。
-- 測定対象のrestore、build、MSBuild task、Analyzer、Source Generatorは通信や副作用を起こせます。
-- `--isolated`は出力場所を分けますが、サンドボックスではありません。
-- 履歴とbinlogはローカルに保存され、対象由来の機密情報を含む可能性があります。
+- YAAP itself has no telemetry, update checks, or external API communication.
+- The target's restore, build, MSBuild tasks, analyzers, and source generators can communicate or cause side effects.
+- `--isolated` separates output locations but is not a sandbox.
+- History and binlogs remain local but can contain confidential target information.
 
-### 既知の制約
+### Known limitations
 
-- GUIはWindows専用です。
-- CLIの標準出力とGUIのファイル選択／テーマなど、表示媒体に応じた操作差があります。正確な差は
-  [機能対応表](docs/index.md#cliとguiの機能対応表)を参照してください。
-- Source Generator時間はアセンブリ／型単位です。生成ファイル単位の時間は推定しません。
-- 信頼できない測定対象を隔離して実行する機能はありません。
+- The GUI is Windows-only.
+- The CLI and GUI have medium-specific differences such as standard output, file pickers, and themes. See the [feature matrix](docs/index.md#cli-and-gui-feature-matrix).
+- Source-generator time is reported per assembly/type. YAAP does not estimate time per generated file.
+- YAAP does not isolate untrusted targets.
 
-リリース用アーカイブの対応OS、RID、TFM、checksumは、公開時のリリース添付情報を正本とします。
+Release attachments are authoritative for the operating systems, RIDs, TFMs, and checksums of each archive.

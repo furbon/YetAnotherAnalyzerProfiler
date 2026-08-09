@@ -1,69 +1,40 @@
-﻿# 設計
+﻿# Architecture
 
-YAAP は `Yaap.Core`、`Yaap.Cli`、`Yaap.Gui` と、測定対象のMSBuild内で動く
-`Yaap.BuildLogger` で構成します。Core が入力検出、子プロセス、binlog 逐次解析、統計、履歴、
-比較、出力を所有し、CLI と GUI は同じAPIを利用します。
+YAAP consists of `Yaap.Core`, `Yaap.Cli`, `Yaap.Gui`, and `Yaap.BuildLogger`, which runs inside the MSBuild process that builds the target. Core owns target discovery, child processes, streaming binlog parsing, statistics, history, comparison, and export. The CLI and GUI use the same API.
 
-## 測定パイプライン
+## Profiling pipeline
 
-1. 入力と構成をストリーミング XML／テキストで検出します。
-2. Git、SDK、OS、CPU、対象フレームワークを記録します。
-3. restore が有効な場合は、対象の通常の restore を一度だけ実行します。
-4. 必要なウォームアップ後、clean と `/reportanalyzer` 付き非インクリメンタル build を反復します。
-5. 測定対象をビルドするMSBuild自身が、C# コンパイラ呼び出しだけを行単位のサイドカーへ逐次
-   記録します。YAAPが .NET 8 で動作し、対象が新しいSDKでビルドされてもbinlog形式に依存しません。
-6. 記録した C# コンパイラ呼び出しを応答ファイルで忠実に再実行し、Roslyn の
-   Analyzer／Generator レポートを取得します。この追加コンパイラパスはビルド経過時間には
-   含めず、Analyzer／Generator のコンパイラ報告値だけに利用します。
-7. 単体のbinlog解析および古い測定経路では、`BinaryLogReplayEventSource` でイベント単位に読み、
-   全体を展開しません。
-8. `EmitCompilerGeneratedFiles` の外部出力を64 KiB単位で走査し、ファイル情報を収集します。
-9. 各反復の生成出力をGeneratorアセンブリと型で集約し、履歴には最終集約を一度だけ保持します。
-10. 平均、最小、最大、母標準偏差と部分結果を原子的に保存します。
+1. Discover inputs and configurations with streaming XML or text parsing.
+2. Record Git, SDK, operating system, CPU, and target frameworks.
+3. Run the target's ordinary restore once when restore is enabled.
+4. After required warmups, repeat clean and a non-incremental build with `/reportanalyzer`.
+5. MSBuild records each C# compiler invocation to a line-oriented sidecar. This avoids a binlog-generation dependency when YAAP runs on .NET 8 and the target uses a newer SDK.
+6. Replay each recorded compiler invocation through a response file and collect Roslyn analyzer/generator reports. This pass contributes only compiler-reported analyzer/generator metrics, not measured build duration.
+7. For standalone binlog analysis and the legacy measurement path, consume `BinaryLogReplayEventSource` one event at a time without expanding the whole log.
+8. Scan external `EmitCompilerGeneratedFiles` output in 64 KiB chunks.
+9. Aggregate generated output by generator assembly and type for each iteration, then retain the final aggregate once in history.
+10. Atomically store mean, minimum, maximum, population standard deviation, and partial results.
 
-Roslyn のレポートは Analyzer と診断型、Generator アセンブリと型の時間を提供します。
-生成された個別ファイルの実行時間は提供しないため、YAAP は推測しません。`<0.001 秒` は
-レポート解像度の上限値である 1 ms として保守的に記録します。
+Roslyn reports analyzer and diagnostic-type time plus generator assembly/type time. It does not report execution time for individual generated files, so YAAP does not infer it. A report value of `<0.001 seconds` is conservatively stored as the reporting resolution's upper bound of 1 ms.
 
-## 大規模入力
+## Large inputs
 
-binlog とコンパイラ呼び出しサイドカーはイベント／行ストリームとして処理します。子プロセス出力は
-stdout／stderrを区別して履歴run配下のコマンド別ログへ逐次書き、メモリ上はそれぞれ末尾200行に
-制限します。成功したコマンドの一時ログは削除し、失敗またはキャンセルされたコマンドの完全ログ、実行コマンド、
-作業ディレクトリ、末尾が切り詰められたかを診断とともに保持します。
-履歴一覧は小さい summary のみを読み、run 全体は選択時に読みます。生成ファイルは1件ずつ
-64 KiBで読み、内容そのものは保持しません。生成出力メタデータの全件は、runごとの
-`generated-outputs.ndjson` へ1行ずつ書き、完了時に一時ファイルから原子的に置き換えます。run JSONの
-各Generatorには、相対パスなどで決定的に並ぶ先頭100件のプレビューと `OutputsTruncated` だけを保持し、
-件数、バイト数、行数の集計値は全件を表します。
+Binlogs and compiler sidecars are processed as event or line streams. Child-process stdout and stderr stream to per-command logs under the history run; memory retains at most the final 200 lines of each stream. Temporary logs for successful commands are removed. Failed or canceled commands retain complete logs, the command, working directory, truncation status, and diagnostics.
 
-履歴とexportはmanifestを行単位のキャンセル可能な非同期ストリームとして読みます。履歴からの
-CSV／JSON／Markdown exportには全件を渡し、GUI の一覧は上限付きプレビューを行・列仮想化して表示します。
-このためメモリ量はbinlog、生成ファイルの総バイト数、生成出力メタデータの全件数に比例して増えません。
-ディスク使用量は全件manifestのサイズに比例します。
+History lists load only small summaries and load full runs on selection. Generated files are read one at a time in 64 KiB chunks without retaining content. Complete generated-output metadata is written one line at a time to `generated-outputs.ndjson` and atomically replaces its temporary file on completion. Each generator in run JSON retains a deterministic first-100 preview and `OutputsTruncated`; counts, bytes, and lines still describe all output.
 
-測定反復は `measurements/` 配下へ1反復1ファイルのcheckpointとして原子的に保存し、`run.json` は
-集約値と状態を保持します。反復ごとに過去の全サンプルを再直列化しないため、総書込み量は反復数と
-各反復データ量に比例します。履歴詳細とCLIの完全JSONはcheckpointを順に復元し、途中失敗・取消でも
-成功・失敗を含む記録済み反復と診断を失いません。
+History and export consume the manifest as a cancelable asynchronous line stream. History exports all records to CSV, JSON, or Markdown; the GUI virtualizes a bounded preview. Memory therefore does not grow with total binlog bytes, generated-file bytes, or generated-output record count. Disk use grows with the complete manifest.
 
-## GUI状態とテーマ
+Each measured iteration is atomically checkpointed as one file under `measurements/`; `run.json` holds aggregate state. Avoiding serialization of all earlier samples on every iteration keeps total writes linear in iteration count and data size. History detail and complete CLI JSON replay checkpoints in order, preserving successful and failed recorded iterations and diagnostics after failure or cancellation.
 
-対象検出は世代番号とCancellationTokenで管理し、古い結果をUIへ反映しません。構成一覧を
-入れ替えた後に選択値を明示設定し、最新の同一対象履歴、Release、Debug、アルファベット順の
-優先順位を適用します。開始コマンドの可否と説明文は同じ状態から導出するため、無効理由が
-表示とずれることを防ぎます。
+## GUI state and themes
 
-GUIの外観はWPF UIのFluentWindow、テーマ辞書、コントロール辞書を一体で利用します。YAAP独自の
-色パレットや基本コントロールテンプレートは持ちません。既定のAutoはWPF UIのシステムテーマ監視で
-Windowsの変更へ追従し、明示的なライト／ダーク指定も同じテーマ基盤を通してウィンドウ、ポップアップ、
-入力、表、状態表示へ即時反映します。
+Target discovery uses generation numbers and cancellation tokens so stale results never reach the UI. After replacing the configuration list, selection is explicitly chosen in this order: latest history for the same target, Release, Debug, then alphabetical. Command availability and status text derive from the same state.
 
-## オフラインとデータ
+The GUI uses WPF UI's FluentWindow, theme dictionaries, and control dictionaries together. YAAP does not maintain a separate palette or base control templates. Auto follows Windows theme changes through WPF UI; explicit light or dark selection uses the same theme system for windows, popups, inputs, tables, and status displays.
 
-YAAP自身にテレメトリ、更新確認、外部APIクライアントはありません。対象が指定したfeedに対する
-子 `dotnet restore` に加え、対象のbuild、MSBuild task、Analyzer、Source Generatorは、その実装に
-従って通信できます。YAAPはこれらをサンドボックス化しません。履歴はJSONでローカル保存され、
-YAAP自身から送信されませんが、絶対パス、Git情報、診断、完全な子プロセスログ、binlogなどの
-機密情報を含み得ます。
-信頼境界と安全な取扱いは [セキュリティ方針](../SECURITY.md) を参照してください。
+## Offline operation and data
+
+YAAP itself has no telemetry, update check, or external API client. The target's child `dotnet restore` can contact configured feeds; its build, MSBuild tasks, analyzers, and source generators can communicate according to their implementation. YAAP does not sandbox them.
+
+History is local JSON and YAAP does not transmit it, but it can contain absolute paths, Git information, diagnostics, complete child-process logs, binlogs, and other confidential information. See the [security policy](../SECURITY.md).

@@ -40,7 +40,7 @@
         "type": "Project",
         "dependencies": {
           "WPF-UI": "[4.3.0, )",
-          "Yaap.Core": "[0.1.0, )"
+          "Yaap.Core": "[0.1.1, )"
         }
       },
       "yaap.core": {
@@ -120,7 +120,7 @@
         "type": "Project",
         "dependencies": {
           "WPF-UI": "[4.3.0, )",
-          "Yaap.Core": "[0.1.0, )"
+          "Yaap.Core": "[0.1.1, )"
         }
       },
       "yaap.core": {

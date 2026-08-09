@@ -40,7 +40,7 @@
       "YetAnotherAnalyzerProfiler.Tool": {
         "type": "Project",
         "dependencies": {
-          "Yaap.Core": "[0.1.0, )"
+          "Yaap.Core": "[0.1.1, )"
         }
       },
       "Microsoft.Build": {
@@ -105,7 +105,7 @@
       "YetAnotherAnalyzerProfiler.Tool": {
         "type": "Project",
         "dependencies": {
-          "Yaap.Core": "[0.1.0, )"
+          "Yaap.Core": "[0.1.1, )"
         }
       },
       "Microsoft.Build": {

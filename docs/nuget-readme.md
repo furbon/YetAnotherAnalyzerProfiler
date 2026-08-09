@@ -1,8 +1,8 @@
 ﻿# YetAnotherAnalyzerProfiler CLI
 
-YAAP は、C# ビルドに含まれる Roslyn Analyzer と Source Generator の実行時間を、コンパイラー報告値から測定するローカル実行型ツールです。
+YAAP is a local tool that measures Roslyn analyzer and source-generator execution time in C# builds using compiler-reported values.
 
-## 起動
+## Get started
 
 ```powershell
 dotnet tool install --global YetAnotherAnalyzerProfiler.Tool
@@ -11,16 +11,18 @@ yaap history list
 yaap help
 ```
 
-.NET 8 または .NET 10 が必要です。コマンドごとの説明は `yaap <command> --help` で確認できます。
+.NET 8 or .NET 10 is required. Run `yaap <command> --help` for command-specific help.
 
-## 安全上の注意
+## Safety
 
-YAAP はサンドボックスではありません。対象の restore、clean、build、MSBuild task、Analyzer、Source Generator を利用者と同じ権限で実行します。信頼できない対象を測定しないでください。分離出力は標準の `bin`／`obj` を別の場所へ移す機能であり、ファイル操作や通信を制限しません。
+YAAP is not a sandbox. It runs the target's restore, clean, build, MSBuild tasks, analyzers, and source generators with your permissions. Do not profile an untrusted target. Isolated output moves standard `bin` and `obj` output; it does not restrict file operations or communication.
 
-YAAP 自身はテレメトリや更新確認を行いません。ただし、測定対象は通常の restore や独自実装を通じて通信できます。履歴、binlog、export には絶対パス、ログ、対象由来の機密情報が含まれ得るため、共有前に確認してください。
+YAAP itself has no telemetry or update checks. The profiled target can still communicate through ordinary restore or its own implementation. History, binlogs, and exports can contain absolute paths, logs, and confidential target information. Inspect them before sharing.
 
-## 測定値
+## Metrics
 
-Analyzer／Source Generator の時間はコンパイラーが報告したアセンブリ／型単位の値です。生成ファイル単位の実行時間は推定しません。失敗した測定は診断として保存し、成功サンプルの統計へ混ぜません。
+Analyzer and source-generator time is reported by the compiler per assembly/type. YAAP does not estimate execution time per generated file. Failed measurements retain diagnostics and do not enter successful-sample statistics.
 
-プロジェクト URL、ソース、Issue、セキュリティ報告先は、公開パッケージの NuGet メタデータから同じバージョンのホスティング先を開いて確認してください。
+For complete documentation, issues, and private security reporting, visit the [YAAP repository](https://github.com/furbon/YetAnotherAnalyzerProfiler). [Japanese documentation](https://github.com/furbon/YetAnotherAnalyzerProfiler/blob/main/README.ja.md) is also available.
+
+This readme is embedded in each package version. It is updated from the repository when a new package is published; NuGet.org does not fetch later repository changes into an existing package.

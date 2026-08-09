@@ -1,34 +1,31 @@
-﻿# GUI視覚回帰テスト
+﻿# GUI Visual Regression Testing
 
-WPFの変更はコンパイル成功やプロパティ値の一致だけでは完了としません。次のコマンドで.NET 8／10、
-ライト／ダーク、通常幅／最小幅、全メインタブ、およびAnalyzer／Source Generatorの表・ツリー・空状態を
-実ウィンドウへ描画します。
+A successful WPF compilation or property assertion is not sufficient validation. Run the following command to render .NET 8/10, light/dark themes, normal/minimum widths, every main tab, and analyzer/source-generator table, tree, and empty states in real windows:
 
 ```powershell
 ./eng/build.ps1 visual --output artifacts/gui-visuals
 ```
 
-`artifacts/gui-visuals/index.html` は両TFMへのリンクを持ち、各TFMの`index.html`は全画像を同じ寸法の
-グリッドへ並べます。画像不足はコマンド自体が失敗します。生成物はGit管理対象外です。
+`artifacts/gui-visuals/index.html` links both TFMs. Each TFM index displays every image at the same dimensions in a grid. Missing images fail the command. Outputs are ignored by Git.
 
-## 必須の比較順序
+## Required comparison order
 
-1. ライトとダークを左右に並べ、選択、非選択、ホバー／フォーカス、無効状態で文字と境界が消えていないか確認します。表／ツリーを往復選択した後のフォーカス画像では、上・左・右・下の4辺を個別に確認します。
-2. 通常幅と最小幅を並べ、右端、下端、角丸、スクロールバー、最終行が欠けていないか確認します。
-3. AnalyzerとSource Generatorの表形式を並べ、次にツリー形式を並べて、ヘッダー、区切り、余白、行高、空状態を比較します。
-4. 全7メインタブを順番に見て、タブの角、選択下線、コンテンツ境界、検索・操作欄の整列が共通か確認します。
-5. 対象ツールバーの有効／無効画像を並べ、入力、参照、最近使用、詳細、構成、測定開始の高さ、境界色、間隔を比較します。
-6. 変更箇所だけでなく画面全体を見て、以前の画像にない切れ、過剰な強調、孤立した色・角・余白がないか確認します。
+1. Compare light and dark side by side. Check selected, unselected, hover/focus, and disabled text and boundaries. After switching between table and tree selection, inspect all four sides of the focus rectangle.
+2. Compare normal and minimum widths. Check right/bottom edges, corners, scrollbars, and the final row for clipping.
+3. Compare analyzer and source-generator tables, then their trees. Check headers, separators, spacing, row height, and empty states.
+4. Inspect all seven main tabs in order for consistent tab corners, selection underline, content boundary, and search/action alignment.
+5. Compare enabled and disabled target toolbars. Check the target input, Browse, Recent, Advanced, configuration, and Start button heights, borders, and spacing.
+6. Inspect the entire window, not only the changed control, for new clipping or isolated color, corner, emphasis, or spacing.
 
-## 自動ガード
+## Automated guards
 
-`Yaap.Gui.Tests`は、上記画像の生成に加えて次を失敗条件として検査します。
+`Yaap.Gui.Tests` fails when:
 
-- 表形式／ツリー形式タブの右側に1DIPの描画余白がなく、100%／125%／150%／200%相当のデバイス座標で境界外の1pxと右上角の半径を確保できない。
-- 表形式／ツリー形式の往復選択後、独立した内側フォーカス枠の4辺いずれかにアクセント色の描画画素がない。
-- メインタブの下側が丸い、選択下線がない、または選択面全体がアクセント色になる。
-- 参照、最近使用、詳細、構成の境界太さ・色が一致しない、あるいは背景から識別できない。
-- Analyzer／Source Generatorの結果面、ヘッダー、表／ツリーの共有Styleが分岐する。
-- 通常幅／最小幅で内容が親領域からはみ出す、不要な横スクロールや行の部分表示が発生する。
+- Table/tree tabs lack the 1-DIP right drawing margin needed to preserve the outside pixel and top-right radius at 100%, 125%, 150%, and 200% scaling.
+- Any side of the independent inner focus rectangle lacks accent-colored pixels after table/tree round trips.
+- Main tabs have rounded lower corners, no selection underline, or an entirely accent-colored selected surface.
+- Browse, Recent, Advanced, and configuration borders differ or cannot be distinguished from the background.
+- Analyzer/source-generator result surfaces, headers, or shared table/tree styles diverge.
+- Content escapes its parent, an unnecessary horizontal scrollbar appears, or a partial row is displayed at normal/minimum widths.
 
-スクリーンショットは証跡ではなく比較対象です。自動検査が成功しても、上の順序による目視比較を省略しません。
+Screenshots are comparison inputs, not proof by themselves. Automated success does not replace the ordered visual inspection above.
