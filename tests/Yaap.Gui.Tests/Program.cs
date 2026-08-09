@@ -289,24 +289,23 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 Typography.GetNumeralAlignment(analyzerMeanText) == FontNumeralAlignment.Tabular,
                 "Timing values must use tabular numerals.");
-            IReadOnlyList<DataGridColumnHeader> analyzerHeaders =
-                FindVisualDescendants<DataGridColumnHeader>(analyzerGrid)
-                    .Where(header => header.Column is not null)
-                    .ToArray();
-            Ensure(analyzerHeaders.Count == 6, "Every Analyzer table column must render a header.");
-            Ensure(
-                analyzerHeaders.All(header => header.BorderThickness.Right == 1 && header.BorderThickness.Bottom == 1),
-                "Analyzer table headers must visibly separate every resize boundary.");
-            Ensure(
-                analyzerHeaders.All(header => header.FontWeight == FontWeights.SemiBold),
-                "Analyzer table headers must use the same semibold emphasis as the tree headers.");
-            Ensure(
-                analyzerHeaders.All(header =>
-                    FindVisualDescendants<Thumb>(header).Any(thumb => thumb.ActualWidth >= 8)),
-                "Every Analyzer table header boundary must retain a practical resize target.");
-            Ensure(
-                analyzerHeaders.All(header => header.ToolTip?.ToString()?.Contains("列幅", StringComparison.Ordinal) == true),
-                "Analyzer table headers must explain the drag-to-resize affordance.");
+            Ensure(analyzerGrid.Columns.Count == 6, "Every Analyzer table column must render a header.");
+            foreach (DataGridColumn column in analyzerGrid.Columns)
+            {
+                DataGridColumnHeader header = GetDataGridColumnHeader(analyzerGrid, column);
+                Ensure(
+                    header.BorderThickness.Right == 1 && header.BorderThickness.Bottom == 1,
+                    "Analyzer table headers must visibly separate every resize boundary.");
+                Ensure(
+                    header.FontWeight == FontWeights.SemiBold,
+                    "Analyzer table headers must use the same semibold emphasis as the tree headers.");
+                Ensure(
+                    FindVisualDescendants<Thumb>(header).Any(thumb => thumb.ActualWidth >= 8),
+                    "Every Analyzer table header boundary must retain a practical resize target.");
+                Ensure(
+                    header.ToolTip?.ToString()?.Contains("列幅", StringComparison.Ordinal) == true,
+                    "Analyzer table headers must explain the drag-to-resize affordance.");
+            }
             analyzerGrid.SelectedIndex = 0;
             Ensure(
                 MainWindow.CopyAnalyzerResultCommand.CanExecute(null, analyzerGrid),
@@ -623,8 +622,9 @@ static async Task WindowStartupSmokeAsync()
                             $"{mode} Analyzer table view tab");
                         analyzerGrid.SelectedIndex = 0;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        DataGridColumnHeader analyzerFirstHeader =
+                            GetDataGridColumnHeader(analyzerGrid, analyzerGrid.Columns[0]);
                         RenderTargetBitmap analyzerTableBitmap = RenderElement(window);
-                        DataGridColumnHeader analyzerFirstHeader = analyzerHeaders[0];
                         Color analyzerTableHeaderFill = GetRenderedPixel(
                             analyzerTableBitmap,
                             window,
@@ -945,19 +945,20 @@ static async Task WindowStartupSmokeAsync()
                             generatorTableViewTab,
                             generatorTreeViewTab,
                             $"{mode} Source Generator table view tab");
-                        IReadOnlyList<DataGridColumnHeader> generatorHeaders =
-                            FindVisualDescendants<DataGridColumnHeader>(generatorGrid)
-                                .Where(header => header.Column is not null)
-                                .ToArray();
-                        Ensure(generatorHeaders.Count == 6, "Every Source Generator table column must render a header.");
-                        Ensure(
-                            generatorHeaders.All(header => header.FontWeight == FontWeights.SemiBold),
-                            "Source Generator table headers must share the common semibold emphasis.");
-                        Ensure(
-                            generatorHeaders.All(header => header.BorderThickness.Right == 1 && header.BorderThickness.Bottom == 1),
-                            "Source Generator table headers must expose the same restrained column boundaries as Analyzer.");
+                        Ensure(generatorGrid.Columns.Count == 6, "Every Source Generator table column must render a header.");
+                        foreach (DataGridColumn column in generatorGrid.Columns)
+                        {
+                            DataGridColumnHeader header = GetDataGridColumnHeader(generatorGrid, column);
+                            Ensure(
+                                header.FontWeight == FontWeights.SemiBold,
+                                "Source Generator table headers must share the common semibold emphasis.");
+                            Ensure(
+                                header.BorderThickness.Right == 1 && header.BorderThickness.Bottom == 1,
+                                "Source Generator table headers must expose the same restrained column boundaries as Analyzer.");
+                        }
+                        DataGridColumnHeader generatorFirstHeader =
+                            GetDataGridColumnHeader(generatorGrid, generatorGrid.Columns[0]);
                         RenderTargetBitmap generatorTableBitmap = RenderElement(window);
-                        DataGridColumnHeader generatorFirstHeader = generatorHeaders[0];
                         Color generatorTableHeaderFill = GetRenderedPixel(
                             generatorTableBitmap,
                             window,
@@ -2223,6 +2224,18 @@ static DataGridCell GetDataGridCell(DataGrid grid, int rowIndex, int columnIndex
         throw new InvalidOperationException("The DataGrid cells presenter was not rendered.");
     return presenter.ItemContainerGenerator.ContainerFromIndex(columnIndex) as DataGridCell ??
         throw new InvalidOperationException($"DataGrid cell {rowIndex},{columnIndex} was not rendered.");
+}
+
+static DataGridColumnHeader GetDataGridColumnHeader(DataGrid grid, DataGridColumn column)
+{
+    object item = grid.Items.Count > 0
+        ? grid.Items[0]
+        : throw new InvalidOperationException("The DataGrid must contain an item to realize a column header.");
+    grid.ScrollIntoView(item, column);
+    grid.UpdateLayout();
+    return FindVisualDescendants<DataGridColumnHeader>(grid)
+        .FirstOrDefault(header => ReferenceEquals(header.Column, column)) ??
+        throw new InvalidOperationException($"The DataGrid column header was not rendered: {column.Header}");
 }
 
 static void SetPrivateProperty<T>(object target, string propertyName, T value)
