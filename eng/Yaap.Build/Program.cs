@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.IO.Compression;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -32,6 +33,9 @@ try
         case "format":
             await FormatAsync(root);
             break;
+        case "visual":
+            await CaptureGuiVisualMatrixAsync(root, GetOption(args, "--output"));
+            break;
         case "publish":
             EnsureSdkVersion(root, framework);
             await PublishAsync(root, framework, runtime ?? throw new InvalidOperationException(
@@ -48,6 +52,7 @@ try
                 CheckRepository(root);
                 await EnsurePackageLockRestoreDeterminismAsync(root, expectedPackageLocks);
                 await EnsurePackageLockDebugRebuildDeterminismAsync(root, expectedPackageLocks);
+                await EnsurePackageLockVisualStudioRebuildDeterminismAsync(root, expectedPackageLocks);
                 await RestoreAsync(root, framework);
                 NormalizePackageLockFiles(root);
                 EnsurePackageLockHashes(root, expectedPackageLocks, "Locked restore");
@@ -65,7 +70,7 @@ try
             }
         default:
             throw new InvalidOperationException(
-                "Task must be check, restore, format, build, test, pack, publish, or verify.");
+                "Task must be check, restore, format, build, test, visual, pack, publish, or verify.");
     }
 
     Console.WriteLine($"YAAP '{task}' completed for {framework}.");
@@ -154,10 +159,11 @@ static void EnsureCliRestoreGraphIdentity(string root)
         .GetProperty("restore")
         .GetProperty("projectName")
         .GetString();
-    if (!"yaap".Equals(projectName, StringComparison.Ordinal))
+    if (!"YetAnotherAnalyzerProfiler.Tool".Equals(projectName, StringComparison.Ordinal))
     {
         throw new InvalidOperationException(
-            $"CLI restore graph identity must be yaap, actual: {projectName ?? "<null>"}");
+            "CLI restore graph identity must match the evaluated PackageId " +
+            $"YetAnotherAnalyzerProfiler.Tool, actual: {projectName ?? "<null>"}");
     }
 }
 
@@ -200,6 +206,77 @@ static async Task EnsurePackageLockDebugRebuildDeterminismAsync(
             Directory.Delete(resolvedArtifactsPath, recursive: true);
         }
     }
+}
+
+static async Task EnsurePackageLockVisualStudioRebuildDeterminismAsync(
+    string root,
+    IReadOnlyDictionary<string, string> expectedHashes)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return;
+    }
+
+    string? msbuild = FindVisualStudioMsBuild();
+    if (msbuild is null)
+    {
+        Console.WriteLine("Visual Studio rebuild lock check skipped: Visual Studio MSBuild was not found.");
+        return;
+    }
+
+    await RunAsync(root, msbuild, new[]
+    {
+        Path.Combine(root, "tests", "Yaap.Tests", "Yaap.Tests.csproj"),
+        "-restore",
+        "-target:Rebuild",
+        "-property:Configuration=Debug",
+        "-property:RestoreLockedMode=false",
+        "-property:RestoreForceEvaluate=true",
+        "-verbosity:minimal",
+    });
+    EnsureCliRestoreGraphIdentity(root);
+    NormalizePackageLockFiles(root);
+    EnsurePackageLockHashes(root, expectedHashes, "Visual Studio rebuild of the package-lock owner graph");
+}
+
+static string? FindVisualStudioMsBuild()
+{
+    string[] roots =
+    {
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+    };
+    foreach (string root in roots.Where(Directory.Exists))
+    {
+        string visualStudioRoot = Path.Combine(root, "Microsoft Visual Studio");
+        if (!Directory.Exists(visualStudioRoot))
+        {
+            continue;
+        }
+
+        foreach (string versionDirectory in Directory
+                     .EnumerateDirectories(visualStudioRoot)
+                     .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (string editionDirectory in Directory
+                         .EnumerateDirectories(versionDirectory)
+                         .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                string candidate = Path.Combine(
+                    editionDirectory,
+                    "MSBuild",
+                    "Current",
+                    "Bin",
+                    "MSBuild.exe");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    return null;
 }
 
 static async Task BuildAsync(string root, string framework)
@@ -313,7 +390,10 @@ static async Task TestAsync(string root, string framework)
     await TestLocalFeedAsync(root);
 }
 
-static async Task BuildAndRunGuiTestsAsync(string root, string framework)
+static async Task BuildAndRunGuiTestsAsync(
+    string root,
+    string framework,
+    string? captureDirectory = null)
 {
     await RunAsync(root, "dotnet", new[]
     {
@@ -325,11 +405,14 @@ static async Task BuildAndRunGuiTestsAsync(string root, string framework)
         "Debug",
         "--no-restore",
     });
-    await RunGuiTestsAsync(root, framework);
+    await RunGuiTestsAsync(root, framework, captureDirectory);
 }
 
-static Task RunGuiTestsAsync(string root, string framework)
+static Task RunGuiTestsAsync(string root, string framework, string? captureDirectory = null)
 {
+    IReadOnlyDictionary<string, string?>? environment = captureDirectory is null
+        ? null
+        : new Dictionary<string, string?> { ["YAAP_GUI_CAPTURE_DIR"] = captureDirectory };
     return RunAsync(root, "dotnet", new[]
     {
         "run",
@@ -340,7 +423,130 @@ static Task RunGuiTestsAsync(string root, string framework)
         "--configuration",
         "Debug",
         "--no-build",
+    }, environment);
+}
+
+static async Task CaptureGuiVisualMatrixAsync(string root, string? requestedOutput)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        throw new PlatformNotSupportedException("GUI visual capture requires Windows and WPF.");
+    }
+
+    EnsureSdkVersion(root, "net10.0");
+    string output = Path.GetFullPath(requestedOutput ??
+        Path.Combine(root, "artifacts", "gui-visuals"));
+    Directory.CreateDirectory(output);
+    await RunAsync(root, "dotnet", new[]
+    {
+        "restore",
+        Path.Combine(root, "tests", "Yaap.Gui.Tests", "Yaap.Gui.Tests.csproj"),
+        "--locked-mode",
     });
+
+    foreach (string framework in new[] { "net8.0-windows", "net10.0-windows" })
+    {
+        string frameworkOutput = Path.Combine(output, framework);
+        Directory.CreateDirectory(frameworkOutput);
+        DateTime captureStartedAtUtc = DateTime.UtcNow.AddSeconds(-1);
+        await BuildAndRunGuiTestsAsync(root, framework, frameworkOutput);
+        ValidateVisualCaptureMatrix(frameworkOutput, captureStartedAtUtc);
+        WriteVisualContactSheet(frameworkOutput, framework);
+    }
+
+    string rootIndex = "<!doctype html><html lang=\"ja\"><meta charset=\"utf-8\">" +
+        "<title>YAAP GUI visual matrix</title><body><h1>YAAP GUI visual matrix</h1>" +
+        "<ul><li><a href=\"net8.0-windows/index.html\">.NET 8</a></li>" +
+        "<li><a href=\"net10.0-windows/index.html\">.NET 10</a></li></ul></body></html>";
+    File.WriteAllText(Path.Combine(output, "index.html"), rootIndex, new UTF8Encoding(false));
+    Console.WriteLine($"GUI visual matrix: {Path.Combine(output, "index.html")}");
+}
+
+static void ValidateVisualCaptureMatrix(string directory, DateTime captureStartedAtUtc)
+{
+    List<string> expected = new();
+    foreach (string theme in new[] { "light", "dark" })
+    {
+        expected.Add($"{theme}-target-toolbar-disabled.png");
+        expected.Add($"{theme}-target-toolbar-enabled.png");
+        for (int tab = 1; tab <= 7; tab++)
+        {
+            expected.Add($"{theme}-tab-{tab}.png");
+            expected.Add($"{theme}-tab-{tab}-narrow.png");
+        }
+
+        expected.AddRange(new[]
+        {
+            $"{theme}-analyzer-table-selected.png",
+            $"{theme}-analyzer-table-narrow.png",
+            $"{theme}-analyzer-table-context-menu.png",
+            $"{theme}-analyzer-tree-selected.png",
+            $"{theme}-analyzer-tree-narrow.png",
+            $"{theme}-analyzer-tree-context-menu.png",
+            $"{theme}-analyzer-table-empty.png",
+            $"{theme}-analyzer-tree-empty.png",
+            $"{theme}-generator-table-selected.png",
+            $"{theme}-generator-tree-selected.png",
+            $"{theme}-generator-table-empty.png",
+            $"{theme}-generator-tree-empty.png",
+            $"{theme}-advanced-settings.png",
+            $"{theme}-busy.png",
+            $"{theme}-custom-configuration.png",
+            $"{theme}-history-context-menu.png",
+            $"{theme}-history-loading.png",
+            $"{theme}-history-narrow.png",
+            $"{theme}-partial-troubleshooting.png",
+            $"{theme}-recent-targets.png",
+        });
+    }
+
+    string[] missing = expected
+        .Where(file =>
+        {
+            FileInfo capture = new(Path.Combine(directory, file));
+            return !capture.Exists ||
+                capture.Length == 0 ||
+                capture.LastWriteTimeUtc < captureStartedAtUtc;
+        })
+        .ToArray();
+    if (missing.Length > 0)
+    {
+        throw new InvalidOperationException(
+            "GUI visual capture matrix is incomplete: " + string.Join(", ", missing));
+    }
+}
+
+static void WriteVisualContactSheet(string directory, string framework)
+{
+    string[] images = Directory.GetFiles(directory, "*.png")
+        .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    StringBuilder html = new();
+    html.Append("<!doctype html><html lang=\"ja\"><meta charset=\"utf-8\"><title>")
+        .Append(WebUtility.HtmlEncode($"YAAP GUI visual matrix {framework}"))
+        .Append("</title><style>body{font-family:Segoe UI,sans-serif;background:#181818;color:#eee;margin:20px}")
+        .Append("main{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:16px}")
+        .Append("figure{margin:0;padding:12px;background:#252525;border:1px solid #444;border-radius:8px}")
+        .Append("img{display:block;width:100%;height:auto;background:#111}figcaption{margin-top:8px}</style><body><h1>")
+        .Append(WebUtility.HtmlEncode($"YAAP GUI visual matrix — {framework}"))
+        .Append("</h1><main>");
+    foreach (string image in images)
+    {
+        string file = Path.GetFileName(image);
+        html.Append("<figure><img loading=\"lazy\" src=\"")
+            .Append(WebUtility.HtmlEncode(file))
+            .Append("\" alt=\"")
+            .Append(WebUtility.HtmlEncode(file))
+            .Append("\"><figcaption>")
+            .Append(WebUtility.HtmlEncode(file))
+            .Append("</figcaption></figure>");
+    }
+
+    html.Append("</main></body></html>");
+    File.WriteAllText(
+        Path.Combine(directory, "index.html"),
+        html.ToString(),
+        new UTF8Encoding(false));
 }
 
 static async Task TestLocalFeedAsync(string root)
@@ -1212,6 +1418,7 @@ static void CheckRepository(string root)
 
     EnsureDeepReviewHarness(root, canonical);
     EnsureGuiStartupSmokeGuard(root);
+    EnsureGuiVisualRegressionHarness(root);
     EnsureThirdPartyNoticeSync(root);
 
     string[] files = GetRepositoryFiles(root);
@@ -1315,9 +1522,6 @@ static void EnsureCliRestoreIdentity(string root)
                  "<ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>",
                  "<ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>",
                  "<ToolCommandName>yaap</ToolCommandName>",
-                 "<Target Name=\"AlignRestoreProjectIdentity\"",
-                 "BeforeTargets=\"_GenerateRestoreProjectSpec\"",
-                 "<PackageId>yaap</PackageId>",
              })
     {
         if (!project.Contains(contract, StringComparison.Ordinal))
@@ -1325,6 +1529,14 @@ static void EnsureCliRestoreIdentity(string root)
             throw new InvalidOperationException(
                 $"CLI restore/package/output identities must remain deterministic: {contract}");
         }
+    }
+
+    if (project.Contains("AlignRestoreProjectIdentity", StringComparison.Ordinal) ||
+        project.Contains("BeforeTargets=\"_GenerateRestoreProjectSpec\"", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "CLI restore identity must be defined during project evaluation; target-time PackageId mutation " +
+            "is not observed by Visual Studio design-time restore and makes packages.lock.json unstable.");
     }
 }
 
@@ -1551,6 +1763,47 @@ static void EnsureGuiStartupSmokeGuard(string root)
             StringComparison.Ordinal))
     {
         throw new InvalidOperationException("Default .NET 10 verification must also run .NET 8 GUI tests.");
+    }
+}
+
+static void EnsureGuiVisualRegressionHarness(string root)
+{
+    string guidePath = Path.Combine(root, "docs", "gui-visual-testing.md");
+    if (!File.Exists(guidePath))
+    {
+        throw new InvalidOperationException("The tracked GUI visual review guide is missing.");
+    }
+
+    string guide = File.ReadAllText(guidePath);
+    foreach (string contract in new[]
+    {
+        "./eng/build.ps1 visual --output artifacts/gui-visuals",
+        "ライトとダーク",
+        "通常幅と最小幅",
+        "全7メインタブ",
+        "変更箇所だけでなく画面全体",
+    })
+    {
+        if (!guide.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GUI visual review guide is missing contract: {contract}");
+        }
+    }
+
+    string buildSource = File.ReadAllText(Path.Combine(root, "eng", "Yaap.Build", "Program.cs"));
+    foreach (string contract in new[]
+    {
+        "CaptureGuiVisualMatrixAsync",
+        "ValidateVisualCaptureMatrix",
+        "WriteVisualContactSheet",
+        "net8.0-windows",
+        "net10.0-windows",
+    })
+    {
+        if (!buildSource.Contains(contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GUI visual capture harness is missing contract: {contract}");
+        }
     }
 }
 

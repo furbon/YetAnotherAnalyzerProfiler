@@ -31,16 +31,16 @@
         "resolved": "10.0.4",
         "contentHash": "LmDnaYkcWkZSlZ07L7YcB6bH8sCiBZ7j28kPbYiXdF6f0iUiN7rxsRORlZGdj5saN/wZIqvF7lDBn/cpjU+e2g=="
       },
-      "yaap": {
-        "type": "Project",
-        "dependencies": {
-          "Yaap.Core": "[0.1.0, )"
-        }
-      },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Build": "[18.8.2, )"
+        }
+      },
+      "YetAnotherAnalyzerProfiler.Tool": {
+        "type": "Project",
+        "dependencies": {
+          "Yaap.Core": "[0.1.0, )"
         }
       },
       "Microsoft.Build": {
@@ -96,16 +96,16 @@
         "resolved": "8.0.0",
         "contentHash": "+TUFINV2q2ifyXauQXRwy4CiBhqvDEDZeVJU7qfxya4aRYOKzVBpN+4acx25VcPB9ywUN6C0n8drWl110PhZEg=="
       },
-      "yaap": {
-        "type": "Project",
-        "dependencies": {
-          "Yaap.Core": "[0.1.0, )"
-        }
-      },
       "yaap.core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Build": "[17.11.48, )"
+        }
+      },
+      "YetAnotherAnalyzerProfiler.Tool": {
+        "type": "Project",
+        "dependencies": {
+          "Yaap.Core": "[0.1.0, )"
         }
       },
       "Microsoft.Build": {

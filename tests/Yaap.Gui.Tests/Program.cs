@@ -187,6 +187,8 @@ static async Task WindowStartupSmokeAsync()
                 (TextBlock)window.FindName("GeneratorTreeEmptyMessage");
             DataGrid historyGrid = (DataGrid)window.FindName("HistoryGrid");
             DataGrid comparisonGrid = (DataGrid)window.FindName("ComparisonGrid");
+            FrameworkElement comparisonGridHost =
+                (FrameworkElement)window.FindName("ComparisonGridHost");
             DataGrid diagnosticsGrid = (DataGrid)window.FindName("DiagnosticsGrid");
             TextBlock diagnosticActionText = (TextBlock)window.FindName("DiagnosticActionText");
             TextBox diagnosticDetailText = (TextBox)window.FindName("DiagnosticDetailText");
@@ -275,9 +277,11 @@ static async Task WindowStartupSmokeAsync()
                 analyzerTreeCopyItem.Command == MainWindow.CopyAnalyzerResultCommand,
                 "Analyzer table and tree context menus must expose the same copy action.");
             Ensure(
-                MainWindow.CopyAnalyzerResultCommand.InputGestures.OfType<KeyGesture>().Any(
-                    gesture => gesture.Key == Key.C && gesture.Modifiers == ModifierKeys.Control),
-                "Analyzer copy must be discoverable through Ctrl+C.");
+                window.InputBindings.OfType<KeyBinding>().Any(binding =>
+                    binding.Command == MainWindow.CopyAnalyzerResultCommand &&
+                    binding.Key == Key.C &&
+                    binding.Modifiers == ModifierKeys.Control),
+                "Analyzer copy must remain executable through Ctrl+C.");
             DataGridCell analyzerMeanCell = GetDataGridCell(analyzerGrid, 0, 3);
             TextBlock analyzerMeanText = FindVisualDescendant<TextBlock>(analyzerMeanCell) ??
                 throw new InvalidOperationException("The analyzer mean cell text was not rendered.");
@@ -455,6 +459,19 @@ static async Task WindowStartupSmokeAsync()
                 mainTabs.SelectedIndex = 0;
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                 EnsureReadableForeground(mainTabs.Foreground, mode, "MainTabs");
+                EnsureToolbarOutlineContract(
+                    new Control[]
+                    {
+                        targetBrowseButton,
+                        recentTargetsButton,
+                        advancedSettingsButton,
+                        configurationSelector,
+                    },
+                    $"{mode} disabled target toolbar");
+                CaptureElement(
+                    targetCard,
+                    captureDirectory,
+                    $"{mode.ToString().ToLowerInvariant()}-target-toolbar-disabled");
                 CaptureWindow(window, captureDirectory, $"{mode.ToString().ToLowerInvariant()}-busy");
 
                 SetPrivateProperty(viewModel, nameof(MainViewModel.IsRunning), false);
@@ -476,6 +493,19 @@ static async Task WindowStartupSmokeAsync()
                     () => customTargetDiscovery.IsCompleted,
                     TimeSpan.FromSeconds(5));
                 customTargetDiscovery.GetAwaiter().GetResult();
+                EnsureToolbarOutlineContract(
+                    new Control[]
+                    {
+                        targetBrowseButton,
+                        recentTargetsButton,
+                        advancedSettingsButton,
+                        configurationSelector,
+                    },
+                    $"{mode} enabled target toolbar");
+                CaptureElement(
+                    targetCard,
+                    captureDirectory,
+                    $"{mode.ToString().ToLowerInvariant()}-target-toolbar-enabled");
                 viewModel.Configuration = string.Empty;
                 viewModel.Configuration = "CustomProfile";
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
@@ -512,15 +542,25 @@ static async Task WindowStartupSmokeAsync()
                     window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                     TabItem selectedTab = (TabItem)mainTabs.ItemContainerGenerator.ContainerFromIndex(index);
                     Border tabBorder = (Border)selectedTab.Template.FindName("TabBorder", selectedTab);
+                    Border tabIndicator =
+                        (Border)selectedTab.Template.FindName("MainTabIndicator", selectedTab);
                     ContentPresenter headerPresenter =
                         (ContentPresenter)selectedTab.Template.FindName("HeaderPresenter", selectedTab);
                     EnsureContrast(
                         TextElement.GetForeground(headerPresenter),
                         tabBorder.Background,
                         $"{mode} main tab {index + 1}");
+                    EnsureTopOnlyCornerRadius(
+                        tabBorder.CornerRadius,
+                        $"{mode} main tab {index + 1}");
                     Ensure(
-                        tabBorder.CornerRadius == analyzerTableSurface.CornerRadius,
-                        $"{mode} main tab {index + 1} must use the shared framework corner radius.");
+                        tabIndicator.Visibility == Visibility.Visible && tabIndicator.ActualHeight >= 3,
+                        $"{mode} main tab {index + 1} must use the shared accent underline.");
+                    Ensure(
+                        tabBorder.Background is SolidColorBrush tabFill &&
+                        tabIndicator.Background is SolidColorBrush tabAccent &&
+                        ColorDistance(tabFill.Color, tabAccent.Color) >= 40,
+                        $"{mode} main tab {index + 1} must not use a full accent-filled selected background.");
                     Ensure(
                         Panel.GetZIndex(selectedTab) == 1,
                         $"{mode} main tab {index + 1} must render above adjacent tabs without clipped edges.");
@@ -618,6 +658,9 @@ static async Task WindowStartupSmokeAsync()
                         analyzerTableMenu.IsOpen = true;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                         Ensure(analyzerTableMenu.IsOpen, "The Analyzer table context menu must open for a selection.");
+                        Ensure(
+                            analyzerTableMenu.ActualWidth >= 240,
+                            "The Analyzer table context menu must leave room for its keyboard shortcut.");
                         CaptureElement(
                             analyzerTableMenu,
                             captureDirectory,
@@ -759,6 +802,9 @@ static async Task WindowStartupSmokeAsync()
                         analyzerTreeMenu.IsOpen = true;
                         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                         Ensure(analyzerTreeMenu.IsOpen, "The Analyzer tree context menu must open for a selection.");
+                        Ensure(
+                            analyzerTreeMenu.ActualWidth >= 240,
+                            "The Analyzer tree context menu must leave room for its keyboard shortcut.");
                         CaptureElement(
                             analyzerTreeMenu,
                             captureDirectory,
@@ -853,18 +899,22 @@ static async Task WindowStartupSmokeAsync()
                         Ensure(
                             generatorGridBottom <= generatorSectionTop + 0.5,
                             "The Generator table must not overlap the generated-output explanation.");
-                        double generatorVisibleRowBottom = FindVisualDescendants<DataGridRow>(generatorGrid)
+                        Rect[] generatorVisibleRowBounds = FindVisualDescendants<DataGridRow>(generatorGrid)
                             .Where(row => row.IsVisible)
                             .Select(row => row.TransformToAncestor(generatorGrid)
                                 .TransformBounds(new Rect(0, 0, row.ActualWidth, row.ActualHeight)))
                             .Where(bounds => bounds.Top < generatorGrid.ActualHeight)
+                            .ToArray();
+                        double generatorVisibleRowBottom = generatorVisibleRowBounds
                             .Select(bounds => bounds.Bottom)
                             .DefaultIfEmpty(0)
                             .Max();
                         Ensure(
                             generatorVisibleRowBottom <= generatorGrid.ActualHeight + 0.5,
                             "The Generator table must not leave a partially clipped row above the output section " +
-                            $"({generatorVisibleRowBottom:F1} > {generatorGrid.ActualHeight:F1}).");
+                            $"({generatorVisibleRowBottom:F1} > {generatorGrid.ActualHeight:F1}; rows " +
+                            string.Join(", ", generatorVisibleRowBounds.Select(bounds =>
+                                $"{bounds.Top:F0}..{bounds.Bottom:F0}")) + ").");
                         TabItem generatorTableViewTab =
                             generatorViewTabs.ItemContainerGenerator.ContainerFromIndex(0) as TabItem ??
                             throw new InvalidOperationException("The Source Generator table view tab was not rendered.");
@@ -1327,6 +1377,18 @@ static async Task WindowStartupSmokeAsync()
                     {
                         Ensure(comparisonGrid.Items.Count == 336, "The visual comparison fixture must exercise a large list.");
                         EnsureAccessibleVerticalScrollBar(comparisonGrid, "Comparison table");
+                        Ensure(
+                            comparisonGrid.ActualHeight <= comparisonGridHost.ActualHeight &&
+                            comparisonGridHost.ActualHeight - comparisonGrid.ActualHeight < comparisonGrid.RowHeight,
+                            "The comparison table must use its viewport without exposing a clipped final row.");
+                        double comparisonRowsHeight = comparisonGrid.ActualHeight - 40;
+                        Ensure(
+                            comparisonRowsHeight >= 0 &&
+                            Math.Abs(
+                                comparisonRowsHeight -
+                                (Math.Round(comparisonRowsHeight / comparisonGrid.RowHeight) * comparisonGrid.RowHeight)) < 0.5,
+                            "The comparison viewport must contain a whole number of data rows.");
+                        EnsureNoPartiallyVisibleDataGridRows(comparisonGrid, "Comparison table");
                     }
                     else if (index == 5)
                     {
@@ -1362,6 +1424,12 @@ static async Task WindowStartupSmokeAsync()
                         mainTabs,
                         1,
                         $"{mode} narrow main tab {index + 1} content");
+                    if (index == 1 && generatorViewTabs.SelectedIndex == 0)
+                    {
+                        EnsureNoPartiallyVisibleDataGridRows(
+                            generatorGrid,
+                            $"{mode} narrow Source Generator table");
+                    }
                     CaptureWindow(
                         window,
                         captureDirectory,
@@ -1487,7 +1555,7 @@ static void CaptureWindow(Window window, string? captureDirectory, string name)
 
 static void CaptureElement(FrameworkElement element, string? captureDirectory, string name)
 {
-    RenderTargetBitmap bitmap = RenderElement(element);
+    BitmapSource bitmap = RenderElementForCapture(element);
     Ensure(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, "The GUI render bitmap is invalid.");
     if (string.IsNullOrWhiteSpace(captureDirectory))
     {
@@ -1501,12 +1569,37 @@ static void CaptureElement(FrameworkElement element, string? captureDirectory, s
     encoder.Save(stream);
 }
 
-static RenderTargetBitmap RenderElement(FrameworkElement element)
+static BitmapSource RenderElementForCapture(FrameworkElement element)
+{
+    Window? owner = Window.GetWindow(element);
+    if (owner is not null &&
+        !ReferenceEquals(owner, element) &&
+        element.IsDescendantOf(owner))
+    {
+        owner.UpdateLayout();
+        element.UpdateLayout();
+        Rect bounds = element.TransformToAncestor(owner)
+            .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        RenderTargetBitmap ownerBitmap = RenderElement(owner);
+        int left = Math.Clamp((int)Math.Floor(bounds.Left), 0, ownerBitmap.PixelWidth - 1);
+        int top = Math.Clamp((int)Math.Floor(bounds.Top), 0, ownerBitmap.PixelHeight - 1);
+        int right = Math.Clamp((int)Math.Ceiling(bounds.Right), left + 1, ownerBitmap.PixelWidth);
+        int bottom = Math.Clamp((int)Math.Ceiling(bounds.Bottom), top + 1, ownerBitmap.PixelHeight);
+        return new CroppedBitmap(
+            ownerBitmap,
+            new Int32Rect(left, top, right - left, bottom - top));
+    }
+
+    return RenderElement(element);
+}
+
+static RenderTargetBitmap RenderElement(FrameworkElement element, double dpiScale = 1)
 {
     element.UpdateLayout();
-    int width = Math.Max(1, (int)Math.Ceiling(element.ActualWidth));
-    int height = Math.Max(1, (int)Math.Ceiling(element.ActualHeight));
-    RenderTargetBitmap bitmap = new(width, height, 96, 96, PixelFormats.Pbgra32);
+    int width = Math.Max(1, (int)Math.Ceiling(element.ActualWidth * dpiScale));
+    int height = Math.Max(1, (int)Math.Ceiling(element.ActualHeight * dpiScale));
+    double dpi = 96 * dpiScale;
+    RenderTargetBitmap bitmap = new(width, height, dpi, dpi, PixelFormats.Pbgra32);
     bitmap.Render(element);
     Ensure(bitmap.PixelWidth == width && bitmap.PixelHeight == height, "The GUI render bitmap is invalid.");
     return bitmap;
@@ -1591,12 +1684,37 @@ static void EnsureElementWithin(
         $"{ancestor.ActualWidth:F1}x{ancestor.ActualHeight:F1}).");
 }
 
+static void EnsureNoPartiallyVisibleDataGridRows(DataGrid grid, string name)
+{
+    ScrollContentPresenter viewport = FindVisualDescendants<ScrollContentPresenter>(grid)
+        .OrderByDescending(presenter => presenter.ActualHeight * presenter.ActualWidth)
+        .FirstOrDefault() ??
+        throw new InvalidOperationException($"{name} did not render its content viewport.");
+    Rect viewportBounds = viewport.TransformToAncestor(grid)
+        .TransformBounds(new Rect(0, 0, viewport.ActualWidth, viewport.ActualHeight));
+    foreach (DataGridRow row in FindVisualDescendants<DataGridRow>(grid))
+    {
+        Rect bounds = row.TransformToAncestor(grid)
+            .TransformBounds(new Rect(0, 0, row.ActualWidth, row.ActualHeight));
+        bool intersectsBottomEdge =
+            bounds.Top < viewportBounds.Bottom - 0.5 &&
+            bounds.Bottom > viewportBounds.Bottom + 0.5;
+        Ensure(
+            !intersectsBottomEdge,
+            $"{name} must not show a partially clipped final row " +
+            $"(row {bounds.Top:F1}..{bounds.Bottom:F1}, viewport ends at {viewportBounds.Bottom:F1}, " +
+            $"row height {grid.RowHeight:F1}).");
+    }
+}
+
 static void EnsureResultViewTabState(TabItem selected, TabItem unselected, string name)
 {
     selected.ApplyTemplate();
     unselected.ApplyTemplate();
     Border selectedSurface = selected.Template.FindName("ResultViewTabSurface", selected) as Border ??
         throw new InvalidOperationException($"{name} did not render the selected tab surface.");
+    Grid selectedChrome = selected.Template.FindName("ResultViewTabChrome", selected) as Grid ??
+        throw new InvalidOperationException($"{name} did not render the selected tab chrome.");
     Border selectedIndicator = selected.Template.FindName("ResultViewTabIndicator", selected) as Border ??
         throw new InvalidOperationException($"{name} did not render the selection indicator.");
     ContentPresenter selectedHeader =
@@ -1621,13 +1739,92 @@ static void EnsureResultViewTabState(TabItem selected, TabItem unselected, strin
         selectedSurface.BorderBrush is SolidColorBrush { Color.A: > 0 } &&
         selectedSurface.BorderThickness.Left >= 1,
         $"{name} must expose a visible selected outline.");
+    Ensure(
+        selectedChrome.Margin.Right >= 1,
+        $"{name} must reserve a device-independent right gutter so its outline cannot be clipped.");
+    EnsureFullCornerRadius(selectedSurface.CornerRadius, name);
+    TabControl owner = ItemsControl.ItemsControlFromItemContainer(selected) as TabControl ??
+        throw new InvalidOperationException($"{name} did not retain its owning tab control.");
+    EnsureRoundedRightEdgeAtCommonScales(selected, selectedSurface, name);
     EnsureContrast(
         TextElement.GetForeground(selectedHeader),
         selectedSurface.Background,
         $"{name} selected label");
-    TabControl owner = ItemsControl.ItemsControlFromItemContainer(selected) as TabControl ??
-        throw new InvalidOperationException($"{name} did not retain its owning tab control.");
     EnsureElementWithin(selectedSurface, owner, 1, name);
+}
+
+static void EnsureToolbarOutlineContract(IReadOnlyList<Control> controls, string name)
+{
+    Ensure(controls.Count > 0, $"{name} must contain controls.");
+    Color? expectedBorder = null;
+    foreach (Control control in controls)
+    {
+        Ensure(
+            control.BorderThickness == new Thickness(1),
+            $"{name} {control.Name} must use the shared one-pixel outline.");
+        Ensure(
+            control.BorderBrush is SolidColorBrush border && border.Color.A > 0,
+            $"{name} {control.Name} must render a visible theme outline.");
+        Ensure(
+            control.Background is SolidColorBrush fill &&
+            ColorDistanceIncludingAlpha(fill.Color, ((SolidColorBrush)control.BorderBrush).Color) >= 8,
+            $"{name} {control.Name} outline must remain distinguishable from its fill " +
+            $"(fill {((SolidColorBrush)control.Background).Color}, " +
+            $"outline {((SolidColorBrush)control.BorderBrush).Color}).");
+        expectedBorder ??= ((SolidColorBrush)control.BorderBrush).Color;
+        Ensure(
+            ColorDistanceIncludingAlpha(expectedBorder.Value, ((SolidColorBrush)control.BorderBrush).Color) <= 1,
+            $"{name} {control.Name} must use the same outline color as adjacent toolbar controls.");
+    }
+}
+
+static double ColorDistanceIncludingAlpha(Color left, Color right) => Math.Sqrt(
+    Math.Pow(left.A - right.A, 2) +
+    Math.Pow(left.R - right.R, 2) +
+    Math.Pow(left.G - right.G, 2) +
+    Math.Pow(left.B - right.B, 2));
+
+static void EnsureTopOnlyCornerRadius(CornerRadius radius, string name)
+{
+    Ensure(
+        radius.TopLeft > 0 && radius.TopRight > 0,
+        $"{name} must retain rounded upper corners.");
+    Ensure(
+        radius.BottomLeft == 0 && radius.BottomRight == 0,
+        $"{name} must join the content surface with square lower corners.");
+}
+
+static void EnsureFullCornerRadius(CornerRadius radius, string name)
+{
+    Ensure(
+        radius.TopLeft > 0 && radius.TopRight > 0 &&
+        radius.BottomLeft > 0 && radius.BottomRight > 0,
+        $"{name} must retain all four rounded corners.");
+}
+
+static void EnsureRoundedRightEdgeAtCommonScales(
+    FrameworkElement tab,
+    Border surface,
+    string name)
+{
+    Rect surfaceBounds = surface.TransformToAncestor(tab)
+        .TransformBounds(new Rect(0, 0, surface.ActualWidth, surface.ActualHeight));
+    Ensure(
+        surfaceBounds.Right <= tab.ActualWidth - 0.5,
+        $"{name} surface must remain inset from the clipping edge.");
+    foreach (double scale in new[] { 1d, 1.25d, 1.5d, 2d })
+    {
+        int tabRight = (int)Math.Floor(tab.ActualWidth * scale);
+        int surfaceRight = (int)Math.Ceiling(surfaceBounds.Right * scale);
+        int devicePixelGutter = tabRight - surfaceRight;
+        Ensure(
+            devicePixelGutter >= 1,
+            $"{name} must preserve at least one device pixel beyond the right outline at " +
+            $"{scale:P0} scale (gutter {devicePixelGutter}px).");
+        Ensure(
+            Math.Round(surface.CornerRadius.TopRight * scale) >= 4,
+            $"{name} top-right radius must remain visible at {scale:P0} scale.");
+    }
 }
 
 static void EnsureReadableForeground(Brush brush, AppThemeMode mode, string name)
@@ -2831,9 +3028,13 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("ItemsSource=\"{Binding AnalyzerTree}\"", StringComparison.Ordinal), "The analyzer tree view is required.");
     Ensure(xaml.Contains("x:Key=\"ResultSurfaceStyle\"", StringComparison.Ordinal), "Analyzer and Source Generator views must share one result-surface contract.");
     Ensure(xaml.Contains("x:Key=\"ResultViewTabStyle\"", StringComparison.Ordinal), "Analyzer and Source Generator must share one view-selector contract.");
-    Ensure(xaml.Contains("x:Key=\"MainTabItemStyle\"", StringComparison.Ordinal), "Main navigation tabs must share one framework-radius style.");
+    Ensure(xaml.Contains("x:Key=\"MainTabItemStyle\"", StringComparison.Ordinal), "Main navigation tabs must share one style.");
+    Ensure(xaml.Contains("x:Key=\"MainTabCornerRadius\"", StringComparison.Ordinal), "Main navigation tabs must share top-only corner radii.");
+    Ensure(xaml.Contains("x:Name=\"MainTabIndicator\"", StringComparison.Ordinal), "Main navigation tabs must expose the shared accent underline.");
+    Ensure(xaml.Contains("x:Name=\"ResultViewTabChrome\"", StringComparison.Ordinal), "Result-view tabs must reserve unclipped visual chrome.");
     Ensure(xaml.Contains("x:Key=\"ResultColumnHeaderStyle\"", StringComparison.Ordinal), "Result table headers must expose restrained resize boundaries.");
-    Ensure(xaml.Contains("Header=\"詳細をコピー\"", StringComparison.Ordinal), "Analyzer table and tree items must expose a shared copy action.");
+    Ensure(xaml.Contains("Header=\"詳細をコピー    Ctrl+C\"", StringComparison.Ordinal), "Analyzer table and tree items must expose a shared copy action and visible shortcut.");
+    Ensure(xaml.Contains("<KeyBinding Command=\"{x:Static local:MainWindow.CopyAnalyzerResultCommand}\"", StringComparison.Ordinal), "Analyzer copy menus must bind the displayed shortcut at the window level.");
     Ensure(xaml.Contains("OnAnalyzerGridPreviewMouseRightButtonDown", StringComparison.Ordinal), "Analyzer table right-click must select its target row.");
     Ensure(xaml.Contains("OnAnalyzerTreePreviewMouseRightButtonDown", StringComparison.Ordinal), "Analyzer tree right-click must select its target node.");
     Ensure(xaml.Contains("表示する Analyzer 結果がありません", StringComparison.Ordinal), "Both Analyzer views must explain empty results.");
@@ -2843,9 +3044,13 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("ItemsSource=\"{Binding GeneratorTree}\"", StringComparison.Ordinal), "The generator tree view is required.");
     Ensure(xaml.Contains("x:Name=\"GeneratorTableSurface\"", StringComparison.Ordinal) && xaml.Contains("x:Name=\"GeneratorTreeSurface\"", StringComparison.Ordinal), "Source Generator table and tree must use bounded result surfaces.");
     Ensure(xaml.Contains("x:Name=\"GeneratorTableEmptyMessage\"", StringComparison.Ordinal) && xaml.Contains("x:Name=\"GeneratorTreeEmptyMessage\"", StringComparison.Ordinal), "Both Source Generator views must explain empty results.");
+    Ensure(xaml.Contains("x:Key=\"WholeRowDataGridHeightConverter\"", StringComparison.Ordinal), "Bounded comparison results must avoid partially clipped final rows.");
+    Ensure(xaml.Contains("x:Key=\"GeneratorGridHeightConverter\"", StringComparison.Ordinal), "Narrow Source Generator tables must reserve horizontal-scrollbar height without clipping a row.");
     Ensure(xaml.Contains("Header=\"設定\"", StringComparison.Ordinal), "The settings tab is required.");
     Ensure(xaml.Contains("AccentFillColorDefaultBrush", StringComparison.Ordinal), "Selected main tabs should have a visible accent.");
-    Ensure(xaml.Contains("TextOnAccentFillColorPrimaryBrush", StringComparison.Ordinal), "Selected tab text must contrast with the accent.");
+    Ensure(xaml.Contains("x:Key=\"ToolbarButtonStyle\"", StringComparison.Ordinal) &&
+        xaml.Contains("x:Key=\"ToolbarComboBoxStyle\"", StringComparison.Ordinal),
+        "Toolbar buttons and configuration selectors must share an explicit outline contract.");
     Ensure(xaml.Contains("x:Name=\"RecentTargetsButton\"", StringComparison.Ordinal), "Recent targets must use a compact button.");
     Ensure(xaml.Contains("x:Name=\"RecentTargetsPopup\"", StringComparison.Ordinal), "Recent targets must use a reliable popup.");
     Ensure(!xaml.Contains("最近使用 ▼", StringComparison.Ordinal), "Recent targets must not use a text triangle.");

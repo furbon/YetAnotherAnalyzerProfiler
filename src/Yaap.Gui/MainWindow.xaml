@@ -20,8 +20,20 @@
                         Command="{x:Static local:MainWindow.CopyAnalyzerResultCommand}"
                         Executed="OnCopyAnalyzerResultExecuted" />
     </ui:FluentWindow.CommandBindings>
+    <ui:FluentWindow.InputBindings>
+        <KeyBinding Command="{x:Static local:MainWindow.CopyAnalyzerResultCommand}"
+                    Key="C"
+                    Modifiers="Control" />
+    </ui:FluentWindow.InputBindings>
     <ui:FluentWindow.Resources>
         <local:WidthAdjustmentConverter x:Key="ResultTreeRowWidthConverter" Adjustment="55" />
+        <local:WholeRowDataGridHeightConverter x:Key="WholeRowDataGridHeightConverter"
+                                               HeaderHeight="40"
+                                               RowHeight="34" />
+        <local:HorizontalScrollCompensatedHeightConverter x:Key="GeneratorGridHeightConverter"
+                                                          BaseHeight="266"
+                                                          RequiredWidth="1136"
+                                                          ScrollbarHeight="18" />
         <Style x:Key="NumericCellTextStyle" TargetType="{x:Type TextBlock}">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="TextAlignment" Value="Right" />
@@ -55,20 +67,29 @@
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style x:Key="ResultViewTabStyle"
+        <CornerRadius x:Key="MainTabCornerRadius">4,4,0,0</CornerRadius>
+        <Style x:Key="ApplicationTabItemBaseStyle"
                BasedOn="{StaticResource {x:Type TabItem}}"
                TargetType="{x:Type TabItem}">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
-            <Setter Property="Margin" Value="0,0,4,0" />
             <Setter Property="MinHeight" Value="36" />
+            <Setter Property="UseLayoutRounding" Value="True" />
+        </Style>
+        <Style x:Key="ResultViewTabStyle"
+               BasedOn="{StaticResource ApplicationTabItemBaseStyle}"
+               TargetType="{x:Type TabItem}">
+            <Setter Property="Margin" Value="0,0,3,0" />
             <Setter Property="Padding" Value="12,6" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type TabItem}">
-                        <Grid SnapsToDevicePixels="True">
+                        <Grid x:Name="ResultViewTabChrome"
+                              Margin="0,0,1,0"
+                              SnapsToDevicePixels="True"
+                              UseLayoutRounding="True">
                             <Border x:Name="ResultViewTabSurface"
                                     Padding="{TemplateBinding Padding}"
                                     Background="{TemplateBinding Background}"
@@ -115,41 +136,51 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="MainTabItemStyle" TargetType="{x:Type TabItem}">
+        <Style x:Key="MainTabItemStyle"
+               BasedOn="{StaticResource ApplicationTabItemBaseStyle}"
+               TargetType="{x:Type TabItem}">
             <Setter Property="Margin" Value="0,0,4,0" />
             <Setter Property="Padding" Value="16,8" />
-            <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type TabItem}">
-                        <Border x:Name="TabBorder"
-                                Margin="{TemplateBinding Margin}"
-                                Padding="{TemplateBinding Padding}"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="{DynamicResource ControlCornerRadius}"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter x:Name="HeaderPresenter"
-                                              HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"
-                                              ContentSource="Header"
-                                              RecognizesAccessKey="True"
-                                              TextElement.Foreground="{TemplateBinding Foreground}" />
-                        </Border>
+                        <Grid x:Name="MainTabChrome"
+                              Margin="0,0,1,0"
+                              SnapsToDevicePixels="True"
+                              UseLayoutRounding="True">
+                            <Border x:Name="TabBorder"
+                                    Padding="{TemplateBinding Padding}"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{StaticResource MainTabCornerRadius}">
+                                <ContentPresenter x:Name="HeaderPresenter"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  ContentSource="Header"
+                                                  RecognizesAccessKey="True"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <Border x:Name="MainTabIndicator"
+                                    Height="3"
+                                    Margin="8,0"
+                                    VerticalAlignment="Bottom"
+                                    Background="{DynamicResource AccentFillColorDefaultBrush}"
+                                    CornerRadius="2,2,0,0"
+                                    Visibility="Collapsed" />
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
-                                <Setter Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                                <Setter Property="Background" Value="{DynamicResource ControlSolidFillColorDefaultBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
                                 <Setter Property="Panel.ZIndex" Value="1" />
-                                <Setter TargetName="HeaderPresenter" Property="TextElement.Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
                                 <Setter TargetName="HeaderPresenter" Property="TextElement.FontWeight" Value="SemiBold" />
+                                <Setter TargetName="MainTabIndicator" Property="Visibility" Value="Visible" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter Property="BorderBrush" Value="{DynamicResource FocusStrokeColorOuterBrush}" />
@@ -187,22 +218,49 @@
         <Style x:Key="ToolbarComboBoxStyle"
                BasedOn="{StaticResource {x:Type ComboBox}}"
                TargetType="{x:Type ComboBox}">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="MinHeight" Value="36" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="ToolbarButtonStyle"
                BasedOn="{StaticResource {x:Type Button}}"
                TargetType="{x:Type Button}">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="MinHeight" Value="36" />
             <Setter Property="Padding" Value="12,6" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="ToolbarToggleButtonStyle"
                BasedOn="{StaticResource {x:Type ToggleButton}}"
                TargetType="{x:Type ToggleButton}">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="MinHeight" Value="36" />
             <Setter Property="Padding" Value="12,6" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="PrimaryToolbarButtonStyle"
                BasedOn="{StaticResource {x:Type ui:Button}}"
@@ -268,12 +326,11 @@
             <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
             <Setter Property="Typography.NumeralStyle" Value="Lining" />
         </Style>
-        <ContextMenu x:Key="AnalyzerResultContextMenu" x:Shared="False">
+        <ContextMenu x:Key="AnalyzerResultContextMenu" x:Shared="False" MinWidth="240">
             <MenuItem AutomationProperties.Name="選択した Analyzer の詳細をコピー"
                       Command="{x:Static local:MainWindow.CopyAnalyzerResultCommand}"
                       CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                      Header="詳細をコピー"
-                      InputGestureText="Ctrl+C" />
+                      Header="詳細をコピー    Ctrl+C" />
         </ContextMenu>
         <Style x:Key="ScrollableDataGridStyle"
                BasedOn="{StaticResource {x:Type ui:DataGrid}}"
@@ -1175,12 +1232,14 @@
                                     Style="{StaticResource ResultSurfaceStyle}">
                                 <Grid ClipToBounds="True">
                                     <Grid.RowDefinitions>
-                                        <RowDefinition Height="3*" MinHeight="266" />
+                                        <RowDefinition Height="3*" MinHeight="284" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="2*" />
                                     </Grid.RowDefinitions>
                                     <ui:DataGrid x:Name="GeneratorGrid"
                                                  Grid.Row="0"
+                                                 Height="{Binding ActualWidth, ElementName=GeneratorTableSurface, Converter={StaticResource GeneratorGridHeightConverter}}"
+                                                 VerticalAlignment="Top"
                                                  Style="{StaticResource ScrollableDataGridStyle}"
                                                  ItemsSource="{Binding Generators}"
                                                  AutoGenerateColumns="False"
@@ -1563,39 +1622,42 @@
                                   SelectedItem="{Binding SelectedCandidate}" />
                         <Button Grid.Column="4" Padding="16,4" Command="{Binding CompareCommand}" Content="比較" />
                     </Grid>
-                    <ui:DataGrid x:Name="ComparisonGrid"
-                                 Grid.Row="2"
-                                 Style="{StaticResource ScrollableDataGridStyle}"
-                                 ItemsSource="{Binding Comparison.Metrics}"
-                                 AutoGenerateColumns="False"
-                                 IsReadOnly="True">
-                        <DataGrid.Columns>
-                            <DataGridTemplateColumn Width="110" Header="種別">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock>
-                                            <TextBlock.Style>
-                                                <Style TargetType="{x:Type TextBlock}">
-                                                    <Setter Property="Text" Value="{Binding Category}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Category}" Value="analyzer"><Setter Property="Text" Value="Analyzer" /></DataTrigger>
-                                                        <DataTrigger Binding="{Binding Category}" Value="generator"><Setter Property="Text" Value="Generator" /></DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Analyzer／Generator" />
-                            <DataGridTextColumn Width="120" Binding="{Binding BaselineMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="基準 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                            <DataGridTextColumn Width="120" Binding="{Binding CandidateMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="候補 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                            <DataGridTextColumn Width="120" Binding="{Binding DeltaMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="差 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                            <DataGridTextColumn Width="100" Binding="{Binding DeltaPercent, StringFormat=N2}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="差 %" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
-                            <DataGridCheckBoxColumn Width="70" Binding="{Binding Added}" Header="追加" />
-                            <DataGridCheckBoxColumn Width="70" Binding="{Binding Removed}" Header="削除" />
-                        </DataGrid.Columns>
-                    </ui:DataGrid>
+                    <Grid x:Name="ComparisonGridHost" Grid.Row="2">
+                        <ui:DataGrid x:Name="ComparisonGrid"
+                                     Height="{Binding ActualHeight, ElementName=ComparisonGridHost, Converter={StaticResource WholeRowDataGridHeightConverter}}"
+                                     VerticalAlignment="Top"
+                                     Style="{StaticResource ScrollableDataGridStyle}"
+                                     ItemsSource="{Binding Comparison.Metrics}"
+                                     AutoGenerateColumns="False"
+                                     IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="110" Header="種別">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock>
+                                                <TextBlock.Style>
+                                                    <Style TargetType="{x:Type TextBlock}">
+                                                        <Setter Property="Text" Value="{Binding Category}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Category}" Value="analyzer"><Setter Property="Text" Value="Analyzer" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding Category}" Value="generator"><Setter Property="Text" Value="Generator" /></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Width="*" Binding="{Binding Identity}" Header="Analyzer／Generator" />
+                                <DataGridTextColumn Width="120" Binding="{Binding BaselineMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="基準 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                <DataGridTextColumn Width="120" Binding="{Binding CandidateMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="候補 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                <DataGridTextColumn Width="120" Binding="{Binding DeltaMilliseconds, StringFormat=N3}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="差 ms" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                <DataGridTextColumn Width="100" Binding="{Binding DeltaPercent, StringFormat=N2}" ElementStyle="{StaticResource NumericCellTextStyle}" Header="差 %" HeaderStyle="{StaticResource NumericColumnHeaderStyle}" />
+                                <DataGridCheckBoxColumn Width="70" Binding="{Binding Added}" Header="追加" />
+                                <DataGridCheckBoxColumn Width="70" Binding="{Binding Removed}" Header="削除" />
+                            </DataGrid.Columns>
+                        </ui:DataGrid>
+                    </Grid>
                     <StackPanel Grid.Row="3" Margin="0,8,0,0">
                         <TextBlock FontWeight="SemiBold" Text="{Binding ComparisonSummary}" />
                         <ItemsControl ItemsSource="{Binding Comparison.Warnings}" />
