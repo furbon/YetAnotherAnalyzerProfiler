@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, "develop/**", "agent/**"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,6 +15,7 @@ concurrency:
 
 jobs:
   linux:
+    name: Verify Linux / ${{ matrix.framework }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -37,6 +39,7 @@ jobs:
         run: sh ./eng/build.sh verify --framework "${{ matrix.framework }}"
 
   windows:
+    name: Verify Windows / ${{ matrix.framework }}
     runs-on: windows-2025
     timeout-minutes: 40
     strategy:
@@ -52,6 +55,9 @@ jobs:
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: ${{ matrix.sdk }}
@@ -60,6 +66,7 @@ jobs:
         run: ./eng/build.ps1 verify --framework "${{ matrix.framework }}"
 
   macos:
+    name: Verify macOS / net10.0
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -67,6 +74,9 @@ jobs:
       - name: Enable repository guards
         shell: sh
         run: git config --local core.hooksPath .githooks
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.302
@@ -75,6 +85,7 @@ jobs:
         run: sh ./eng/build.sh verify --framework net10.0
 
   publish:
+    name: Package / ${{ matrix.runtime }}
     needs: [linux, windows, macos]
     timeout-minutes: 60
     strategy:
@@ -95,6 +106,9 @@ jobs:
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.302

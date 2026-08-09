@@ -42,16 +42,23 @@ production lock fileに現れる全パッケージと版は `THIRD-PARTY-NOTICES
 
 Pull RequestではGitHub Actionsの全OS／両TFM検証が完了しない限り、branch protectionでマージを許可しない
 運用を前提にします。同じブランチやPRへ追加pushした場合は古い実行をキャンセルし、各jobにはタイムアウトを
-設定しています。
+設定しています。Hosted runnerに複数SDKがpreinstallされていても `global.json` のroll-forwardでlaneが
+混ざらないよう、各setup jobは `RUNNER_TEMP` 配下へ対象SDKだけを分離installします。.NET 8 laneは
+SDK間のNuGet lock graph表現差がtracked lock fileを変更しないよう、`obj/sdk8.packages.lock.json`へ
+framework別restoreを分離し、.NET 10 laneでtracked lockとVisual Studio rebuildの再現性を検証します。
 
-正式リリースは、まず `eng/Version.props` を更新して通常のPR検証を完了し、そのコミットへ同じ版の
-`vX.Y.Z` タグを付けます。`.github/workflows/release.yml` はタグと唯一の版情報が一致することを全jobで確認し、
+正式リリースは、まず `eng/Version.props` を更新して通常のPR検証を完了します。推奨経路では
+GitHub Actionsから `main` の手動Releaseを確認付きで開始し、全検証後にworkflowが同じ版の
+`vX.Y.Z` tagを検証済みcommitへ作成します。既存のtag pushも同じ公開経路を使用します。
+`.github/workflows/release.yml` はtagと唯一の版情報が一致することを全jobで確認し、
 .NET 8／10、Windows／Linux／macOSを再検証してからNuGetツールと4 RIDの自己完結型アーカイブを作成します。
-公開jobはGitHub Environment `release` に置き、Environmentへ `NUGET_API_KEY` secretと必要な承認者を設定します。
+公開jobはGitHub Environment `release` に置き、Environmentへnuget.org profile名の`NUGET_USER` secretと
+必要な承認者を設定します。NuGet publishにはrepository、workflow、Environmentへ制限したTrusted Publishingを
+使い、GitHub OIDC tokenから短期credentialを取得します。長期API keyは保存しません。
 成果物の検証が完了するまでNuGet pushとGitHub Release公開は行われません。workflowは公開済みReleaseの
 変更を拒否し、既存NuGetと候補のSHA-256を公開前後に照合します。パッケージと各RIDアーカイブは生成jobで
 provenance attestationを作り、draftへ同一成果物を添付してから公開します。復旧とホスト設定の必須条件は
-[公開チェックリスト](release-checklist.md)を参照してください。
+[公開チェックリスト](release-checklist.md)と[GitHub初期設定・運用ガイド](github-setup.md)を参照してください。
 
 GitLab CIはLinuxの両TFMと、`windows`／`macos`タグを持つ自己管理runnerでプラットフォーム検証を行います。
 runner管理者は隔離された一時作業領域、必要SDK、PowerShell、WPFの対話可能セッションを用意してください。

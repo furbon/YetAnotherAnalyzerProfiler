@@ -50,8 +50,8 @@ try
                 Dictionary<string, string> expectedPackageLocks = CapturePackageLockHashes(root);
                 EnsureSdkVersion(root, framework);
                 CheckRepository(root);
-                await EnsurePackageLockRestoreDeterminismAsync(root, expectedPackageLocks);
-                await EnsurePackageLockDebugRebuildDeterminismAsync(root, expectedPackageLocks);
+                await EnsurePackageLockRestoreDeterminismAsync(root, expectedPackageLocks, framework);
+                await EnsurePackageLockDebugRebuildDeterminismAsync(root, expectedPackageLocks, framework);
                 await EnsurePackageLockVisualStudioRebuildDeterminismAsync(root, expectedPackageLocks);
                 await RestoreAsync(root, framework);
                 NormalizePackageLockFiles(root);
@@ -124,15 +124,36 @@ static async Task RestoreAsync(string root, string framework)
 
 static async Task EnsurePackageLockRestoreDeterminismAsync(
     string root,
-    IReadOnlyDictionary<string, string> expectedHashes)
+    IReadOnlyDictionary<string, string> expectedHashes,
+    string framework)
 {
-    await RunAsync(root, "dotnet", new[]
+    if (GetSdkMajor(root) >= 10)
     {
-        "restore",
-        Path.Combine(root, "YetAnotherAnalyzerProfiler.slnx"),
-        "--force-evaluate",
-        "-p:RestoreLockedMode=false",
-    });
+        await RunAsync(root, "dotnet", new[]
+        {
+            "restore",
+            Path.Combine(root, "YetAnotherAnalyzerProfiler.slnx"),
+            "--force-evaluate",
+            "-p:RestoreLockedMode=false",
+        });
+    }
+    else
+    {
+        foreach (ProjectTarget project in Projects(root, framework))
+        {
+            await RunAsync(root, "dotnet", new[]
+            {
+                "restore",
+                project.Path,
+                "--force-evaluate",
+                $"-p:TargetFrameworks={project.Framework}",
+                "-p:RestorePackagesWithLockFile=true",
+                "-p:RestoreLockedMode=false",
+                "-p:NuGetLockFilePath=obj/sdk8.packages.lock.json",
+            });
+        }
+    }
+
     EnsureCliRestoreGraphIdentity(root);
     NormalizePackageLockFiles(root);
     EnsurePackageLockHashes(root, expectedHashes, "Forced solution restore");
@@ -169,7 +190,8 @@ static void EnsureCliRestoreGraphIdentity(string root)
 
 static async Task EnsurePackageLockDebugRebuildDeterminismAsync(
     string root,
-    IReadOnlyDictionary<string, string> expectedHashes)
+    IReadOnlyDictionary<string, string> expectedHashes,
+    string framework)
 {
     string artifactsPath = Path.Combine(
         Path.GetTempPath(),
@@ -179,6 +201,17 @@ static async Task EnsurePackageLockDebugRebuildDeterminismAsync(
         await RunAsync(root, "dotnet", new[]
         {
             "build",
+            Path.Combine(root, "src", "Yaap.BuildLogger", "Yaap.BuildLogger.csproj"),
+            "--framework",
+            "netstandard2.0",
+            "--configuration",
+            "Debug",
+            "--no-restore",
+        });
+
+        List<string> arguments = new()
+        {
+            "build",
             Path.Combine(root, "tests", "Yaap.Tests", "Yaap.Tests.csproj"),
             "--configuration",
             "Debug",
@@ -186,7 +219,18 @@ static async Task EnsurePackageLockDebugRebuildDeterminismAsync(
             "--force",
             "--artifacts-path",
             artifactsPath,
-        });
+        };
+        if (GetSdkMajor(root) < 10)
+        {
+            arguments.Add("--framework");
+            arguments.Add(framework);
+            arguments.Add($"-p:TargetFrameworks={framework}");
+            arguments.Add("-p:RestorePackagesWithLockFile=true");
+            arguments.Add("-p:RestoreLockedMode=false");
+            arguments.Add("-p:NuGetLockFilePath=obj/sdk8.packages.lock.json");
+        }
+
+        await RunAsync(root, "dotnet", arguments);
         NormalizePackageLockFiles(root);
         EnsurePackageLockHashes(root, expectedHashes, "Debug rebuild with implicit restore");
     }
@@ -214,6 +258,12 @@ static async Task EnsurePackageLockVisualStudioRebuildDeterminismAsync(
 {
     if (!OperatingSystem.IsWindows())
     {
+        return;
+    }
+
+    if (GetSdkMajor(root) < 10)
+    {
+        Console.WriteLine("Visual Studio rebuild lock check is covered by the .NET 10 validation lane.");
         return;
     }
 
@@ -2134,9 +2184,14 @@ static void EnsureReleaseWorkflow(string root)
     foreach (string required in new[]
              {
                  "pull_request:",
+                 "workflow_dispatch:",
                  "concurrency:",
                  "cancel-in-progress: true",
                  "timeout-minutes:",
+                 "name: Verify Linux / ${{ matrix.framework }}",
+                 "name: Verify Windows / ${{ matrix.framework }}",
+                 "name: Verify macOS / net10.0",
+                 "name: Package / ${{ matrix.runtime }}",
              })
     {
         if (!ci.Contains(required, StringComparison.Ordinal))
@@ -2145,16 +2200,32 @@ static void EnsureReleaseWorkflow(string root)
         }
     }
 
+    if (Regex.Matches(
+            ci,
+            Regex.Escape("DOTNET_INSTALL_DIR="),
+            RegexOptions.CultureInvariant).Count != 3)
+    {
+        throw new InvalidOperationException(
+            "Each host-based GitHub CI job must isolate its requested .NET SDK installation.");
+    }
+
     string release = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
     foreach (string required in new[]
              {
                  "tags: [\"v*.*.*\"]",
+                 "workflow_dispatch:",
+                 "release_tag:",
+                 "confirm_publish:",
+                 "ReleaseTag:",
+                 "group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}",
                  "cancel-in-progress: false",
                  "./eng/validate-release.ps1",
                  "./eng/build.ps1 verify",
                  "./eng/build.ps1 publish",
                  "environment: release",
-                 "secrets.NUGET_API_KEY",
+                 "NuGet/login@ebc737b6fc418a6ca0073cf116ec8dc156d8b81e",
+                 "secrets.NUGET_USER",
+                 "steps.nuget-login.outputs.NUGET_API_KEY",
                  "dotnet nuget push",
                  "--skip-duplicate",
                  "gh release create",
@@ -2180,6 +2251,12 @@ static void EnsureReleaseWorkflow(string root)
                  "Failed to upload one or more validated release assets",
                  "Failed to read back draft release assets",
                  "Failed to publish release",
+                 "Manual releases must run from the main branch.",
+                 "Manual release publication was not explicitly confirmed.",
+                 "The release commit must be reachable from main.",
+                 "already points to a different commit",
+                 "Create or verify the immutable release tag",
+                 "repos/$env:GITHUB_REPOSITORY/git/refs",
              })
     {
         if (!release.Contains(required, StringComparison.Ordinal))
@@ -2197,6 +2274,44 @@ static void EnsureReleaseWorkflow(string root)
     {
         throw new InvalidOperationException(
             "The release workflow must use the curated versioned release notes.");
+    }
+
+    if (release.Contains("secrets.NUGET_API_KEY", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "The release workflow must use NuGet Trusted Publishing instead of a long-lived API key.");
+    }
+
+    if (Regex.Matches(
+            release,
+            Regex.Escape("DOTNET_INSTALL_DIR="),
+            RegexOptions.CultureInvariant).Count != 3)
+    {
+        throw new InvalidOperationException(
+            "Each host-based GitHub release job must isolate its requested .NET SDK installation.");
+    }
+
+    string githubSetup = File.ReadAllText(Path.Combine(root, "docs", "github-setup.md"));
+    foreach (string required in new[]
+             {
+                 "git remote add origin",
+                 "git push -u origin develop/v0.1.0",
+                 "git push -u origin main",
+                 "一時default",
+                 "Require actions to be pinned to a full-length commit SHA",
+                 "Verify Linux / net8.0",
+                 "release` Environment",
+                 "Trusted Publishing",
+                 "NUGET_USER",
+                 "## 7. v0.1.0公開前",
+                 "## 8. 公開操作",
+                 "## 9. 公開後",
+             })
+    {
+        if (!githubSetup.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"GitHub setup documentation is missing: {required}");
+        }
     }
 
     string validator = File.ReadAllText(Path.Combine(root, "eng", "validate-release.ps1"));
