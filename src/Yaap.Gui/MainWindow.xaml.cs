@@ -18,11 +18,7 @@ public partial class MainWindow : FluentWindow
     public static RoutedUICommand CopyAnalyzerResultCommand { get; } = new(
         "Analyzer の詳細をコピー",
         nameof(CopyAnalyzerResultCommand),
-        typeof(MainWindow),
-        new InputGestureCollection
-        {
-            new KeyGesture(Key.C, ModifierKeys.Control),
-        });
+        typeof(MainWindow));
 
     private readonly ConditionalWeakTable<System.Windows.Controls.Button, object> _configuredCalendarButtons = new();
     private bool _scrollBarRefreshPending;
@@ -790,6 +786,68 @@ public sealed class WidthAdjustmentConverter : System.Windows.Data.IValueConvert
         object parameter,
         System.Globalization.CultureInfo culture) =>
         value is double width ? Math.Max(0, width - Adjustment) : 0d;
+
+    public object ConvertBack(
+        object value,
+        Type targetType,
+        object parameter,
+        System.Globalization.CultureInfo culture) =>
+        System.Windows.Data.Binding.DoNothing;
+}
+
+public sealed class WholeRowDataGridHeightConverter : System.Windows.Data.IValueConverter
+{
+    public double HeaderHeight { get; set; }
+
+    public double RowHeight { get; set; }
+
+    public object Convert(
+        object value,
+        Type targetType,
+        object parameter,
+        System.Globalization.CultureInfo culture)
+    {
+        if (value is not double availableHeight || !double.IsFinite(availableHeight))
+        {
+            return 0d;
+        }
+
+        if (
+            HeaderHeight < 0 ||
+            RowHeight <= 0 ||
+            availableHeight <= HeaderHeight)
+        {
+            return Math.Max(0, availableHeight);
+        }
+
+        double visibleRows = Math.Floor((availableHeight - HeaderHeight) / RowHeight);
+        return HeaderHeight + (visibleRows * RowHeight);
+    }
+
+    public object ConvertBack(
+        object value,
+        Type targetType,
+        object parameter,
+        System.Globalization.CultureInfo culture) =>
+        System.Windows.Data.Binding.DoNothing;
+}
+
+public sealed class HorizontalScrollCompensatedHeightConverter : System.Windows.Data.IValueConverter
+{
+    public double BaseHeight { get; set; }
+
+    public double RequiredWidth { get; set; }
+
+    public double ScrollbarHeight { get; set; }
+
+    public object Convert(
+        object value,
+        Type targetType,
+        object parameter,
+        System.Globalization.CultureInfo culture) =>
+        value is double availableWidth && availableWidth < RequiredWidth
+            ? BaseHeight + ScrollbarHeight
+            : BaseHeight;
 
     public object ConvertBack(
         object value,

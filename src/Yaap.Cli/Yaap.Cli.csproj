@@ -29,10 +29,4 @@
     <None Include="../../LICENSE" Pack="true" PackagePath="/" />
     <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="/" />
   </ItemGroup>
-  <Target Name="AlignRestoreProjectIdentity"
-          BeforeTargets="_GenerateRestoreProjectSpec">
-    <PropertyGroup>
-      <PackageId>yaap</PackageId>
-    </PropertyGroup>
-  </Target>
 </Project>

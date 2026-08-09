@@ -41,13 +41,16 @@ SDK側Loggerを使った測定が完了することを回帰検証します。
 GitHub Actions と GitLab CI は .NET 8／10、Windows、Linux、macOSを対象に同じ `eng` ハーネスを
 呼び出します。WPFはWindowsだけで、CLIの self-contained single-file 配布は対象OSで検証します。
 WindowsではGUIテストをDebugで両TFMに対して実行し、STAで `MainWindow` を生成、表示、レイアウト、
-終了します。GUIを変更した場合は `YAAP_GUI_CAPTURE_DIR` に出力したライト／ダーク両テーマの全タブと
-影響状態を目視確認します。publish検証は成果物の厳密な許可リスト、同梱文書、CLIのversion／help、
+終了します。GUIを変更した場合は[GUI視覚回帰テスト](gui-visual-testing.md)の専用コマンドで、
+ライト／ダーク両テーマの全タブと影響状態を比較します。publish検証は成果物の厳密な許可リスト、同梱文書、CLIのversion／help、
 Windows GUIの起動と終了まで確認します。
 NuGet tool packは両TFMの実行物、BuildLogger、README、第三者通知を検査し、ローカルfeedから実際に
 インストールして `version`／`help` を確認します。release workflowはタグと `eng/Version.props` の不一致を
 公開前に拒否します。
 
-`verify` はlocked restoreに先立って通常の強制restoreも実行し、すべての `packages.lock.json` のSHA-256が
+`verify` はlocked restoreに先立って通常の強制restore、Debugの暗黙restore付きrebuild、利用可能なWindowsでは
+Visual Studio同梱MSBuildによるlock file所有プロジェクトと参照グラフのrebuildも実行し、すべての `packages.lock.json` のSHA-256が
 復元前後で一致することを確認します。lock fileはNuGet自身の出力に合わせたUTF-8（BOMなし）／CRLFを
-正本とし、CLIではパッケージIDとアセンブリIDを一致させつつ、配布コマンドと出力名の `yaap` を維持します。
+正本とします。CLIの復元IDは評価時の`PackageId`である`YetAnotherAnalyzerProfiler.Tool`へ統一し、
+配布コマンド、アセンブリ出力名、deps／runtimeconfig名は`yaap`を維持します。復元ターゲット実行中に
+`PackageId`を変更してはいけません。Visual Studioの設計時復元はその変更を参照せず、lock fileが往復するためです。
