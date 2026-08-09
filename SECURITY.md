@@ -4,8 +4,7 @@
 
 | バージョン | セキュリティ修正 |
 | --- | --- |
-| 公開済みバージョン | なし |
-| 0.1.x 開発版 | 未公開のため正式サポート対象外 |
+| 0.1.x | サポート中 |
 | 0.0.x以前 | 非対応 |
 
 サポート状況は最新の [CHANGELOG](CHANGELOG.md) でも確認してください。
@@ -13,8 +12,8 @@
 ## 脆弱性の報告
 
 脆弱性、秘密情報の露出、任意コード実行の拡大、配布物の改ざんなどを発見した場合は、公開Issueへ
-詳細を書かないでください。GitHub上でこのリポジトリが公開されている場合は、そのリポジトリの
-SecurityタブにあるPrivate vulnerability reportingまたはSecurity Advisoriesを使用してください。
+詳細を書かないでください。GitHubでは、このリポジトリの
+[Private vulnerability reporting](https://github.com/furbon/YetAnotherAnalyzerProfiler/security/advisories/new)を使用してください。
 GitLab上で公開されている場合は、プロジェクトの非公開セキュリティ報告先、または機密Issueを使用してください。
 
 プライベート報告機能や管理者指定の非公開窓口が見つからない場合は、公開Issueへ再現手順や秘密情報を

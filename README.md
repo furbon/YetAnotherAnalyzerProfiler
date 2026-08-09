@@ -21,11 +21,11 @@ YAAP は、C# ビルドに含まれる Roslyn Analyzer と Source Generator の�
 
 ## クイックスタート
 
-このソースツリーの `0.1.0` はまだ公開されていません。公開後は、NuGet のパッケージページと
-由来証明付きリリースに記載された版を確認してから、.NETグローバルツールとしてインストールできます。
+YAAP v0.1.0は、NuGetのパッケージページと由来証明付きリリースを確認したうえで、
+.NETグローバルツールとしてインストールできます。
 
 ```powershell
-dotnet tool install --global YetAnotherAnalyzerProfiler.Tool
+dotnet tool install --global YetAnotherAnalyzerProfiler.Tool --version 0.1.0
 yaap version
 ```
 
