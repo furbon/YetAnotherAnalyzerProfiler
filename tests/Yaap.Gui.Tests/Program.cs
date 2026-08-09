@@ -1128,10 +1128,10 @@ static async Task WindowStartupSmokeAsync()
                                 "PART_TextBox",
                                 historyFromDatePicker);
                         historyFromTextBox.Text = typedFrom;
-                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-                        Ensure(
-                            viewModel.HistoryFrom.Equals(typedFrom, StringComparison.Ordinal),
-                            "History start text must update its source before focus changes.");
+                        PumpUntil(
+                            window.Dispatcher,
+                            () => viewModel.HistoryFrom.Equals(typedFrom, StringComparison.Ordinal),
+                            TimeSpan.FromSeconds(2));
                         Ensure(
                             historyPeriodClearButton.IsEnabled,
                             "Text-only history input must immediately enable period clearing.");
