@@ -1,0 +1,142 @@
+﻿name: CI
+
+on:
+  push:
+    branches: [main, "develop/**", "agent/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Verify Linux / ${{ matrix.framework }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: "8.0.423"
+            framework: net8.0
+          - sdk: "10.0.302"
+            framework: net10.0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prepare verification branch
+        shell: sh
+        run: git switch -c agent/ci-verification
+      - name: Normalize checkout
+        shell: pwsh
+        run: ./eng/normalize-checkout.ps1
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Verify
+        shell: sh
+        run: sh ./eng/build.sh verify --framework "${{ matrix.framework }}"
+
+  windows:
+    name: Verify Windows / ${{ matrix.framework }}
+    runs-on: windows-2025
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: "8.0.423"
+            framework: net8.0
+          - sdk: "10.0.302"
+            framework: net10.0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Verify including WPF
+        shell: pwsh
+        run: ./eng/build.ps1 verify --framework "${{ matrix.framework }}"
+
+  macos:
+    name: Verify macOS / net10.0
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prepare verification branch
+        shell: sh
+        run: git switch -c agent/ci-verification
+      - name: Normalize checkout
+        shell: pwsh
+        run: ./eng/normalize-checkout.ps1
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.302
+      - name: Verify CLI
+        shell: sh
+        run: sh ./eng/build.sh verify --framework net10.0
+
+  publish:
+    name: Package / ${{ matrix.runtime }}
+    needs: [linux, windows, macos]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            runtime: linux-x64
+          - os: windows-2025
+            runtime: win-x64
+          - os: macos-15
+            runtime: osx-x64
+          - os: macos-15
+            runtime: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Normalize non-Windows checkout
+        if: runner.os != 'Windows'
+        shell: pwsh
+        run: ./eng/normalize-checkout.ps1
+      - name: Enable repository guards
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.302
+      - name: Publish self-contained single files
+        shell: pwsh
+        run: ./eng/build.ps1 publish --framework net10.0 --runtime "${{ matrix.runtime }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: yaap-${{ matrix.runtime }}
+          path: artifacts/publish/${{ matrix.runtime }}/net10.0
+          if-no-files-found: error
+          retention-days: 7

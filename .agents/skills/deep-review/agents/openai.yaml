@@ -1,0 +1,7 @@
+interface:
+  display_name: "DeepReview"
+  short_description: "明示起動専用の最高水準・複数観点リポジトリ総合レビュー"
+  default_prompt: "$deep-review を使って、対象リポジトリを複数観点から徹底監査・改善してください。"
+
+policy:
+  allow_implicit_invocation: false

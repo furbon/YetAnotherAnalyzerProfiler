@@ -1,0 +1,27 @@
+﻿name: 機能提案
+description: YAAPの機能や操作性の改善を提案します
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: 解決したい利用上の課題を中心に記載してください。セキュリティ問題や秘密情報はSECURITY.mdの非公開経路へ報告してください。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい課題
+      description: 現在困っている場面、対象ユーザー、期待する成果を記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する動作
+      description: GUI、CLI、出力形式など、望ましい操作や結果を記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 検討した代替案
+      description: 現在の回避策や、採用しなかった案があれば記載してください。

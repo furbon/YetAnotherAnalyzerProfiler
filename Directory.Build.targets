@@ -1,0 +1,14 @@
+﻿<Project>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Yaap.Cli' Or
+                        '$(MSBuildProjectName)' == 'Yaap.Gui' Or
+                        '$(MSBuildProjectName)' == 'Yaap.Tests' Or
+                        '$(MSBuildProjectName)' == 'Yaap.Gui.Tests'">
+    <Content Include="$(MSBuildThisFileDirectory)src/Yaap.BuildLogger/bin/$(Configuration)/netstandard2.0/Yaap.BuildLogger.dll"
+             Link="Yaap.BuildLogger.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             ExcludeFromSingleFile="true"
+             Pack="false"
+             Visible="false" />
+  </ItemGroup>
+</Project>

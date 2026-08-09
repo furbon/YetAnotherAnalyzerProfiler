@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFrameworks>net8.0-windows;net10.0-windows</TargetFrameworks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>yaap-gui</AssemblyName>
+    <RootNamespace>Yaap.Gui</RootNamespace>
+    <Description>Windows WPF user interface for YAAP.</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
+    <UseDefaultPublishRuntimeIdentifier>false</UseDefaultPublishRuntimeIdentifier>
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Yaap.Core/Yaap.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="WPF-UI" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../THIRD-PARTY-NOTICES.txt"
+             Link="THIRD-PARTY-NOTICES.txt"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <AssemblyName>yaap</AssemblyName>
+    <TargetName>yaap</TargetName>
+    <ProjectDepsFileName>yaap.deps.json</ProjectDepsFileName>
+    <ProjectRuntimeConfigFileName>yaap.runtimeconfig.json</ProjectRuntimeConfigFileName>
+    <RootNamespace>Yaap.Cli</RootNamespace>
+    <Description>C#のRoslyn Analyzer／Source Generatorをコンパイラー報告値で測定するクロスプラットフォームCLI。</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>yaap</ToolCommandName>
+    <PackageId>YetAnotherAnalyzerProfiler.Tool</PackageId>
+    <PackageTags>dotnet-tool;roslyn;analyzer;source-generator;profiler</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>PACKAGE-README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <Title>YetAnotherAnalyzerProfiler CLI</Title>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
+    <UseDefaultPublishRuntimeIdentifier>false</UseDefaultPublishRuntimeIdentifier>
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Yaap.Core/Yaap.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../docs/nuget-readme.md" Pack="true" PackagePath="/PACKAGE-README.md" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>
