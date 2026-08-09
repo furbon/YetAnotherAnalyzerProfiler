@@ -18,32 +18,31 @@ jobs:
     name: Verify Linux / ${{ matrix.framework }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      YAAP_REPOSITORY_ROOT: /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - sdk: "8.0.423"
-            image: mcr.microsoft.com/dotnet/sdk:8.0.423@sha256:e2f26f26169fd10d6f1b426e01c97397717b32e9d5ab4ee4a7d5497ed9403007
             framework: net8.0
           - sdk: "10.0.302"
-            image: mcr.microsoft.com/dotnet/sdk:10.0.302@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0
             framework: net10.0
-    container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Normalize checkout
+        shell: pwsh
+        run: ./eng/normalize-checkout.ps1
       - name: Enable repository guards
-        shell: sh
-        run: |
-          git -C "$YAAP_REPOSITORY_ROOT" config --local core.autocrlf false
-          git -C "$YAAP_REPOSITORY_ROOT" checkout-index --all --force
-          git -C "$YAAP_REPOSITORY_ROOT" config --local core.hooksPath .githooks
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ matrix.sdk }}
       - name: Verify
         shell: sh
-        run: |
-          cd "$YAAP_REPOSITORY_ROOT"
-          sh ./eng/build.sh verify --framework "${{ matrix.framework }}"
+        run: sh ./eng/build.sh verify --framework "${{ matrix.framework }}"
 
   windows:
     name: Verify Windows / ${{ matrix.framework }}
@@ -78,12 +77,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Normalize checkout
+        shell: pwsh
+        run: ./eng/normalize-checkout.ps1
       - name: Enable repository guards
-        shell: sh
-        run: |
-          git config --local core.autocrlf false
-          git checkout-index --all --force
-          git config --local core.hooksPath .githooks
+        shell: pwsh
+        run: ./eng/install-git-hooks.ps1
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
@@ -116,9 +115,7 @@ jobs:
       - name: Normalize non-Windows checkout
         if: runner.os != 'Windows'
         shell: pwsh
-        run: |
-          git config --local core.autocrlf false
-          git checkout-index --all --force
+        run: ./eng/normalize-checkout.ps1
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1

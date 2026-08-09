@@ -2701,6 +2701,12 @@ static async Task FeatureParityAsync()
 
         viewModel.HistoryFrom = "31/Jan/2026";
         viewModel.HistoryTo = "2026-12-31";
+        viewModel.HistoryFromDate = new DateTime(2026, 1, 31);
+        viewModel.HistoryToDate = new DateTime(2026, 12, 31);
+        Ensure(
+            viewModel.HistoryFrom.Equals("31/Jan/2026", StringComparison.Ordinal) &&
+            viewModel.HistoryTo.Equals("2026-12-31", StringComparison.Ordinal),
+            "Calendar synchronization must not reformat semantically equal localized date text.");
         viewModel.RefreshHistoryCommand.Execute(null);
         await WaitForOperationAsync(viewModel);
         Ensure(viewModel.History.Count == 2, "Common fuzzy date formats should be accepted.");
