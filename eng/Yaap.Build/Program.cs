@@ -2159,6 +2159,8 @@ static void EnsureReleaseWorkflow(string root)
                  "--skip-duplicate",
                  "gh release create",
                  "gh release edit",
+                 "--notes-file",
+                 ".github/release-notes/",
                  "RepositoryUrl:",
                  "attestations: write",
                  "id-token: write",
@@ -2191,6 +2193,12 @@ static void EnsureReleaseWorkflow(string root)
         throw new InvalidOperationException("The release workflow must never publish from pull requests.");
     }
 
+    if (release.Contains("--generate-notes", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            "The release workflow must use the curated versioned release notes.");
+    }
+
     string validator = File.ReadAllText(Path.Combine(root, "eng", "validate-release.ps1"));
     foreach (string required in new[]
              {
@@ -2199,6 +2207,9 @@ static void EnsureReleaseWorkflow(string root)
                  "README.md",
                  "SECURITY.md",
                  "CHANGELOG.md",
+                 "releaseNotesPath",
+                 ".github/release-notes/",
+                 "# YAAP",
                  "はまだ公開されていません。",
                  "公開済みバージョン | なし",
                  "supportedSeries",
@@ -2216,6 +2227,22 @@ static void EnsureReleaseWorkflow(string root)
         File.ReadAllText(Path.Combine(root, "eng", "Version.props")),
         @"<VersionPrefix>(?<value>\d+\.\d+\.\d+)</VersionPrefix>",
         RegexOptions.CultureInvariant);
+    string releaseVersion = version.Groups["value"].Value;
+    string releaseNotesPath = Path.Combine(
+        root,
+        ".github",
+        "release-notes",
+        $"v{releaseVersion}.md");
+    if (!version.Success ||
+        !File.Exists(releaseNotesPath) ||
+        !File.ReadAllText(releaseNotesPath).StartsWith(
+            $"# YAAP v{releaseVersion}",
+            StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            $"The current version must have curated GitHub Release notes: {releaseNotesPath}");
+    }
+
     string expectedTargetBranch = $"target-branch: develop/v{version.Groups["value"].Value}";
     if (!version.Success || Regex.Matches(
             dependabot,

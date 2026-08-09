@@ -173,13 +173,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
+          $releaseNotes = ".github/release-notes/$env:GITHUB_REF_NAME.md"
+          if (-not (Test-Path -LiteralPath $releaseNotes -PathType Leaf)) {
+            throw "GitHub Release notes were not found: $releaseNotes"
+          }
           $release = gh release view $env:GITHUB_REF_NAME --json isDraft 2>$null
           if ($LASTEXITCODE -eq 0) {
             if (-not (($release | ConvertFrom-Json).isDraft)) {
               throw "Release $env:GITHUB_REF_NAME is already public; refusing to mutate it."
             }
+            gh release edit $env:GITHUB_REF_NAME --notes-file $releaseNotes
+            if ($LASTEXITCODE -ne 0) { throw "Failed to update draft release notes for $env:GITHUB_REF_NAME." }
           } else {
-            gh release create $env:GITHUB_REF_NAME --draft --verify-tag --generate-notes --title "YAAP $env:GITHUB_REF_NAME"
+            gh release create $env:GITHUB_REF_NAME --draft --verify-tag --notes-file $releaseNotes --title "YAAP $env:GITHUB_REF_NAME"
             if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $env:GITHUB_REF_NAME." }
           }
       - name: Verify any existing NuGet package is identical
@@ -266,5 +272,5 @@ jobs:
               throw "Draft asset digest differs from validated asset: $($asset.name)"
             }
           }
-          gh release edit $env:GITHUB_REF_NAME --draft=false
+          gh release edit $env:GITHUB_REF_NAME --notes-file ".github/release-notes/$env:GITHUB_REF_NAME.md" --draft=false
           if ($LASTEXITCODE -ne 0) { throw "Failed to publish release $env:GITHUB_REF_NAME." }
