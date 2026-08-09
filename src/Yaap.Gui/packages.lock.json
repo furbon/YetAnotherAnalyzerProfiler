@@ -58,7 +58,6 @@
         }
       }
     },
-    "net10.0-windows7.0/win-x64": {},
     "net8.0-windows7.0": {
       "Microsoft.NET.ILLink.Tasks": {
         "type": "Direct",
@@ -113,7 +112,6 @@
         "resolved": "17.11.48",
         "contentHash": "C3WIMt2wBl4++NX3jSEpTq5KXBhvAV154R4JrYHkfy9JSBcXWiL0mkgpspk5xSdOj+fS/uz7zluIy6bMM1fkkQ=="
       }
-    },
-    "net8.0-windows7.0/win-x64": {}
+    }
   }
 }
