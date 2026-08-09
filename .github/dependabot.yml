@@ -9,7 +9,9 @@ updates:
     labels: [dependencies]
     ignore:
       - dependency-name: Microsoft.CodeAnalysis.CSharp
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
   - package-ecosystem: github-actions
     directory: /
     target-branch: develop/v0.1.1
