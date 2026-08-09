@@ -2334,6 +2334,7 @@ static void EnsureReleaseWorkflow(string root)
                  "workflow_dispatch:",
                  "release_tag:",
                  "confirm_publish:",
+                 "recovery_run_id:",
                  "ReleaseTag:",
                  "group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}",
                  "cancel-in-progress: false",
@@ -2356,13 +2357,15 @@ static void EnsureReleaseWorkflow(string root)
                  "actions/attest@",
                  "subject-path:",
                  "isDraft",
-                 "different SHA-256 digest",
+                 "./eng/verify-nuget-package-content.ps1",
                  "Verify documented archive layout",
                  "archive-smoke/cli/yaap",
                  "macos-15-intel",
                  "Attest the package at its producer",
                  "Attest the archive at its producer",
-                 "Published NuGet digest differs",
+                 "Verify the published NuGet package content",
+                 "Recovery run must be a completed failed manual Release run for the tagged main commit.",
+                 "gh run download $artifactRunId",
                  "Draft release asset set differs from the validated allowlist",
                  "Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames",
                  "Draft asset digest differs from validated asset",
@@ -2382,6 +2385,33 @@ static void EnsureReleaseWorkflow(string root)
         if (!release.Contains(required, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"GitHub release workflow is missing: {required}");
+        }
+    }
+
+    if (Regex.Matches(
+            release,
+            Regex.Escape("./eng/verify-nuget-package-content.ps1"),
+            RegexOptions.CultureInvariant).Count != 2)
+    {
+        throw new InvalidOperationException(
+            "The release workflow must compare existing and newly published NuGet package content.");
+    }
+
+    string nugetVerifier = File.ReadAllText(
+        Path.Combine(root, "eng", "verify-nuget-package-content.ps1"));
+    foreach (string required in new[]
+             {
+                 "dotnet nuget verify",
+                 "--all",
+                 ".signature.p7s",
+                 "Compare-Object -ReferenceObject $expectedNames -DifferenceObject $publishedNames",
+                 "Published NuGet package entry differs from the validated package",
+             })
+    {
+        if (!nugetVerifier.Contains(required, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"NuGet publication verifier is missing required validation: {required}");
         }
     }
 

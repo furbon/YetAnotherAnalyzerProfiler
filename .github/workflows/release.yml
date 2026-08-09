@@ -14,6 +14,11 @@ on:
         required: true
         type: boolean
         default: false
+      recovery_run_id:
+        description: Optional failed Release run ID whose validated artifacts match the existing tag
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -21,6 +26,7 @@ permissions:
 env:
   RepositoryUrl: ${{ github.server_url }}/${{ github.repository }}
   ReleaseTag: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  RecoveryRunId: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_run_id || '' }}
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -31,6 +37,9 @@ jobs:
     name: Validate release request
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -38,6 +47,7 @@ jobs:
       - name: Validate trigger, version, source commit, and tag state
         env:
           ConfirmPublish: ${{ inputs.confirm_publish }}
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
@@ -71,9 +81,30 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to resolve release tag $env:ReleaseTag."
             }
-            if ($existingCommit -cne $env:GITHUB_SHA) {
+            if ([string]::IsNullOrWhiteSpace($env:RecoveryRunId) -and $existingCommit -cne $env:GITHUB_SHA) {
               throw "Release tag $env:ReleaseTag already points to a different commit."
             }
+            if (-not [string]::IsNullOrWhiteSpace($env:RecoveryRunId)) {
+              if ($env:RecoveryRunId -cnotmatch '^[1-9][0-9]*$') {
+                throw 'Recovery run ID must be a positive integer.'
+              }
+              git merge-base --is-ancestor $existingCommit $env:GITHUB_SHA
+              if ($LASTEXITCODE -ne 0) {
+                throw 'The existing release tag must be an ancestor of the recovery workflow commit.'
+              }
+              $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:RecoveryRunId" | ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0) { throw "Failed to inspect recovery run $env:RecoveryRunId." }
+              if ($run.path -cne '.github/workflows/release.yml' -or
+                  $run.event -cne 'workflow_dispatch' -or
+                  $run.status -cne 'completed' -or
+                  $run.conclusion -cne 'failure' -or
+                  $run.head_branch -cne 'main' -or
+                  $run.head_sha -cne $existingCommit) {
+                throw 'Recovery run must be a completed failed manual Release run for the tagged main commit.'
+              }
+            }
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:RecoveryRunId)) {
+            throw 'Release recovery requires an existing immutable tag.'
           }
 
   validate:
@@ -215,7 +246,7 @@ jobs:
     name: Publish NuGet and GitHub release
     needs: [gate, validate, binaries]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: release
     permissions:
       actions: read
@@ -242,7 +273,7 @@ jobs:
         run: |
           $existingCommit = git rev-parse -q --verify "refs/tags/$env:ReleaseTag^{commit}" 2>$null
           if ($LASTEXITCODE -eq 0) {
-            if ($existingCommit -cne $env:GITHUB_SHA) {
+            if ([string]::IsNullOrWhiteSpace($env:RecoveryRunId) -and $existingCommit -cne $env:GITHUB_SHA) {
               throw "Release tag $env:ReleaseTag already points to a different commit."
             }
             exit 0
@@ -264,8 +295,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path artifacts/release | Out-Null
-          gh run download $env:GITHUB_RUN_ID --name nuget-package --dir artifacts/release
-          gh run download $env:GITHUB_RUN_ID --pattern "binary-*" --dir artifacts/release
+          $artifactRunId = if ([string]::IsNullOrWhiteSpace($env:RecoveryRunId)) { $env:GITHUB_RUN_ID } else { $env:RecoveryRunId }
+          gh run download $artifactRunId --name nuget-package --dir artifacts/release
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download the validated NuGet artifact from run $artifactRunId." }
+          gh run download $artifactRunId --pattern "binary-*" --dir artifacts/release
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download validated binary artifacts from run $artifactRunId." }
       - name: Create SHA-256 checksums
         shell: pwsh
         run: |
@@ -297,7 +331,7 @@ jobs:
             gh release create $env:ReleaseTag --draft --verify-tag --notes-file $releaseNotes --title "YAAP $env:ReleaseTag"
             if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $env:ReleaseTag." }
           }
-      - name: Verify any existing NuGet package is identical
+      - name: Verify any existing NuGet package content
         shell: pwsh
         run: |
           $packages = @(Get-ChildItem artifacts/release -Recurse -Filter 'YetAnotherAnalyzerProfiler.Tool.*.nupkg' -File)
@@ -305,17 +339,23 @@ jobs:
           $package = $packages[0]
           $version = $env:ReleaseTag.TrimStart('v')
           $uri = "https://api.nuget.org/v3-flatcontainer/yetanotheranalyzerprofiler.tool/$version/yetanotheranalyzerprofiler.tool.$version.nupkg"
+          $packageExists = $false
           try {
             Invoke-WebRequest -Uri $uri -OutFile artifacts/release/existing.nupkg -ErrorAction Stop
-            $local = (Get-FileHash -LiteralPath $package.FullName -Algorithm SHA256).Hash
-            $published = (Get-FileHash -LiteralPath artifacts/release/existing.nupkg -Algorithm SHA256).Hash
-            if ($local -ne $published) { throw "NuGet already contains $version with a different SHA-256 digest." }
-            "YAAP_NUGET_EXISTS=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            $packageExists = $true
           } catch {
             $response = $_.Exception.Response
             if ($null -eq $response -or [int]$response.StatusCode -ne 404) { throw }
-          } finally {
-            Remove-Item artifacts/release/existing.nupkg -ErrorAction SilentlyContinue
+          }
+          if ($packageExists) {
+            try {
+              ./eng/verify-nuget-package-content.ps1 `
+                -ExpectedPackage $package.FullName `
+                -PublishedPackage artifacts/release/existing.nupkg
+              "YAAP_NUGET_EXISTS=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            } finally {
+              Remove-Item artifacts/release/existing.nupkg -ErrorAction SilentlyContinue
+            }
           }
       - name: Attest release artifacts
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
@@ -334,20 +374,23 @@ jobs:
         if: env.YAAP_NUGET_EXISTS != 'true'
         shell: pwsh
         run: dotnet nuget push "artifacts/release/YetAnotherAnalyzerProfiler.Tool.*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
-      - name: Verify the published NuGet digest
+      - name: Verify the published NuGet package content
         shell: pwsh
         run: |
           $package = @(Get-ChildItem artifacts/release -Recurse -Filter 'YetAnotherAnalyzerProfiler.Tool.*.nupkg' -File)[0]
           $version = $env:ReleaseTag.TrimStart('v')
           $uri = "https://api.nuget.org/v3-flatcontainer/yetanotheranalyzerprofiler.tool/$version/yetanotheranalyzerprofiler.tool.$version.nupkg"
-          for ($attempt = 1; $attempt -le 12; $attempt++) {
+          for ($attempt = 1; $attempt -le 90; $attempt++) {
             try { Invoke-WebRequest -Uri $uri -OutFile artifacts/release/published.nupkg -ErrorAction Stop; break }
-            catch { if ($attempt -eq 12) { throw }; Start-Sleep -Seconds 10 }
+            catch { if ($attempt -eq 90) { throw }; Start-Sleep -Seconds 10 }
           }
-          $local = (Get-FileHash -LiteralPath $package.FullName -Algorithm SHA256).Hash
-          $published = (Get-FileHash -LiteralPath artifacts/release/published.nupkg -Algorithm SHA256).Hash
-          Remove-Item artifacts/release/published.nupkg
-          if ($local -ne $published) { throw "Published NuGet digest differs from the validated package." }
+          try {
+            ./eng/verify-nuget-package-content.ps1 `
+              -ExpectedPackage $package.FullName `
+              -PublishedPackage artifacts/release/published.nupkg
+          } finally {
+            Remove-Item artifacts/release/published.nupkg -ErrorAction SilentlyContinue
+          }
       - name: Publish GitHub release with binaries
         env:
           GH_TOKEN: ${{ github.token }}
