@@ -124,6 +124,7 @@ static async Task WindowStartupSmokeAsync()
 
             TabControl mainTabs = (TabControl)window.FindName("MainTabs");
             TabControl analyzerViewTabs = (TabControl)window.FindName("AnalyzerViewTabs");
+            TabControl generatorViewTabs = (TabControl)window.FindName("GeneratorViewTabs");
             TabItem analyzerTableViewTab =
                 analyzerViewTabs.ItemContainerGenerator.ContainerFromIndex(0) as TabItem ??
                 throw new InvalidOperationException("The Analyzer table view tab was not rendered.");
@@ -131,11 +132,16 @@ static async Task WindowStartupSmokeAsync()
                 analyzerViewTabs.ItemContainerGenerator.ContainerFromIndex(1) as TabItem ??
                 throw new InvalidOperationException("The Analyzer tree view tab was not rendered.");
             TreeView analyzerTreeView = (TreeView)window.FindName("AnalyzerTreeView");
+            TreeView generatorTreeView = (TreeView)window.FindName("GeneratorTreeView");
             FrameworkElement targetCard = (FrameworkElement)window.FindName("TargetCard");
             FrameworkElement busyCard = (FrameworkElement)window.FindName("BusyCard");
             Wpf.Ui.Controls.InfoBar statusBar =
                 (Wpf.Ui.Controls.InfoBar)window.FindName("StatusBar");
             Button startButton = (Button)window.FindName("StartButton");
+            Wpf.Ui.Controls.TextBox targetPathTextBox =
+                (Wpf.Ui.Controls.TextBox)window.FindName("TargetPathTextBox");
+            Button targetBrowseButton = (Button)window.FindName("TargetBrowseButton");
+            ComboBox configurationSelector = (ComboBox)window.FindName("ConfigurationSelector");
             TextBlock busyTitle = (TextBlock)window.FindName("BusyTitle");
             TextBlock busyMessage = (TextBlock)window.FindName("BusyMessage");
             Button cancelButton = (Button)window.FindName("BusyCancelButton");
@@ -170,6 +176,15 @@ static async Task WindowStartupSmokeAsync()
             TextBlock analyzerTreeEmptyMessage =
                 (TextBlock)window.FindName("AnalyzerTreeEmptyMessage");
             DataGrid generatorGrid = (DataGrid)window.FindName("GeneratorGrid");
+            DataGrid generatorOutputsGrid = (DataGrid)window.FindName("GeneratorOutputsGrid");
+            Border generatorTableSurface = (Border)window.FindName("GeneratorTableSurface");
+            Border generatorTreeSurface = (Border)window.FindName("GeneratorTreeSurface");
+            Border generatorOutputSection = (Border)window.FindName("GeneratorOutputSection");
+            Grid generatorTreeHeader = (Grid)window.FindName("GeneratorTreeHeader");
+            TextBlock generatorTableEmptyMessage =
+                (TextBlock)window.FindName("GeneratorTableEmptyMessage");
+            TextBlock generatorTreeEmptyMessage =
+                (TextBlock)window.FindName("GeneratorTreeEmptyMessage");
             DataGrid historyGrid = (DataGrid)window.FindName("HistoryGrid");
             DataGrid comparisonGrid = (DataGrid)window.FindName("ComparisonGrid");
             DataGrid diagnosticsGrid = (DataGrid)window.FindName("DiagnosticsGrid");
@@ -210,6 +225,25 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 advancedSettingsIcon.Symbol == Wpf.Ui.Controls.SymbolRegular.Options20,
                 "Advanced settings must use a compact Fluent options icon.");
+            FrameworkElement[] targetToolbarControls =
+            {
+                targetPathTextBox,
+                targetBrowseButton,
+                recentTargetsButton,
+                advancedSettingsButton,
+                configurationSelector,
+                startButton,
+            };
+            Ensure(
+                targetToolbarControls.All(control => control.ActualHeight >= 36),
+                "Every target toolbar control must retain the shared touch-friendly height.");
+            Ensure(
+                targetToolbarControls.Max(control => control.ActualHeight) -
+                targetToolbarControls.Min(control => control.ActualHeight) <= 1,
+                "Target path, secondary actions, configuration, and primary action must align to one height.");
+            Ensure(
+                startButton.Margin.Left >= 12,
+                "The primary measurement action must be visually separated from configuration.");
             Ensure(
                 analyzerTableSurface.BorderThickness == analyzerTreeSurface.BorderThickness &&
                 analyzerTableSurface.BorderThickness.Left == 1,
@@ -217,6 +251,18 @@ static async Task WindowStartupSmokeAsync()
             Ensure(
                 analyzerTableSurface.CornerRadius == analyzerTreeSurface.CornerRadius,
                 "Analyzer result surfaces must use the same corner treatment.");
+            Ensure(
+                ReferenceEquals(analyzerViewTabs.ItemContainerStyle, generatorViewTabs.ItemContainerStyle),
+                "Analyzer and Source Generator must share one result-view tab style.");
+            Ensure(
+                ReferenceEquals(analyzerTableSurface.Style, analyzerTreeSurface.Style) &&
+                ReferenceEquals(analyzerTableSurface.Style, generatorTableSurface.Style) &&
+                ReferenceEquals(analyzerTableSurface.Style, generatorTreeSurface.Style),
+                "Every Analyzer and Source Generator result mode must share one surface style.");
+            Ensure(
+                analyzerTableSurface.CornerRadius == generatorTableSurface.CornerRadius &&
+                analyzerTableSurface.CornerRadius == generatorTreeSurface.CornerRadius,
+                "Analyzer and Source Generator result surfaces must share the framework corner radius.");
             Ensure(analyzerGrid.CanUserResizeColumns, "Analyzer table columns must remain resizable.");
             Ensure(analyzerGrid.SelectionUnit == DataGridSelectionUnit.FullRow, "Analyzer table selection must represent complete result items.");
             Ensure(analyzerGrid.ContextMenu is ContextMenu, "The Analyzer table must expose an item context menu.");
@@ -458,6 +504,8 @@ static async Task WindowStartupSmokeAsync()
                 Ensure(
                     statusBar.Severity == Wpf.Ui.Controls.InfoBarSeverity.Error,
                     "A failed measurement must render an error status surface.");
+                Color analyzerHeaderFillForComparison = default;
+                bool analyzerHeaderFillCaptured = false;
                 for (int index = 0; index < mainTabs.Items.Count; index++)
                 {
                     mainTabs.SelectedIndex = index;
@@ -469,6 +517,17 @@ static async Task WindowStartupSmokeAsync()
                     EnsureContrast(
                         TextElement.GetForeground(headerPresenter),
                         tabBorder.Background,
+                        $"{mode} main tab {index + 1}");
+                    Ensure(
+                        tabBorder.CornerRadius == analyzerTableSurface.CornerRadius,
+                        $"{mode} main tab {index + 1} must use the shared framework corner radius.");
+                    Ensure(
+                        Panel.GetZIndex(selectedTab) == 1,
+                        $"{mode} main tab {index + 1} must render above adjacent tabs without clipped edges.");
+                    EnsureElementWithin(
+                        tabBorder,
+                        mainTabs,
+                        1,
                         $"{mode} main tab {index + 1}");
                     if (index == 3)
                     {
@@ -518,7 +577,7 @@ static async Task WindowStartupSmokeAsync()
                     if (index == 0)
                     {
                         EnsureAccessibleVerticalScrollBar(analyzerGrid, $"{mode} Analyzer table");
-                        EnsureAnalyzerViewTabState(
+                        EnsureResultViewTabState(
                             analyzerTableViewTab,
                             analyzerTreeViewTab,
                             $"{mode} Analyzer table view tab");
@@ -543,10 +602,12 @@ static async Task WindowStartupSmokeAsync()
                             analyzerFirstHeader.Foreground,
                             new SolidColorBrush(analyzerTableHeaderFill),
                             $"{mode} Analyzer table header");
-                        Ensure(
-                            ColorDistance(analyzerTableHeaderFill, analyzerTableHeaderSeparator) >= 28,
-                            $"{mode} Analyzer table header separators must be visibly distinct " +
-                            $"(fill {FormatColor(analyzerTableHeaderFill)}, separator {FormatColor(analyzerTableHeaderSeparator)}).");
+                        EnsureSubtleDivider(
+                            analyzerTableHeaderFill,
+                            analyzerTableHeaderSeparator,
+                            $"{mode} Analyzer table header separator");
+                        analyzerHeaderFillForComparison = analyzerTableHeaderFill;
+                        analyzerHeaderFillCaptured = true;
                         CaptureWindow(
                             window,
                             captureDirectory,
@@ -629,7 +690,7 @@ static async Task WindowStartupSmokeAsync()
                         Ensure(
                             analyzerTreeHeaderTexts.All(text => text.FontWeight == FontWeights.SemiBold),
                             "Analyzer tree headers must use the shared semibold emphasis.");
-                        EnsureAnalyzerViewTabState(
+                        EnsureResultViewTabState(
                             analyzerTreeViewTab,
                             analyzerTableViewTab,
                             $"{mode} Analyzer tree view tab");
@@ -656,10 +717,10 @@ static async Task WindowStartupSmokeAsync()
                             ColorDistance(analyzerTableHeaderFill, analyzerTreeHeaderFill) <= 3,
                             $"{mode} Analyzer table and tree header fills must render identically " +
                             $"({FormatColor(analyzerTableHeaderFill)} vs {FormatColor(analyzerTreeHeaderFill)}).");
-                        Ensure(
-                            ColorDistance(analyzerTreeHeaderFill, analyzerTreeHeaderSeparator) >= 28,
-                            $"{mode} Analyzer tree header separators must be visibly distinct " +
-                            $"(fill {FormatColor(analyzerTreeHeaderFill)}, separator {FormatColor(analyzerTreeHeaderSeparator)}).");
+                        EnsureSubtleDivider(
+                            analyzerTreeHeaderFill,
+                            analyzerTreeHeaderSeparator,
+                            $"{mode} Analyzer tree header separator");
                         TextBlock[] analyzerTreeTimingTexts =
                         {
                             analyzerTreeMeanText,
@@ -773,6 +834,173 @@ static async Task WindowStartupSmokeAsync()
                     else if (index == 1)
                     {
                         EnsureAccessibleVerticalScrollBar(generatorGrid, $"{mode} Generator table");
+                        Ensure(
+                            generatorScroll.ComputedHorizontalScrollBarVisibility == Visibility.Collapsed,
+                            "The Source Generator table must fit its default columns at the normal window width.");
+                        Ensure(
+                            generatorGrid.Columns.Sum(column => column.ActualWidth) <= generatorGrid.ActualWidth - 40,
+                            "The Source Generator default columns must leave enough viewport slack to avoid a cosmetic scrollbar.");
+                        Ensure(
+                            !FindVisualDescendants<ScrollBar>(generatorTableSurface).Any(
+                                bar => bar.Orientation == Orientation.Horizontal && bar.IsVisible),
+                            "The Source Generator table must not render an unnecessary horizontal scrollbar at the normal window width.");
+                        Ensure(generatorGrid.ClipToBounds, "The Generator table must clip rows to its assigned result region.");
+                        Ensure(generatorOutputsGrid.ClipToBounds, "The generated-output table must clip rows to its assigned result region.");
+                        double generatorGridBottom = generatorGrid.TransformToAncestor(window)
+                            .Transform(new Point(0, generatorGrid.ActualHeight)).Y;
+                        double generatorSectionTop = generatorOutputSection.TransformToAncestor(window)
+                            .Transform(new Point()).Y;
+                        Ensure(
+                            generatorGridBottom <= generatorSectionTop + 0.5,
+                            "The Generator table must not overlap the generated-output explanation.");
+                        double generatorVisibleRowBottom = FindVisualDescendants<DataGridRow>(generatorGrid)
+                            .Where(row => row.IsVisible)
+                            .Select(row => row.TransformToAncestor(generatorGrid)
+                                .TransformBounds(new Rect(0, 0, row.ActualWidth, row.ActualHeight)))
+                            .Where(bounds => bounds.Top < generatorGrid.ActualHeight)
+                            .Select(bounds => bounds.Bottom)
+                            .DefaultIfEmpty(0)
+                            .Max();
+                        Ensure(
+                            generatorVisibleRowBottom <= generatorGrid.ActualHeight + 0.5,
+                            "The Generator table must not leave a partially clipped row above the output section " +
+                            $"({generatorVisibleRowBottom:F1} > {generatorGrid.ActualHeight:F1}).");
+                        TabItem generatorTableViewTab =
+                            generatorViewTabs.ItemContainerGenerator.ContainerFromIndex(0) as TabItem ??
+                            throw new InvalidOperationException("The Source Generator table view tab was not rendered.");
+                        TabItem generatorTreeViewTab =
+                            generatorViewTabs.ItemContainerGenerator.ContainerFromIndex(1) as TabItem ??
+                            throw new InvalidOperationException("The Source Generator tree view tab was not rendered.");
+                        EnsureResultViewTabState(
+                            generatorTableViewTab,
+                            generatorTreeViewTab,
+                            $"{mode} Source Generator table view tab");
+                        IReadOnlyList<DataGridColumnHeader> generatorHeaders =
+                            FindVisualDescendants<DataGridColumnHeader>(generatorGrid)
+                                .Where(header => header.Column is not null)
+                                .ToArray();
+                        Ensure(generatorHeaders.Count == 6, "Every Source Generator table column must render a header.");
+                        Ensure(
+                            generatorHeaders.All(header => header.FontWeight == FontWeights.SemiBold),
+                            "Source Generator table headers must share the common semibold emphasis.");
+                        Ensure(
+                            generatorHeaders.All(header => header.BorderThickness.Right == 1 && header.BorderThickness.Bottom == 1),
+                            "Source Generator table headers must expose the same restrained column boundaries as Analyzer.");
+                        RenderTargetBitmap generatorTableBitmap = RenderElement(window);
+                        DataGridColumnHeader generatorFirstHeader = generatorHeaders[0];
+                        Color generatorTableHeaderFill = GetRenderedPixel(
+                            generatorTableBitmap,
+                            window,
+                            generatorFirstHeader,
+                            new Point(generatorFirstHeader.ActualWidth - 24, generatorFirstHeader.ActualHeight / 2));
+                        Color generatorTableHeaderSeparator = GetMostContrastingRenderedPixel(
+                            generatorTableBitmap,
+                            window,
+                            generatorFirstHeader,
+                            generatorTableHeaderFill,
+                            generatorFirstHeader.ActualWidth - 1,
+                            generatorFirstHeader.ActualHeight / 2,
+                            horizontalRadius: 2);
+                        Ensure(analyzerHeaderFillCaptured, "Analyzer header comparison baseline must be captured first.");
+                        Ensure(
+                            ColorDistance(analyzerHeaderFillForComparison, generatorTableHeaderFill) <= 3,
+                            $"{mode} Analyzer and Source Generator table headers must render identically " +
+                            $"({FormatColor(analyzerHeaderFillForComparison)} vs {FormatColor(generatorTableHeaderFill)}).");
+                        EnsureSubtleDivider(
+                            generatorTableHeaderFill,
+                            generatorTableHeaderSeparator,
+                            $"{mode} Source Generator table header separator");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-generator-table-selected");
+
+                        generatorViewTabs.SelectedIndex = 1;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            generatorTreeView.HorizontalContentAlignment == HorizontalAlignment.Stretch,
+                            "Source Generator tree rows must align with the shared header columns.");
+                        ScrollViewer generatorTreeScroll = FindVisualDescendants<ScrollViewer>(generatorTreeView)
+                            .OrderByDescending(viewer => viewer.ScrollableHeight)
+                            .FirstOrDefault() ??
+                            throw new InvalidOperationException("The Source Generator tree scroll host was not rendered.");
+                        Ensure(
+                            generatorTreeScroll.ComputedHorizontalScrollBarVisibility == Visibility.Collapsed,
+                            "The Source Generator tree must fit its shared columns without horizontal scrolling.");
+                        EnsureResultViewTabState(
+                            generatorTreeViewTab,
+                            generatorTableViewTab,
+                            $"{mode} Source Generator tree view tab");
+                        IReadOnlyList<Border> generatorTreeHeaderCells =
+                            generatorTreeHeader.Children.OfType<Border>().ToArray();
+                        Ensure(generatorTreeHeaderCells.Count == 2, "The Source Generator tree must expose identity and summary headers.");
+                        IReadOnlyList<TextBlock> generatorTreeHeaderTexts = generatorTreeHeaderCells
+                            .Select(cell => FindVisualDescendant<TextBlock>(cell) ??
+                                throw new InvalidOperationException("A Source Generator tree header label was not rendered."))
+                            .ToArray();
+                        Ensure(
+                            generatorTreeHeaderTexts.All(text => text.FontWeight == FontWeights.SemiBold),
+                            "Source Generator tree headers must share the common semibold emphasis.");
+                        RenderTargetBitmap generatorTreeBitmap = RenderElement(window);
+                        Border generatorFirstTreeHeader = generatorTreeHeaderCells[0];
+                        Color generatorTreeHeaderFill = GetRenderedPixel(
+                            generatorTreeBitmap,
+                            window,
+                            generatorFirstTreeHeader,
+                            new Point(generatorFirstTreeHeader.ActualWidth / 2, generatorFirstTreeHeader.ActualHeight / 2));
+                        Color generatorTreeHeaderSeparator = GetMostContrastingRenderedPixel(
+                            generatorTreeBitmap,
+                            window,
+                            generatorFirstTreeHeader,
+                            generatorTreeHeaderFill,
+                            generatorFirstTreeHeader.ActualWidth - 1,
+                            generatorFirstTreeHeader.ActualHeight / 2,
+                            horizontalRadius: 2);
+                        Ensure(
+                            ColorDistance(generatorTableHeaderFill, generatorTreeHeaderFill) <= 3,
+                            $"{mode} Source Generator table and tree header fills must render identically " +
+                            $"({FormatColor(generatorTableHeaderFill)} vs {FormatColor(generatorTreeHeaderFill)}).");
+                        EnsureSubtleDivider(
+                            generatorTreeHeaderFill,
+                            generatorTreeHeaderSeparator,
+                            $"{mode} Source Generator tree header separator");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-generator-tree-selected");
+
+                        viewModel.ResultFilter = "__YAAP_NO_MATCH__";
+                        Task generatorEmptyProjection = viewModel.WaitForResultFilterAsync();
+                        PumpUntil(window.Dispatcher, () => generatorEmptyProjection.IsCompleted, TimeSpan.FromSeconds(5));
+                        generatorEmptyProjection.GetAwaiter().GetResult();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            generatorTreeEmptyMessage.Visibility == Visibility.Visible,
+                            "The Source Generator tree must explain an empty result.");
+                        Ensure(
+                            generatorTreeEmptyMessage.Text.Contains("Source Generator", StringComparison.Ordinal),
+                            "The Source Generator tree empty state must name the correct result family.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-generator-tree-empty");
+                        generatorViewTabs.SelectedIndex = 0;
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Ensure(
+                            generatorTableEmptyMessage.Visibility == Visibility.Visible,
+                            "The Source Generator table must explain an empty result.");
+                        Ensure(
+                            generatorTableEmptyMessage.Text.Contains("Source Generator", StringComparison.Ordinal),
+                            "The Source Generator table empty state must name the correct result family.");
+                        CaptureWindow(
+                            window,
+                            captureDirectory,
+                            $"{mode.ToString().ToLowerInvariant()}-generator-table-empty");
+                        viewModel.ResultFilter = string.Empty;
+                        Task generatorRestoredProjection = viewModel.WaitForResultFilterAsync();
+                        PumpUntil(window.Dispatcher, () => generatorRestoredProjection.IsCompleted, TimeSpan.FromSeconds(5));
+                        generatorRestoredProjection.GetAwaiter().GetResult();
+                        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                     }
                     else if (index == 2 && historyGrid.ContextMenu is ContextMenu historyMenu)
                     {
@@ -1115,10 +1343,31 @@ static async Task WindowStartupSmokeAsync()
                     }
 
                     window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                    FrameworkElement selectedContent = selectedTab.Content as FrameworkElement ??
+                        throw new InvalidOperationException($"Main tab {index + 1} content was not rendered.");
+                    EnsureElementWithin(
+                        selectedContent,
+                        mainTabs,
+                        1,
+                        $"{mode} main tab {index + 1} content");
                     CaptureWindow(
                         window,
                         captureDirectory,
                         $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}");
+                    double fullWidth = window.Width;
+                    window.Width = window.MinWidth;
+                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                    EnsureElementWithin(
+                        selectedContent,
+                        mainTabs,
+                        1,
+                        $"{mode} narrow main tab {index + 1} content");
+                    CaptureWindow(
+                        window,
+                        captureDirectory,
+                        $"{mode.ToString().ToLowerInvariant()}-tab-{index + 1}-narrow");
+                    window.Width = fullWidth;
+                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                 }
 
                 SetPrivateProperty(viewModel, nameof(MainViewModel.SelectedRun), CreateVisualFailureRun(RunStatus.Partial));
@@ -1313,22 +1562,52 @@ static double ColorDistance(Color left, Color right) => Math.Sqrt(
 
 static string FormatColor(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
 
-static void EnsureAnalyzerViewTabState(TabItem selected, TabItem unselected, string name)
+static void EnsureSubtleDivider(Color fill, Color divider, string name)
+{
+    double distance = ColorDistance(fill, divider);
+    Ensure(
+        distance >= 8,
+        $"{name} must remain discoverable (fill {FormatColor(fill)}, divider {FormatColor(divider)}).");
+    Ensure(
+        distance <= 90,
+        $"{name} must remain subordinate to content (fill {FormatColor(fill)}, divider {FormatColor(divider)}).");
+}
+
+static void EnsureElementWithin(
+    FrameworkElement element,
+    FrameworkElement ancestor,
+    double tolerance,
+    string name)
+{
+    Rect bounds = element.TransformToAncestor(ancestor)
+        .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+    Ensure(
+        bounds.Left >= -tolerance &&
+        bounds.Top >= -tolerance &&
+        bounds.Right <= ancestor.ActualWidth + tolerance &&
+        bounds.Bottom <= ancestor.ActualHeight + tolerance,
+        $"{name} must remain inside its containing surface " +
+        $"({bounds.Left:F1},{bounds.Top:F1},{bounds.Right:F1},{bounds.Bottom:F1} within " +
+        $"{ancestor.ActualWidth:F1}x{ancestor.ActualHeight:F1}).");
+}
+
+static void EnsureResultViewTabState(TabItem selected, TabItem unselected, string name)
 {
     selected.ApplyTemplate();
     unselected.ApplyTemplate();
-    Border selectedSurface = selected.Template.FindName("AnalyzerViewTabSurface", selected) as Border ??
+    Border selectedSurface = selected.Template.FindName("ResultViewTabSurface", selected) as Border ??
         throw new InvalidOperationException($"{name} did not render the selected tab surface.");
-    Border selectedIndicator = selected.Template.FindName("AnalyzerViewTabIndicator", selected) as Border ??
+    Border selectedIndicator = selected.Template.FindName("ResultViewTabIndicator", selected) as Border ??
         throw new InvalidOperationException($"{name} did not render the selection indicator.");
     ContentPresenter selectedHeader =
-        selected.Template.FindName("AnalyzerViewTabHeader", selected) as ContentPresenter ??
+        selected.Template.FindName("ResultViewTabHeader", selected) as ContentPresenter ??
         throw new InvalidOperationException($"{name} did not render the header presenter.");
-    Border unselectedIndicator = unselected.Template.FindName("AnalyzerViewTabIndicator", unselected) as Border ??
+    Border unselectedIndicator = unselected.Template.FindName("ResultViewTabIndicator", unselected) as Border ??
         throw new InvalidOperationException($"{name} did not render the unselected indicator.");
 
     Ensure(selected.IsSelected, $"{name} must be selected.");
     Ensure(!unselected.IsSelected, $"{name} must leave the alternate view unselected.");
+    Ensure(Panel.GetZIndex(selected) == 1, $"{name} must render above adjacent tabs without clipped borders.");
     Ensure(selectedIndicator.Visibility == Visibility.Visible, $"{name} must show an accent indicator.");
     Ensure(selectedIndicator.ActualHeight >= 3, $"{name} accent indicator must remain clearly visible.");
     Ensure(unselectedIndicator.Visibility == Visibility.Collapsed, $"{name} must hide the inactive indicator.");
@@ -1346,6 +1625,9 @@ static void EnsureAnalyzerViewTabState(TabItem selected, TabItem unselected, str
         TextElement.GetForeground(selectedHeader),
         selectedSurface.Background,
         $"{name} selected label");
+    TabControl owner = ItemsControl.ItemsControlFromItemContainer(selected) as TabControl ??
+        throw new InvalidOperationException($"{name} did not retain its owning tab control.");
+    EnsureElementWithin(selectedSurface, owner, 1, name);
 }
 
 static void EnsureReadableForeground(Brush brush, AppThemeMode mode, string name)
@@ -2537,7 +2819,7 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("VirtualizationMode\" Value=\"Recycling\"", StringComparison.Ordinal), "Recycling virtualization is required.");
     Ensure(xaml.Contains("Grid.Row=\"2\"", StringComparison.Ordinal), "The Analyzer result view must occupy the bounded star row.");
     Ensure(xaml.Contains("生成ファイル単位の実行時間", StringComparison.Ordinal), "Generator timing disclaimer is required.");
-    Ensure(xaml.Contains("先頭100件を表示しています。全件はexportで確認できます。", StringComparison.Ordinal), "Truncated generated-output previews must explain full export.");
+    Ensure(xaml.Contains("先頭100件を表示しています。全件はエクスポートで確認できます。", StringComparison.Ordinal), "Truncated generated-output previews must explain full export.");
     Ensure(xaml.Contains("SelectedItem.OutputsTruncated", StringComparison.Ordinal), "The truncated-preview notice must be conditional.");
     Ensure(viewModel.Contains("StreamGeneratedOutputsAsync(SelectedRun.Id, cancellationToken)", StringComparison.Ordinal), "GUI export must stream the complete generated-output manifest.");
     Ensure(xaml.Contains("キャンセル", StringComparison.Ordinal), "Cancellation UI is required.");
@@ -2547,14 +2829,20 @@ static async Task XamlContractAsync()
     Ensure(xaml.Contains("PlaceholderText=\"Analyzer、診断ID、アセンブリを検索\"", StringComparison.Ordinal), "The analyzer search placeholder is required.");
     Ensure(xaml.Contains("PlaceholderText=\"Generator、アセンブリ、生成ファイルを検索\"", StringComparison.Ordinal), "The generator search placeholder is required.");
     Ensure(xaml.Contains("ItemsSource=\"{Binding AnalyzerTree}\"", StringComparison.Ordinal), "The analyzer tree view is required.");
-    Ensure(xaml.Contains("x:Key=\"AnalyzerResultSurfaceStyle\"", StringComparison.Ordinal), "Analyzer views must share one result-surface contract.");
-    Ensure(xaml.Contains("x:Key=\"ResultColumnHeaderStyle\"", StringComparison.Ordinal), "Analyzer table headers must expose resize boundaries.");
+    Ensure(xaml.Contains("x:Key=\"ResultSurfaceStyle\"", StringComparison.Ordinal), "Analyzer and Source Generator views must share one result-surface contract.");
+    Ensure(xaml.Contains("x:Key=\"ResultViewTabStyle\"", StringComparison.Ordinal), "Analyzer and Source Generator must share one view-selector contract.");
+    Ensure(xaml.Contains("x:Key=\"MainTabItemStyle\"", StringComparison.Ordinal), "Main navigation tabs must share one framework-radius style.");
+    Ensure(xaml.Contains("x:Key=\"ResultColumnHeaderStyle\"", StringComparison.Ordinal), "Result table headers must expose restrained resize boundaries.");
     Ensure(xaml.Contains("Header=\"詳細をコピー\"", StringComparison.Ordinal), "Analyzer table and tree items must expose a shared copy action.");
     Ensure(xaml.Contains("OnAnalyzerGridPreviewMouseRightButtonDown", StringComparison.Ordinal), "Analyzer table right-click must select its target row.");
     Ensure(xaml.Contains("OnAnalyzerTreePreviewMouseRightButtonDown", StringComparison.Ordinal), "Analyzer tree right-click must select its target node.");
     Ensure(xaml.Contains("表示する Analyzer 結果がありません", StringComparison.Ordinal), "Both Analyzer views must explain empty results.");
+    Ensure(xaml.Contains("表示する Source Generator 結果がありません", StringComparison.Ordinal), "Both Source Generator views must explain empty results with the correct result family.");
+    Ensure(!xaml.Contains("<Setter Property=\"Text\" Value=\"表示する Analyzer", StringComparison.Ordinal), "The shared empty-state style must not leak Analyzer-specific text into sibling result views.");
     Ensure(xaml.Contains("MinimumMilliseconds", StringComparison.Ordinal) && xaml.Contains("MaximumMilliseconds", StringComparison.Ordinal), "Analyzer tree leaves must expose the complete timing range.");
     Ensure(xaml.Contains("ItemsSource=\"{Binding GeneratorTree}\"", StringComparison.Ordinal), "The generator tree view is required.");
+    Ensure(xaml.Contains("x:Name=\"GeneratorTableSurface\"", StringComparison.Ordinal) && xaml.Contains("x:Name=\"GeneratorTreeSurface\"", StringComparison.Ordinal), "Source Generator table and tree must use bounded result surfaces.");
+    Ensure(xaml.Contains("x:Name=\"GeneratorTableEmptyMessage\"", StringComparison.Ordinal) && xaml.Contains("x:Name=\"GeneratorTreeEmptyMessage\"", StringComparison.Ordinal), "Both Source Generator views must explain empty results.");
     Ensure(xaml.Contains("Header=\"設定\"", StringComparison.Ordinal), "The settings tab is required.");
     Ensure(xaml.Contains("AccentFillColorDefaultBrush", StringComparison.Ordinal), "Selected main tabs should have a visible accent.");
     Ensure(xaml.Contains("TextOnAccentFillColorPrimaryBrush", StringComparison.Ordinal), "Selected tab text must contrast with the accent.");
