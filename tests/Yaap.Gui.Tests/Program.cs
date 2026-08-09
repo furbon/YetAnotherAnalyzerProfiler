@@ -1130,7 +1130,10 @@ static async Task WindowStartupSmokeAsync()
                         historyFromTextBox.Text = typedFrom;
                         PumpUntil(
                             window.Dispatcher,
-                            () => viewModel.HistoryFrom.Equals(typedFrom, StringComparison.Ordinal),
+                            () => MainViewModel.TryParseHistoryDateText(
+                                    viewModel.HistoryFrom,
+                                    out DateTime typedDate) &&
+                                typedDate.Date == DateTime.Today.AddDays(-2),
                             TimeSpan.FromSeconds(2));
                         Ensure(
                             historyPeriodClearButton.IsEnabled,

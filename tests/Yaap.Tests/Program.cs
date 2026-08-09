@@ -1007,7 +1007,10 @@ static async Task ProfileCleanFailureAsync()
     Assert.Contains("測定前の dotnet clean", diagnostic.Message);
     Assert.Contains("終了コード 17", diagnostic.Message);
     Assert.Contains("実行コマンド: dotnet clean", diagnostic.Detail);
-    Assert.Contains($"\"{project}\"", diagnostic.Detail);
+    string quotedProject = OperatingSystem.IsWindows()
+        ? $"\"{project}\""
+        : $"'{project}'";
+    Assert.Contains(quotedProject, diagnostic.Detail);
     Assert.Contains($"作業ディレクトリ: {targetDirectory}", diagnostic.Detail);
     Assert.Contains("完全ログ:", diagnostic.Detail);
     Assert.Contains("前方の行は完全ログにのみ記録", diagnostic.Detail);
