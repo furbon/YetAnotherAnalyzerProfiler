@@ -1,93 +1,77 @@
-﻿# DeepReviewガイド
+﻿# DeepReview Guide
 
-DeepReviewは、通常のコードレビューや設計レビューとは別の、明示起動専用の総合的な
-リポジトリ監査・改善プロトコルです。複数の独立した敵対的レビュー、修正、再検証、再レビューを
-繰り返し、OSSとしての品質、潜在リスク、曖昧性、テスト、文書、リリース工程をまとめて改善します。
+DeepReview is an explicitly invoked repository audit and remediation protocol, separate from ordinary code and design review. It repeats independent adversarial review, remediation, verification, and re-review to improve OSS quality, latent risk, ambiguity, tests, documentation, and release processes together.
 
-処理時間とモデル利用量が大きいため、自動・暗黙には起動しません。通常の「レビューして」
-「このPRを確認して」「設計レビューをして」という依頼は、従来どおり依頼された範囲だけの
-レビューとして扱います。
+It is expensive in time and model use, so it never starts automatically or implicitly. Requests such as “review this diff,” “check this PR,” or “review the design” remain ordinary scoped reviews.
 
-## 起動方法
+## Invocation
 
-Codexでは、次のようにリポジトリスキルを明示します。
+For Codex, invoke the repository skill explicitly:
 
 ```text
-$deep-review v0.2.0リリース前のリポジトリ全体を監査・改善して
+$deep-review audit and remediate the complete repository before the v0.2.0 release
 ```
 
-Codex以外のエージェントには、名前付きのプロトコルであることを明示します。
+For another agent, name the protocol:
 
 ```text
-DeepReviewを実行して、今回の認証機能変更とリリース工程を徹底監査・改善して
+Run DeepReview against this authentication change and its release process.
 ```
 
-次の依頼だけではDeepReviewを起動しません。
+These requests do not invoke DeepReview:
 
 ```text
-この差分をレビューして
-設計に問題がないか確認して
-リリース前にコードレビューして
+Review this diff.
+Check the design.
+Review the code before release.
 ```
 
-## 自動設定される内容
+## Adaptive configuration
 
-エージェントは対象の差分、アーキテクチャ、製品のライフサイクル、対象プラットフォーム、
-リリース時期、既存テスト、CI、文書を確認し、次を提案または決定します。
+The agent examines scope, architecture, product lifecycle, platforms, release timing, tests, CI, and documentation, then selects:
 
-- 対象範囲：限定的な変更、サブシステム、リリース全体、インシデント、設計判断など
-- 評価軸：ランタイム、正確性、並行性、性能、API、互換性、セキュリティ、UX、OSS、
-  テスト、移植性、CI、パッケージング、再現性などから、実際のリスクに応じて選択
-- レビュー人格：各評価軸を反証する、独立した敵対的レビュアー
-- 並行数：対象の広さ、リスク、利用可能なサブエージェント数に応じて設定
-- 合格条件：軸ごとの点数、ブロッカー条件、必要な実行テスト、統合範囲
+- Scope: a change, subsystem, release, incident, design decision, or repository
+- Axes: runtime, correctness, concurrency, performance, API, compatibility, security, UX, OSS, testing, portability, CI, packaging, reproducibility, or other applicable risks
+- Personas: independent adversarial reviewers intended to falsify each selected axis
+- Parallelism: based on breadth, risk, and available subagents
+- Gates: per-axis scores, blockers, required tests, and integration scope
 
-リポジトリ全体またはリリース監査の既定値は、3人以上の独立レビュアー、各適用軸
-9.5/10以上、未解決のブロッカーと未緩和のcritical／high指摘が0件、修正後ツリーの
-独立再レビュー、正規検証の全成功です。平均点で弱い軸を隠すことは認めません。
+For a repository or release audit, defaults are at least three independent reviewers, at least 9.5/10 on every applicable axis, zero unresolved blockers or unmitigated critical/high findings, independent re-review of the remediated tree, and green canonical checks. A high average cannot hide a weak axis.
 
-評価軸や人数を固定すると対象によって過不足が出るため、今回使用した「ランタイム、OSS、品質」の
-3軸は代表例として扱い、必須の固定構成にはしません。
+Axes and reviewer counts are adaptive. “Runtime, OSS, quality” is an example, not a fixed configuration.
 
-## エージェントから確認する場合
+## When the agent asks
 
-次の選択が費用、時間、対象範囲、または合格判定を大きく変える場合、エージェントは調査結果と
-推奨案を示して確認します。
+The agent asks focused questions when these decisions materially change cost, time, scope, or the completion gate:
 
-- 変更範囲だけを見るか、リポジトリ全体まで広げるか
-- 評価軸と独立レビュアーの人数
-- 9.5以外の点数基準や、リリース固有の必須条件
-- コミット、developへの統合、push、公開まで行うか
-- 外部サービス、資格情報、実環境、破壊的操作が必要か
+- Change-only scope versus the whole repository
+- Axes and independent reviewer count
+- A score threshold other than 9.5 or release-specific mandatory gates
+- Commit, develop integration, push, or publication authority
+- External services, credentials, production environments, or destructive operations
 
-対象が明確で「完全自律」「GO」などの指示がある場合は、リポジトリから妥当な既定値を推定して
-進行し、採用理由を計画書に記録します。
+When scope is clear and the user says “fully autonomous,” “GO,” or equivalent, the agent can infer reasonable defaults and record them in the plan.
 
-## 実行サイクル
+## Execution cycle
 
-1. instruction、Git状態、対象範囲、正規コマンド、リリース境界を調査します。
-2. 専用計画書を作り、評価軸、人格、点数、権限、テスト、停止条件を確定します。
-3. 修正前のbuild、test、format、guard、UI／配布物などの基準値を取得します。
-4. 独立した敵対的レビュアーを可能な限り並行実行し、根拠付きの指摘を統合します。
-5. 原因を修正し、失敗、キャンセル、並行性、cleanup、scale、互換性などの回帰防止を追加します。
-6. 修正後の現在ツリーを独立レビュアーへ戻し、新しい欠陥も含めて再評価します。
-7. 全評価軸と非数値ゲートを満たすまで、修正と再レビューを繰り返します。
-8. 正規検証、完全な差分監査、許可されたcommit／merge、統合後検証を完了して報告します。
+1. Inspect instructions, Git state, scope, canonical commands, and release boundaries.
+2. Create a dedicated plan with axes, personas, scores, authority, tests, and stop conditions.
+3. Establish pre-change build, test, format, guard, UI, and artifact baselines.
+4. Run independent adversarial reviewers in parallel when available and consolidate evidence-backed findings.
+5. Remediate root causes and add failure, cancellation, concurrency, cleanup, scale, and compatibility regression coverage as applicable.
+6. Return the current remediated tree to independent reviewers and include newly introduced defects.
+7. Repeat remediation and re-review until every quantitative and non-quantitative gate passes.
+8. Finish canonical verification, complete diff review, authorized commit/integration, and post-integration checks.
 
-サブエージェントを利用できない環境では、同じ人格と評価軸を独立した証拠確認として順番に実行し、
-並行・独立性の制約を最終報告に明記します。
+Without subagents, execute the same personas as separate evidence reviews and disclose the limitation.
 
-## 成果物と正本
+## Artifacts and authority
 
-次の3ファイルはソースリポジトリで参照する開発用資産であり、実行バイナリだけの配布物には
-含まれません。
+The following development assets are referenced from the source repository and are not included in executable-only distributions:
 
-- 実行プロトコル：`.agents/skills/deep-review/SKILL.md`
-- 評価軸・人格・採点規則：`.agents/skills/deep-review/references/review-design.md`
-- 計画書テンプレート：`.agents/skills/deep-review/assets/deep-review-plan-template.md`
-- 実際の計画書：`.docs_agent/plans/YYYY-MM-DD-<task>.md`（ローカル、Git追跡外）
+- Protocol: `.agents/skills/deep-review/SKILL.md`
+- Axes, personas, scoring: `.agents/skills/deep-review/references/review-design.md`
+- Plan template: `.agents/skills/deep-review/assets/deep-review-plan-template.md`
+- Actual plan: `.docs_agent/plans/YYYY-MM-DD-<task>.md` (local and untracked)
 
-実際の計画書には、明示起動の記録、評価構成、基準値、finding ledger、修正サイクル、
-検証表、最終スコア、Git／リリース状態を保存します。DeepReviewは「数学的にバグがない」ことを
-宣言する仕組みではありません。実行した範囲と証拠に基づき、既知のブロッカーがない状態まで
-改善し、未検証境界や残留リスクがあれば隠さず示す仕組みです。
+The plan records explicit invocation, review configuration, baselines, finding ledger, remediation cycles, verification, final score, and Git/release state. DeepReview does not claim mathematical absence of defects. It improves the inspected scope until no known blocker remains and discloses unverified boundaries or residual risk.

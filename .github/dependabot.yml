@@ -2,14 +2,14 @@
 updates:
   - package-ecosystem: nuget
     directory: /
-    target-branch: develop/v0.1.0
+    target-branch: develop/v0.1.1
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     labels: [dependencies]
   - package-ecosystem: github-actions
     directory: /
-    target-branch: develop/v0.1.0
+    target-branch: develop/v0.1.1
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

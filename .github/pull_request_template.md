@@ -1,14 +1,17 @@
-﻿## 目的と利用者への影響
+﻿Submissions may be written in English or Japanese. 英語または日本語で投稿できます。
 
-## 互換性・性能・セキュリティ
+## Purpose and user impact
 
-## 検証
+## Compatibility, performance, and security
 
-- [ ] `./eng/build.ps1 verify` または `./eng/build.sh verify`
+## Verification
+
+- [ ] `./eng/build.ps1 verify` or `./eng/build.sh verify`
 - [ ] `dotnet format --verify-no-changes`
 - [ ] `git diff --check`
-- [ ] GUI変更の場合、STA起動とライト／ダークの影響状態を目視確認
-- [ ] 利用者向け文言、README、CLI help、CHANGELOGを必要に応じて同期
-- [ ] CHANGELOGを変更した場合、同じ版の`.github/release-notes/v<version>.md`を同期
+- [ ] For GUI changes, verified STA startup and every affected state in light and dark themes
+- [ ] Updated user-facing text, README, CLI help, and CHANGELOG as applicable
+- [ ] Updated selected Japanese translations with their English canonical sources
+- [ ] When CHANGELOG changed, synchronized `.github/release-notes/v<version>.md` and `.ja.md`
 
-## 残る制約
+## Remaining limitations

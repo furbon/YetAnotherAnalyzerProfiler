@@ -1,32 +1,35 @@
-﻿name: バグ報告
-description: 再現可能な不具合を報告します
+﻿name: Bug report
+description: Report a reproducible problem
 title: "[Bug]: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: セキュリティ問題や秘密情報は記載せず、SECURITY.md の非公開経路を使用してください。
+      value: |
+        Reports may be written in English or Japanese. 英語または日本語で投稿できます。
+        Do not include vulnerabilities or secrets; use the private route in SECURITY.md.
   - type: textarea
     id: behavior
     attributes:
-      label: 発生したこと
-      description: 期待した結果と実際の結果を記載してください。
+      label: What happened?
+      description: Describe the expected and actual behavior.
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
-      label: 最小の再現手順
+      label: Minimal reproduction
+      description: Provide the smallest safe steps or repository that reproduces the problem.
     validations:
       required: true
   - type: input
     id: environment
     attributes:
-      label: YAAP版・OS・.NET SDK
+      label: YAAP version, OS, and .NET SDK
     validations:
       required: true
   - type: textarea
     id: diagnostics
     attributes:
-      label: 診断コードと無害化したログ
-      description: 絶対パス、資格情報、binlog内の機密情報を除去してください。
+      label: Diagnostic codes and sanitized logs
+      description: Remove absolute paths, credentials, personal data, and confidential binlog content.
