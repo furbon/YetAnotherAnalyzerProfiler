@@ -127,7 +127,11 @@ static async Task EnsurePackageLockRestoreDeterminismAsync(
     IReadOnlyDictionary<string, string> expectedHashes,
     string framework)
 {
-    if (GetSdkMajor(root) >= 10)
+    // Non-Windows SDKs download WPF targeting packs that Windows SDKs provide locally,
+    // so Windows owns forced regeneration of the WPF locks. Other hosts still force
+    // regeneration of every cross-platform product and test project.
+    bool supportsAllTargets = GetSdkMajor(root) >= 10;
+    if (supportsAllTargets && OperatingSystem.IsWindows())
     {
         await RunAsync(root, "dotnet", new[]
         {
@@ -141,22 +145,27 @@ static async Task EnsurePackageLockRestoreDeterminismAsync(
     {
         foreach (ProjectTarget project in Projects(root, framework))
         {
-            await RunAsync(root, "dotnet", new[]
+            List<string> arguments = new()
             {
                 "restore",
                 project.Path,
                 "--force-evaluate",
-                $"-p:TargetFrameworks={project.Framework}",
-                "-p:RestorePackagesWithLockFile=true",
                 "-p:RestoreLockedMode=false",
-                "-p:NuGetLockFilePath=obj/sdk8.packages.lock.json",
-            });
+            };
+            if (!supportsAllTargets)
+            {
+                arguments.Add($"-p:TargetFrameworks={project.Framework}");
+                arguments.Add("-p:RestorePackagesWithLockFile=true");
+                arguments.Add("-p:NuGetLockFilePath=obj/sdk8.packages.lock.json");
+            }
+
+            await RunAsync(root, "dotnet", arguments);
         }
     }
 
     EnsureCliRestoreGraphIdentity(root);
     NormalizePackageLockFiles(root);
-    EnsurePackageLockHashes(root, expectedHashes, "Forced solution restore");
+    EnsurePackageLockHashes(root, expectedHashes, "Forced restore");
 }
 
 static void EnsureCliRestoreGraphIdentity(string root)
@@ -429,7 +438,11 @@ static async Task TestAsync(string root, string framework)
                 "--group",
                 "integration",
             },
-            new Dictionary<string, string?> { ["YAAP_RUN_INTEGRATION"] = "1" });
+            new Dictionary<string, string?>
+            {
+                ["YAAP_RUN_INTEGRATION"] = "1",
+                ["DOTNET_ROLL_FORWARD"] = "Major",
+            });
 
         if (OperatingSystem.IsWindows())
         {
@@ -460,9 +473,17 @@ static async Task BuildAndRunGuiTestsAsync(
 
 static Task RunGuiTestsAsync(string root, string framework, string? captureDirectory = null)
 {
-    IReadOnlyDictionary<string, string?>? environment = captureDirectory is null
-        ? null
-        : new Dictionary<string, string?> { ["YAAP_GUI_CAPTURE_DIR"] = captureDirectory };
+    Dictionary<string, string?> environment = new();
+    if (captureDirectory is not null)
+    {
+        environment["YAAP_GUI_CAPTURE_DIR"] = captureDirectory;
+    }
+
+    if (GetSdkMajor(root) >= 10 && framework.StartsWith("net8.0", StringComparison.OrdinalIgnoreCase))
+    {
+        environment["DOTNET_ROLL_FORWARD"] = "Major";
+    }
+
     return RunAsync(root, "dotnet", new[]
     {
         "run",
@@ -473,7 +494,7 @@ static Task RunGuiTestsAsync(string root, string framework, string? captureDirec
         "--configuration",
         "Debug",
         "--no-build",
-    }, environment);
+    }, environment.Count == 0 ? null : environment);
 }
 
 static async Task CaptureGuiVisualMatrixAsync(string root, string? requestedOutput)
@@ -608,7 +629,15 @@ static async Task TestLocalFeedAsync(string root)
     string packageProject = Path.Combine(root, "tests", "assets", "Local.Package", "Local.Package.csproj");
     string consumerProject = Path.Combine(root, "tests", "local-feed", "Consumer", "Consumer.csproj");
     string feed = Path.Combine(root, "tests", "local-feed", "packages");
+    string consumerObj = Path.Combine(root, "tests", "local-feed", "Consumer", "obj");
+    string consumerPackages = Path.Combine(consumerObj, "local-feed-packages");
+    string consumerLock = Path.Combine(consumerObj, "local-feed.packages.lock.json");
     Directory.CreateDirectory(feed);
+    if (Directory.Exists(consumerPackages))
+    {
+        Directory.Delete(consumerPackages, recursive: true);
+    }
+
     await RunAsync(root, "dotnet", new[] { "restore", packageProject, "--locked-mode" });
     await RunAsync(root, "dotnet", new[]
     {
@@ -624,8 +653,23 @@ static async Task TestLocalFeedAsync(string root)
     {
         "restore",
         consumerProject,
+        "--force-evaluate",
+        "--no-cache",
+        "-p:RestoreLockedMode=false",
+        "-p:RestorePackagesWithLockFile=true",
+        $"-p:NuGetLockFilePath={consumerLock}",
+        $"-p:RestorePackagesPath={consumerPackages}",
+    });
+    // A freshly packed archive has a host-specific content hash. Replay its disposable
+    // lock in locked mode to test reproducibility without weakening tracked product locks.
+    await RunAsync(root, "dotnet", new[]
+    {
+        "restore",
+        consumerProject,
         "--locked-mode",
         "--no-cache",
+        $"-p:NuGetLockFilePath={consumerLock}",
+        $"-p:RestorePackagesPath={consumerPackages}",
     });
     await RunAsync(root, "dotnet", new[]
     {
@@ -634,6 +678,7 @@ static async Task TestLocalFeedAsync(string root)
         "--configuration",
         "Release",
         "--no-restore",
+        $"-p:RestorePackagesPath={consumerPackages}",
     });
 }
 
