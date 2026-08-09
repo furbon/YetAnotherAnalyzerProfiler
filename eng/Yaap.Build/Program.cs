@@ -2372,6 +2372,8 @@ static void EnsureReleaseWorkflow(string root)
                  "Manual releases must run from the main branch.",
                  "Manual release publication was not explicitly confirmed.",
                  "The release commit must be reachable from main.",
+                 "git tag --list -- \"$env:ReleaseTag\"",
+                 "Failed to inspect release tag",
                  "already points to a different commit",
                  "Create or verify the immutable release tag",
                  "repos/$env:GITHUB_REPOSITORY/git/refs",
