@@ -2241,6 +2241,15 @@ static void EnsureReleaseWorkflow(string root)
             "Each non-Windows GitHub CI job must normalize its checkout line endings.");
     }
 
+    if (Regex.Matches(
+            ci,
+            Regex.Escape("git switch -c agent/ci-verification"),
+            RegexOptions.CultureInvariant).Count != 2)
+    {
+        throw new InvalidOperationException(
+            "Each non-Windows GitHub verify job must isolate normalized files on an agent branch.");
+    }
+
     string release = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
     foreach (string required in new[]
              {
