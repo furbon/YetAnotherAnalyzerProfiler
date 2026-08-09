@@ -14,12 +14,13 @@
 
 ## 成果物
 
-1. `eng/Version.props`、tag、CHANGELOGの版と公開日を一致させる。
+1. `eng/Version.props`、tag、CHANGELOGの版と公開日を一致させ、同じ版の
+   `.github/release-notes/v<version>.md`をCHANGELOGと同期する。
 2. canonical verifyを全OS・両TFMで通す。GUIはSTA起動とライト／ダーク表示を確認する。
 3. NuGet packを二回行い、byte-for-byteで同一であることを確認する。
 4. 各アーカイブを対応CPUのrunnerで展開し、文書どおり`cli/yaap`を起動する。
 5. packageと各アーカイブのproducer attestation、集約した`SHA256SUMS.txt`を作る。
-6. 既存の公開Releaseは変更せず、draftだけへ検証済み成果物を添付する。
+6. version別Release Noteを本文に設定したdraftだけへ検証済み成果物を添付し、既存の公開Releaseは変更しない。
 
 利用者はGitHub CLIで由来を確認できます。`<owner>/<repository>`はNuGetメタデータの公開元へ置き換えます。
 

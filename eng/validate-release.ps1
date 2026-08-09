@@ -25,6 +25,18 @@ if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9
 $readme = Get-Content -LiteralPath (Join-Path $root 'README.md') -Raw
 $security = Get-Content -LiteralPath (Join-Path $root 'SECURITY.md') -Raw
 $changelog = Get-Content -LiteralPath (Join-Path $root 'CHANGELOG.md') -Raw
+$releaseNotesRelativePath = ".github/release-notes/$Tag.md"
+$releaseNotesPath = Join-Path $root $releaseNotesRelativePath
+if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
+    throw "GitHub Release notes were not found for ${Tag}: $releaseNotesRelativePath"
+}
+
+$releaseNotes = Get-Content -LiteralPath $releaseNotesPath -Raw
+$escapedTag = [regex]::Escape($Tag)
+if ($releaseNotes -notmatch "(?m)^# YAAP $escapedTag\r?$") {
+    throw "GitHub Release notes must start with the version heading '# YAAP $Tag'."
+}
+
 if ($readme.Contains('はまだ公開されていません。')) {
     throw 'README.md still describes the release as unpublished.'
 }
@@ -41,7 +53,7 @@ if (-not $security.Contains("| $version |") -and
 }
 
 $escapedVersion = [regex]::Escape($version)
-if ($changelog -notmatch "(?m)^## \[$escapedVersion\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$") {
+if ($changelog -notmatch "(?m)^## \[$escapedVersion\] - [0-9]{4}-[0-9]{2}-[0-9]{2}\r?$") {
     throw "CHANGELOG.md must contain a dated release heading for $version."
 }
 

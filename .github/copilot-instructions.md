@@ -15,6 +15,14 @@ These rules apply to every repository change made by Codex or GitHub Copilot.
 ## Repository rules
 
 - `eng/Version.props` is the only version source. SemVer is used and the fourth assembly/file component remains zero.
+- Keep `CHANGELOG.md` as a curated user-facing release record. Include material
+  capabilities, compatibility, security/privacy facts, and known limitations;
+  exclude task-level fixes, refactorings, tests, CI work, and commit-log detail.
+- Whenever a version's `CHANGELOG.md` content changes, update its Japanese,
+  GitHub-ready `.github/release-notes/v<version>.md` in the same task and keep the
+  two documents consistent. Git commits, pull requests, and local task plans are
+  the sources for detailed engineering history; do not maintain a separate
+  task-by-task developer changelog unless an approved design explicitly requires it.
 - Human documentation and GUI text are Japanese. Code identifiers and agent instructions are English.
 - Source text is UTF-8 with BOM, CRLF, and space indentation. Shell scripts and
   open-agent skill files under `.agents/skills/` are portable UTF-8 without BOM and

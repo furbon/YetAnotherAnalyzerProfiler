@@ -9,5 +9,6 @@
 - [ ] `git diff --check`
 - [ ] GUI変更の場合、STA起動とライト／ダークの影響状態を目視確認
 - [ ] 利用者向け文言、README、CLI help、CHANGELOGを必要に応じて同期
+- [ ] CHANGELOGを変更した場合、同じ版の`.github/release-notes/v<version>.md`を同期
 
 ## 残る制約
