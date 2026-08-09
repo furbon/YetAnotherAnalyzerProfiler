@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -40,7 +40,7 @@ jobs:
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ matrix.sdk }}
       - name: Verify
@@ -67,7 +67,7 @@ jobs:
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ matrix.sdk }}
       - name: Verify including WPF
@@ -92,7 +92,7 @@ jobs:
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.302
       - name: Verify CLI
@@ -128,7 +128,7 @@ jobs:
       - name: Isolate .NET SDK installation
         shell: pwsh
         run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.302
       - name: Publish self-contained single files
