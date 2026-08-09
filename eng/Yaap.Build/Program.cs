@@ -1582,6 +1582,9 @@ static void CheckRepository(string root)
         bool nugetLock = Path.GetFileName(relative).Equals(
             "packages.lock.json",
             StringComparison.OrdinalIgnoreCase);
+        bool dependabotConfig = relative.Replace('\\', '/').Equals(
+            ".github/dependabot.yml",
+            StringComparison.OrdinalIgnoreCase);
         bool portableLf = shell || agentSkill;
         bool hasBom = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
         string text;
@@ -1602,13 +1605,13 @@ static void CheckRepository(string root)
                     $"Shell scripts and agent skills must be UTF-8 without BOM and LF: {relative}");
             }
         }
-        else if (nugetLock)
+        else if (nugetLock || dependabotConfig)
         {
             if (hasBom || (text.Contains('\n') && !text.Contains("\r\n", StringComparison.Ordinal)) ||
                 text.Replace("\r\n", string.Empty, StringComparison.Ordinal).Contains('\n'))
             {
                 throw new InvalidOperationException(
-                    $"NuGet lock files must be UTF-8 without BOM and CRLF: {relative}");
+                    $"NuGet lock files and Dependabot configuration must be UTF-8 without BOM and CRLF: {relative}");
             }
         }
         else if (!hasBom || (text.Contains('\n') && !text.Contains("\r\n", StringComparison.Ordinal)) ||
@@ -2415,9 +2418,10 @@ static void StartVersion(string root, string version, bool dryRun)
 
     if (!dryRun)
     {
-        UTF8Encoding encoding = new(encoderShouldEmitUTF8Identifier: true);
-        File.WriteAllText(versionPath, NormalizeCrlf(updatedVersion), encoding);
-        File.WriteAllText(dependabotPath, NormalizeCrlf(updatedDependabot), encoding);
+        UTF8Encoding bomEncoding = new(encoderShouldEmitUTF8Identifier: true);
+        UTF8Encoding noBomEncoding = new(encoderShouldEmitUTF8Identifier: false);
+        File.WriteAllText(versionPath, NormalizeCrlf(updatedVersion), bomEncoding);
+        File.WriteAllText(dependabotPath, NormalizeCrlf(updatedDependabot), noBomEncoding);
     }
 
     string prefix = dryRun ? "Would start" : "Started";
