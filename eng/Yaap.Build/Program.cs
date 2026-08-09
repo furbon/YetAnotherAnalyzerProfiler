@@ -2879,7 +2879,8 @@ static void EnsureReleaseWorkflow(string root)
     foreach (string required in new[]
              {
                  "dependency-name: Microsoft.CodeAnalysis.CSharp",
-                 "update-types: [\"version-update:semver-major\"]",
+                 "version-update:semver-major",
+                 "version-update:semver-minor",
                  "github-actions:",
                  "patterns: [\"*\"]",
              })
