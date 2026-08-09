@@ -5,12 +5,15 @@
 ## ホスティング設定
 
 - 公開default branchと、必須CIを要求するbranch protectionを設定する。
-- `v*` tagを保護し、release Environmentに承認者と最小権限の`NUGET_API_KEY`を設定する。
+- `v*.*.*` tagの更新／削除を禁止し、release Environmentに承認者と`NUGET_USER`を設定する。
+- nuget.org Trusted Publishing policyを公開元repository、`release.yml`、`release` Environmentへ
+  制限し、長期`NUGET_API_KEY`をGitHubへ保存しない。
 - GitHubのPrivate vulnerability reporting、または検証済みの同等な非公開窓口を有効にする。
 - 行動規範の報告用に、セキュリティ報告とは分離した検証済みの非公開窓口を有効にし、
   `CODE_OF_CONDUCT.md`から到達できることを確認する。
 - GitLabの自己管理runnerは専用・一時作業領域で動かし、保護変数を非保護pipelineへ渡さない。
 - `RepositoryUrl`、package project URL、nuspecのcommitが公開元のrepositoryとtag commitに一致することをpack guardで確認する。
+- 初回GitHub設定と段階別TODOは[GitHub初期設定・運用ガイド](github-setup.md)に従う。
 
 ## 成果物
 
@@ -21,6 +24,10 @@
 4. 各アーカイブを対応CPUのrunnerで展開し、文書どおり`cli/yaap`を起動する。
 5. packageと各アーカイブのproducer attestation、集約した`SHA256SUMS.txt`を作る。
 6. version別Release Noteを本文に設定したdraftだけへ検証済み成果物を添付し、既存の公開Releaseは変更しない。
+
+推奨する公開起動は、GitHubの **Actions → Release → Run workflow** で `main`、公開tag、
+publish確認を指定する方法です。全検証後にEnvironment承認を行い、workflowが検証済みcommitのtagを
+作成または照合します。既存のversion tag pushも同じ検証／公開経路を使用します。
 
 利用者はGitHub CLIで由来を確認できます。`<owner>/<repository>`はNuGetメタデータの公開元へ置き換えます。
 

@@ -114,6 +114,7 @@ binlogが含まれ得ます。binlogやrestore／clean／build出力には、対
 - [トラブルシュート](docs/troubleshooting.md) — エラーコードと対処
 - [設計](docs/architecture.md) — コンポーネントとデータフロー
 - [開発ガイド](docs/development.md)／[テスト方針](docs/testing.md)
+- [GitHub初期設定・運用ガイド](docs/github-setup.md) — repository作成、Actions、v0.1.0公開TODO
 - [公開チェックリスト](docs/release-checklist.md) — 公開前ゲート、由来証明、失敗時の復旧
 - [DeepReviewガイド](docs/deep-review.md) — 明示起動専用の最高水準リポジトリ総合レビュー
 - [変更履歴](CHANGELOG.md)、[貢献ガイド](CONTRIBUTING.md)、

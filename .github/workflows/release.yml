@@ -3,19 +3,72 @@
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag matching eng/Version.props (for example, v0.1.0)
+        required: true
+        type: string
+      confirm_publish:
+        description: Publish this version to NuGet and GitHub Releases
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
   RepositoryUrl: ${{ github.server_url }}/${{ github.repository }}
+  ReleaseTag: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  gate:
+    name: Validate release request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Validate trigger, version, source commit, and tag state
+        env:
+          ConfirmPublish: ${{ inputs.confirm_publish }}
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            if ($env:GITHUB_REF -cne 'refs/heads/main') {
+              throw 'Manual releases must run from the main branch.'
+            }
+            if ($env:ConfirmPublish -cne 'true') {
+              throw 'Manual release publication was not explicitly confirmed.'
+            }
+          } elseif ($env:GITHUB_REF_TYPE -cne 'tag') {
+            throw 'Automatic releases must be triggered by a version tag.'
+          }
+
+          if ($env:ReleaseTag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$') {
+            throw "Release tag is not a supported SemVer tag: $env:ReleaseTag"
+          }
+
+          ./eng/validate-release.ps1 -Tag $env:ReleaseTag
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The release commit must be reachable from main.'
+          }
+
+          $existingCommit = git rev-parse -q --verify "refs/tags/$env:ReleaseTag^{commit}" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $existingCommit -cne $env:GITHUB_SHA) {
+            throw "Release tag $env:ReleaseTag already points to a different commit."
+          }
+
   validate:
+    needs: gate
     name: Verify ${{ matrix.os }} / ${{ matrix.framework }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -48,12 +101,15 @@ jobs:
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: ${{ matrix.sdk }}
       - name: Verify tag matches the canonical version
         shell: pwsh
-        run: ./eng/validate-release.ps1 -Tag $env:GITHUB_REF_NAME
+        run: ./eng/validate-release.ps1 -Tag $env:ReleaseTag
       - name: Verify
         shell: pwsh
         run: ./eng/build.ps1 verify --framework "${{ matrix.framework }}"
@@ -72,6 +128,7 @@ jobs:
           subject-path: artifacts/packages/*.nupkg
 
   binaries:
+    needs: gate
     name: Publish ${{ matrix.runtime }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -96,12 +153,15 @@ jobs:
       - name: Enable repository guards
         shell: pwsh
         run: ./eng/install-git-hooks.ps1
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.302
       - name: Verify tag matches the canonical version
         shell: pwsh
-        run: ./eng/validate-release.ps1 -Tag $env:GITHUB_REF_NAME
+        run: ./eng/validate-release.ps1 -Tag $env:ReleaseTag
       - name: Publish self-contained single files
         shell: pwsh
         run: ./eng/build.ps1 publish --framework net10.0 --runtime "${{ matrix.runtime }}"
@@ -132,7 +192,7 @@ jobs:
 
   release:
     name: Publish NuGet and GitHub release
-    needs: [validate, binaries]
+    needs: [gate, validate, binaries]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release
@@ -143,12 +203,40 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Isolate .NET SDK installation
+        shell: pwsh
+        run: '"DOTNET_INSTALL_DIR={0}" -f (Join-Path $env:RUNNER_TEMP "dotnet") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.302
       - name: Verify tag matches the canonical version
         shell: pwsh
-        run: ./eng/validate-release.ps1 -Tag $env:GITHUB_REF_NAME
+        run: ./eng/validate-release.ps1 -Tag $env:ReleaseTag
+      - name: Create or verify the immutable release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $existingCommit = git rev-parse -q --verify "refs/tags/$env:ReleaseTag^{commit}" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($existingCommit -cne $env:GITHUB_SHA) {
+              throw "Release tag $env:ReleaseTag already points to a different commit."
+            }
+            exit 0
+          }
+
+          gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" `
+            -f ref="refs/tags/$env:ReleaseTag" `
+            -f sha="$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) {
+            git fetch --no-tags origin "refs/tags/$env:ReleaseTag:refs/tags/$env:ReleaseTag"
+            $existingCommit = git rev-parse -q --verify "refs/tags/$env:ReleaseTag^{commit}" 2>$null
+            if ($LASTEXITCODE -ne 0 -or $existingCommit -cne $env:GITHUB_SHA) {
+              throw "Failed to create or verify release tag $env:ReleaseTag."
+            }
+          }
       - name: Download validated artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -173,20 +261,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $releaseNotes = ".github/release-notes/$env:GITHUB_REF_NAME.md"
+          $releaseNotes = ".github/release-notes/$env:ReleaseTag.md"
           if (-not (Test-Path -LiteralPath $releaseNotes -PathType Leaf)) {
             throw "GitHub Release notes were not found: $releaseNotes"
           }
-          $release = gh release view $env:GITHUB_REF_NAME --json isDraft 2>$null
+          $release = gh release view $env:ReleaseTag --json isDraft 2>$null
           if ($LASTEXITCODE -eq 0) {
             if (-not (($release | ConvertFrom-Json).isDraft)) {
-              throw "Release $env:GITHUB_REF_NAME is already public; refusing to mutate it."
+              throw "Release $env:ReleaseTag is already public; refusing to mutate it."
             }
-            gh release edit $env:GITHUB_REF_NAME --notes-file $releaseNotes
-            if ($LASTEXITCODE -ne 0) { throw "Failed to update draft release notes for $env:GITHUB_REF_NAME." }
+            gh release edit $env:ReleaseTag --notes-file $releaseNotes
+            if ($LASTEXITCODE -ne 0) { throw "Failed to update draft release notes for $env:ReleaseTag." }
           } else {
-            gh release create $env:GITHUB_REF_NAME --draft --verify-tag --notes-file $releaseNotes --title "YAAP $env:GITHUB_REF_NAME"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $env:GITHUB_REF_NAME." }
+            gh release create $env:ReleaseTag --draft --verify-tag --notes-file $releaseNotes --title "YAAP $env:ReleaseTag"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $env:ReleaseTag." }
           }
       - name: Verify any existing NuGet package is identical
         shell: pwsh
@@ -194,7 +282,7 @@ jobs:
           $packages = @(Get-ChildItem artifacts/release -Recurse -Filter 'YetAnotherAnalyzerProfiler.Tool.*.nupkg' -File)
           if ($packages.Count -ne 1) { throw "Expected exactly one NuGet package; found $($packages.Count)." }
           $package = $packages[0]
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:ReleaseTag.TrimStart('v')
           $uri = "https://api.nuget.org/v3-flatcontainer/yetanotheranalyzerprofiler.tool/$version/yetanotheranalyzerprofiler.tool.$version.nupkg"
           try {
             Invoke-WebRequest -Uri $uri -OutFile artifacts/release/existing.nupkg -ErrorAction Stop
@@ -215,15 +303,21 @@ jobs:
             artifacts/release/**/*.zip
             artifacts/release/**/*.nupkg
             artifacts/release/SHA256SUMS.txt
+      - name: Authenticate to NuGet with a short-lived credential
+        if: env.YAAP_NUGET_EXISTS != 'true'
+        id: nuget-login
+        uses: NuGet/login@ebc737b6fc418a6ca0073cf116ec8dc156d8b81e # v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
       - name: Publish NuGet tool after digest validation
         if: env.YAAP_NUGET_EXISTS != 'true'
         shell: pwsh
-        run: dotnet nuget push "artifacts/release/YetAnotherAnalyzerProfiler.Tool.*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "artifacts/release/YetAnotherAnalyzerProfiler.Tool.*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
       - name: Verify the published NuGet digest
         shell: pwsh
         run: |
           $package = @(Get-ChildItem artifacts/release -Recurse -Filter 'YetAnotherAnalyzerProfiler.Tool.*.nupkg' -File)[0]
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:ReleaseTag.TrimStart('v')
           $uri = "https://api.nuget.org/v3-flatcontainer/yetanotheranalyzerprofiler.tool/$version/yetanotheranalyzerprofiler.tool.$version.nupkg"
           for ($attempt = 1; $attempt -le 12; $attempt++) {
             try { Invoke-WebRequest -Uri $uri -OutFile artifacts/release/published.nupkg -ErrorAction Stop; break }
@@ -251,9 +345,9 @@ jobs:
               Digest = "sha256:$((Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant())"
             }
           }
-          gh release upload $env:GITHUB_REF_NAME $assets --clobber
+          gh release upload $env:ReleaseTag $assets --clobber
           if ($LASTEXITCODE -ne 0) { throw "Failed to upload one or more validated release assets." }
-          $releaseJson = gh release view $env:GITHUB_REF_NAME --json assets
+          $releaseJson = gh release view $env:ReleaseTag --json assets
           if ($LASTEXITCODE -ne 0) { throw "Failed to read back draft release assets." }
           $release = $releaseJson | ConvertFrom-Json
           $expectedNames = @($expected.Keys | Sort-Object)
@@ -272,5 +366,5 @@ jobs:
               throw "Draft asset digest differs from validated asset: $($asset.name)"
             }
           }
-          gh release edit $env:GITHUB_REF_NAME --notes-file ".github/release-notes/$env:GITHUB_REF_NAME.md" --draft=false
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release $env:GITHUB_REF_NAME." }
+          gh release edit $env:ReleaseTag --notes-file ".github/release-notes/$env:ReleaseTag.md" --draft=false
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release $env:ReleaseTag." }
