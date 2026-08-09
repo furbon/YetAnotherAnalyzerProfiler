@@ -707,19 +707,28 @@ static async Task TestLocalFeedAsync(string root)
 
 static async Task PackAsync(string root)
 {
+    bool rollForwardNet8 = GetSdkMajor(root) >= 10;
     foreach (string sourceFramework in new[] { "net8.0", "net10.0" })
     {
-        await RunAsync(root, "dotnet", new[]
-        {
-            "run",
-            "--project",
-            Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"),
-            "--framework",
-            sourceFramework,
-            "--no-restore",
-            "--",
-            "version",
-        });
+        IReadOnlyDictionary<string, string?>? environment =
+            rollForwardNet8 && sourceFramework.Equals("net8.0", StringComparison.OrdinalIgnoreCase)
+                ? new Dictionary<string, string?> { ["DOTNET_ROLL_FORWARD"] = "Major" }
+                : null;
+        await RunAsync(
+            root,
+            "dotnet",
+            new[]
+            {
+                "run",
+                "--project",
+                Path.Combine(root, "src", "Yaap.Cli", "Yaap.Cli.csproj"),
+                "--framework",
+                sourceFramework,
+                "--no-restore",
+                "--",
+                "version",
+            },
+            environment);
     }
 
     string versionProps = File.ReadAllText(Path.Combine(root, "eng", "Version.props"));
